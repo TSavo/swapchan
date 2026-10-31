@@ -410,8 +410,9 @@ export function verifyMerkleRow(owner: `0x${string}`, row: ClaimRow, root: `0x${
     let h = merkleLeaf(owner, row);
     for (const p of row.proof) {
       if (!/^0x[0-9a-fA-F]{64}$/.test(p)) return false;
-      const [a, b] = BigInt(h) <= BigInt(p) ? [h, p] : [p, h];
-      h = keccak256(encodePacked(["bytes32", "bytes32"], [a, b as `0x${string}`]));
+      const q = p as `0x${string}`;
+      const [a, b] = BigInt(h) <= BigInt(q) ? [h, q] : [q, h];
+      h = keccak256(encodePacked(["bytes32", "bytes32"], [a, b]));
     }
     return h.toLowerCase() === root.toLowerCase();
   } catch {

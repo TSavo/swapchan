@@ -59,11 +59,11 @@ import { clPositions } from "./lp.js";
 import { v4Positions } from "./lpv4.js";
 import { lstQueues } from "./lst.js";
 import {
-  BatchRateLimited as RateLimited,
   batchIpLimiter,
   batchStatus,
   initBatchStore,
   parseAddresses,
+  BatchRateLimited as RateLimited,
   startBatch,
 } from "./moneybatch.js";
 import {
@@ -2914,7 +2914,11 @@ export async function solanaArchaeology(
 }
 
 /** Archaeology vault gate: the wallet called the contract itself, or it is a registry vault. */
-export function isVaultCandidate(addr: string, called: Set<string>, registry: Set<string>): boolean {
+export function isVaultCandidate(
+  addr: string,
+  called: Set<string>,
+  registry: Set<string>,
+): boolean {
   const a = addr.toLowerCase();
   return called.has(a) || registry.has(a);
 }
@@ -6342,7 +6346,10 @@ export function intelRoutes(
         })
         .parse(await c.req.json());
       const n = parseAddresses(b.addresses).addresses.length;
-      const lim = batchLimit(broadcastClientKey((h) => c.req.header(h), socketAddressOf(c.env)), n);
+      const lim = batchLimit(
+        broadcastClientKey((h) => c.req.header(h), socketAddressOf(c.env)),
+        n,
+      );
       if (!lim.ok) {
         c.header("retry-after", String(lim.retryAfter));
         throw new RateLimited(
@@ -6477,7 +6484,9 @@ export function linkRoutes(f: F, env: NodeJS.ProcessEnv, db: DatabaseSync) {
         // a /recover?to=&data= signing page only gets a permanent link when SwapChan signed it (fail closed)
         const u = new URL(b.url, SITE);
         if (/^\/recover\/?$/.test(u.pathname) && u.searchParams.has("to") && !recoverUrlSigned(u))
-          throw new BadRequest("unsigned /recover link: only SwapChan-built recovery links can be shortened");
+          throw new BadRequest(
+            "unsigned /recover link: only SwapChan-built recovery links can be shortened",
+          );
         return shorten(db, b.url);
       }
       if (Array.isArray(b.items))

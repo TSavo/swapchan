@@ -58,7 +58,11 @@ describe("Bloqarl #3: scan owner + merkle claim", () => {
   const mdec = (acct: string) =>
     decodeFunctionData({
       abi: m,
-      data: encodeFunctionData({ abi: m, functionName: "claim", args: [1n, acct as `0x${string}`, 5n, [P]] }),
+      data: encodeFunctionData({
+        abi: m,
+        functionName: "claim",
+        args: [1n, acct as `0x${string}`, 5n, [P]],
+      }),
     });
   it("recognizes a merkle claim paying the connected wallet", () => {
     expect(localCallPaysOwner(mdec(ME), ME)).toBe(true);

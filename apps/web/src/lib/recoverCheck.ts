@@ -37,6 +37,9 @@ export function localCallPaysOwner(
 }
 
 /** The /recover link was built for `scanOwner`; signing is only allowed from that wallet. */
-export function ownerMatches(scanOwner: string | undefined, connected: string | undefined): boolean {
+export function ownerMatches(
+  scanOwner: string | undefined,
+  connected: string | undefined,
+): boolean {
   return eq(scanOwner, connected ?? ZERO) && eq(connected, scanOwner ?? ZERO);
 }

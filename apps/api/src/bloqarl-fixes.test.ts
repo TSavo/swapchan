@@ -17,9 +17,9 @@ describe("1. archaeology vault classification", () => {
   });
   it("a contract the wallet called, or a registry vault, is", () => {
     expect(isVaultCandidate(VAULT, new Set([VAULT]), new Set())).toBe(true);
-    expect(isVaultCandidate(VAULT.toUpperCase().replace("0X", "0x"), new Set(), new Set([VAULT]))).toBe(
-      true,
-    );
+    expect(
+      isVaultCandidate(VAULT.toUpperCase().replace("0X", "0x"), new Set(), new Set([VAULT])),
+    ).toBe(true);
   });
 });
 
@@ -28,9 +28,14 @@ describe("2/3. signed /recover links with owner", () => {
   const tx = { chainId: 1, to: VAULT, data: "0x3ccfd60b", value: "0", description: "withdraw()" };
   it("payload covers chain/to/data/title/owner; matches the web verifier's vector", () => {
     expect(
-      signRecover({ chain: 1, to: VAULT, data: "0x3ccfd60b", title: "P3D", owner: ME }, "test-secret"),
+      signRecover(
+        { chain: 1, to: VAULT, data: "0x3ccfd60b", title: "P3D", owner: ME },
+        "test-secret",
+      ),
     ).toBe("8c9f05fddc89435b1e9de6ee5de6d44e87910d6c0a68edcb4deba80f85bc1901");
-    expect(recoverSigPayload({ chain: 1, to: VAULT, data: "0x", title: "t", owner: ME })).toContain(ME);
+    expect(recoverSigPayload({ chain: 1, to: VAULT, data: "0x", title: "t", owner: ME })).toContain(
+      ME,
+    );
   });
   it("recoverUrl carries owner and a sig that verifies; tampering any field fails", () => {
     vi.stubEnv("SWAPCHAN_RECOVER_LINK_SECRET", "test-secret");
@@ -60,7 +65,11 @@ describe("2/3. signed /recover links with owner", () => {
   });
   it("POST /links refuses an unsigned /recover?to= URL and shortens a signed one", async () => {
     vi.stubEnv("SWAPCHAN_RECOVER_LINK_SECRET", "test-secret");
-    const app = linkRoutes(fetch, { VITEST: "1" } as NodeJS.ProcessEnv, new DatabaseSync(":memory:"));
+    const app = linkRoutes(
+      fetch,
+      { VITEST: "1" } as NodeJS.ProcessEnv,
+      new DatabaseSync(":memory:"),
+    );
     const post = (url: string) =>
       app.request("/", {
         method: "POST",
@@ -99,7 +108,10 @@ describe("5. merkle row verified against the root", () => {
   const h = (a: `0x${string}`, b: `0x${string}`) =>
     keccak256(encodePacked(["bytes32", "bytes32"], BigInt(a) <= BigInt(b) ? [a, b] : [b, a]));
   const rows = [
-    { owner: ME as `0x${string}`, row: { index: 0, amount: "400000000000000000000", proof: [] as string[] } },
+    {
+      owner: ME as `0x${string}`,
+      row: { index: 0, amount: "400000000000000000000", proof: [] as string[] },
+    },
     { owner: OTHER as `0x${string}`, row: { index: 1, amount: "1000", proof: [] as string[] } },
     { owner: VAULT as `0x${string}`, row: { index: 2, amount: "7", proof: [] as string[] } },
   ];
@@ -118,7 +130,9 @@ describe("5. merkle row verified against the root", () => {
   });
   it("rejects an inflated amount, another account, a wrong root or a junk proof", () => {
     const r = rows[0]!;
-    expect(verifyMerkleRow(r.owner, { ...r.row, amount: "400000000000000000001" }, root)).toBe(false);
+    expect(verifyMerkleRow(r.owner, { ...r.row, amount: "400000000000000000001" }, root)).toBe(
+      false,
+    );
     expect(verifyMerkleRow(OTHER, r.row, root)).toBe(false);
     expect(verifyMerkleRow(r.owner, r.row, l0)).toBe(false);
     expect(verifyMerkleRow(r.owner, { ...r.row, proof: ["0x12"] }, root)).toBe(false);
