@@ -8,7 +8,7 @@ import { encodeFunctionData } from "./blocktools.js";
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { formatUnits, getAddress, parseAbiItem } from "viem";
+import { encodePacked, formatUnits, getAddress, keccak256, parseAbiItem } from "viem";
 import { evmClient, json, prices, pxOf, swapUrl, usdcOf } from "./onchain.js";
 import type { Evidence } from "./recover.js";
 import type { StuckFound } from "./stuck.js";
@@ -326,6 +326,16 @@ export async function merkleClaimFromTrees(
         }
         if (!row) return null;
         const c = evmClient(d.chainId, env);
+        // the row comes from upstream JSON: only trust it if it proves against the on-chain root (fail closed)
+        const root = await c
+          .readContract({
+            address: d.distributor,
+            abi: fn("merkleRoot() view returns (bytes32)"),
+            functionName: "merkleRoot",
+          })
+          .catch(() => null);
+        if (typeof root !== "string" || !verifyMerkleRow(owner, row, root as `0x${string}`))
+          return null;
         const claimed = await c
           .readContract({
             address: d.distributor,
@@ -382,4 +392,30 @@ export function buildMerkleClaimTx(
     value: "0",
     description: `claim(${row.index}): ${drop.name} merkle airdrop`,
   };
+}
+
+/** MerkleDistributor leaf = keccak256(abi.encodePacked(index, account, amount)); sorted-pair hashing (OpenZeppelin MerkleProof). */
+export function merkleLeaf(owner: `0x${string}`, row: ClaimRow): `0x${string}` {
+  return keccak256(
+    encodePacked(
+      ["uint256", "address", "uint256"],
+      [BigInt(row.index), getAddress(owner), BigInt(row.amount)],
+    ),
+  );
+}
+
+/** True only when the row's proof hashes up to `root`. Any malformed input = false. */
+export function verifyMerkleRow(owner: `0x${string}`, row: ClaimRow, root: `0x${string}`): boolean {
+  try {
+    let h = merkleLeaf(owner, row);
+    for (const p of row.proof) {
+      if (!/^0x[0-9a-fA-F]{64}$/.test(p)) return false;
+      const q = p as `0x${string}`;
+      const [a, b] = BigInt(h) <= BigInt(q) ? [h, q] : [q, h];
+      h = keccak256(encodePacked(["bytes32", "bytes32"], [a, b]));
+    }
+    return h.toLowerCase() === root.toLowerCase();
+  } catch {
+    return false;
+  }
 }

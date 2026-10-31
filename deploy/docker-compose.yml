@@ -15,6 +15,7 @@ services:
       # connection queued behind DNS, so all hosts looked slow at ~4% CPU.
       UV_THREADPOOL_SIZE: "64"
       SWAPCHAN_INTERNAL_KEY: ${SWAPCHAN_INTERNAL_KEY:-} # proves MCP->API calls; unset = x-swapchan-client-ip ignored
+      SWAPCHAN_RECOVER_LINK_SECRET: ${SWAPCHAN_RECOVER_LINK_SECRET:-} # HMAC for /recover links; same value as web; unset = recover links unsigned (page refuses them)
       # scan concurrency gate (scanctx.gate); 8 overloads the public RPCs (every scan hits 17s), 4 holds ~15s
       FIND_MAX_CONCURRENT: ${FIND_MAX_CONCURRENT:-4}
       ZEROX_API_KEY: ${ZEROX_API_KEY:-}
@@ -80,6 +81,7 @@ services:
     environment:
       TZ: America/Los_Angeles
       SWAPCHAN_API_URL: http://api:8787 # server-side rendering talks to the api inside the compose network
+      SWAPCHAN_RECOVER_LINK_SECRET: ${SWAPCHAN_RECOVER_LINK_SECRET:-} # verifies /recover link HMAC; same value as api; unset = page refuses every to=/data= link
     ports: ["127.0.0.1:3000:3000"]
     depends_on: [api]
   mcp:

@@ -12,6 +12,7 @@
 #   secret/swapchan/api         keys                        (SWAPCHAN_API_KEYS; unset = API open)
 #   secret/swapchan/mcp         keys                        (MCP_API_KEYS; unset = MCP open, rate-limited)
 #   secret/swapchan/internal    key                         (SWAPCHAN_INTERNAL_KEY, shared by api+mcp; unset = MCP callers share one API rate bucket)
+#   secret/swapchan/recover     link_secret                 (SWAPCHAN_RECOVER_LINK_SECRET, shared by api+web; unset = /recover to=/data= links fail closed)
 set -euo pipefail
 cd "$(dirname "$0")"
 [ "$(docker context show)" = battleaxe ] || { echo "docker context is not battleaxe"; exit 1; }
@@ -54,6 +55,7 @@ export NEXT_PUBLIC_MOONPAY_PUBLISHABLE_KEY=$(opt moonpay publishable_key)  # car
 export SWAPCHAN_API_KEYS=$(opt api keys)
 export MCP_API_KEYS=$(opt mcp keys)
 export SWAPCHAN_INTERNAL_KEY=$(opt internal key)   # proves MCP->API calls so x-swapchan-client-ip is trusted
+export SWAPCHAN_RECOVER_LINK_SECRET=$(opt recover link_secret)   # HMAC-signs /recover links (api) and verifies them (web)
 export SWAPCHAN_SESSION_SECRET=$(opt smartwallet session_secret)   # HMAC key for the SmartWallet sign-to-view session cookie
 export SWAPCHAN_COOKIE_DOMAIN=$(opt smartwallet cookie_domain)     # e.g. .swapchan.com so the cookie spans swapchan.com + api.swapchan.com
 # SmartWallet agent brain: the OAuth token lives under nefariousplan, not swapchan, so read it directly.

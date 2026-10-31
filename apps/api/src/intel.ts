@@ -58,7 +58,14 @@ import { hedgeyPlans, superfluidBalances, teamFinanceLocks, uncxLocks } from "./
 import { clPositions } from "./lp.js";
 import { v4Positions } from "./lpv4.js";
 import { lstQueues } from "./lst.js";
-import { batchStatus, initBatchStore, startBatch } from "./moneybatch.js";
+import {
+  batchIpLimiter,
+  batchStatus,
+  initBatchStore,
+  parseAddresses,
+  BatchRateLimited as RateLimited,
+  startBatch,
+} from "./moneybatch.js";
 import {
   ALL_IDS,
   approvals,
@@ -99,6 +106,7 @@ import {
   verifyRecovery,
   wrappedNative,
 } from "./recover.js";
+import { recoverUrlSigned } from "./recoverSig.js";
 import { daoRefunds } from "./refunds.js";
 import { migrateLinksRetention } from "./retention.js";
 import { BusyError, gate, recordScan, withScanScope } from "./scanctx.js";
@@ -106,13 +114,18 @@ import { cached, tokenRisk } from "./scanner.js";
 import { kaminoObligations, marinadeTickets } from "./solstake.js";
 import { tronExtras, tronV1Account } from "./tron2.js";
 import { COINS, type Coin, coinOf, decodeAny, utxoSources, utxoSweep } from "./utxochains.js";
-import { vaultPositions } from "./vaults.js";
+import { vaultList, vaultPositions } from "./vaults.js";
 import { sablierStreams } from "./vesting.js";
 
 // at most N full scans at once; the rest queue (and get a 503 after the wait) instead of piling up abandoned work
 const scanGate = gate(
   Number(process.env.FIND_MAX_CONCURRENT ?? 4),
   Number(process.env.FIND_QUEUE_WAIT_MS ?? 30_000),
+);
+// POST /money/batch scans run behind their own gate, so a batch can never take the site's scan slots
+const batchGate = gate(
+  Number(process.env.FIND_BATCH_MAX_CONCURRENT ?? 2),
+  Number(process.env.FIND_BATCH_QUEUE_WAIT_MS ?? 600_000),
 );
 
 import { fullAddress } from "./addrDisplay.js";
@@ -2900,6 +2913,23 @@ export async function solanaArchaeology(
   return out;
 }
 
+/** Archaeology vault gate: the wallet called the contract itself, or it is a registry vault. */
+export function isVaultCandidate(
+  addr: string,
+  called: Set<string>,
+  registry: Set<string>,
+): boolean {
+  const a = addr.toLowerCase();
+  return called.has(a) || registry.has(a);
+}
+
+const vaultRedeemData = (shares: bigint, owner: `0x${string}`) =>
+  encodeFunctionData({
+    abi: fn("redeem(uint256,address,address)"),
+    functionName: "redeem",
+    args: [shares, owner, owner],
+  });
+
 export async function evmArchaeology(
   f: F,
   env: NodeJS.ProcessEnv,
@@ -3074,6 +3104,26 @@ export async function evmArchaeology(
     meta("token1() view returns (address)", "token1"),
     meta("totalSupply() view returns (uint256)", "totalSupply"),
   ]);
+  // a token the wallet merely received is not a vault just because it answers asset()/convertToAssets():
+  // only contracts the wallet called itself, or ones in the vault registry, are classified as vaults
+  const registry = new Set(
+    (await vaultList(f).catch(() => []))
+      .filter((v) => v.chainId === chainId)
+      .map((v) => v.address.toLowerCase()),
+  );
+  const calledSet = new Set(called.map((a) => a.toLowerCase()));
+  const vaultOk = withBal.map((x) => isVaultCandidate(x.a, calledSet, registry));
+  // simulate redeem(all shares, you, you) from the wallet before offering it as a step to sign
+  const redeemOk = await Promise.all(
+    withBal.map((x, i) =>
+      vaultOk[i] && asset[i] && typeof conv[i] === "bigint"
+        ? c
+            .call({ account: owner, to: x.a, data: vaultRedeemData(x.bal, owner) })
+            .then(() => true)
+            .catch(() => false)
+        : Promise.resolve(false),
+    ),
+  );
   type Pend = { amt: [string, bigint][]; build: (usd: number | null, amts: string) => Found };
   const pend: Pend[] = [];
   const decOf = new Map<string, number>();
@@ -3165,6 +3215,7 @@ export async function evmArchaeology(
       });
       return;
     }
+    if (!vaultOk[i]) return;
     const und = (asset[i] ?? token[i]) as string | null;
     let amt: bigint | null = null;
     if (asset[i] && typeof conv[i] === "bigint") amt = conv[i] as bigint;
@@ -3180,23 +3231,26 @@ export async function evmArchaeology(
           chainId,
           what: `${sh.toPrecision(5)} ${s} vault shares (${asset[i] ? "ERC-4626" : "Yearn-v2 pricePerShare"}) at ${x.a}`,
           valueUsd: usd,
-          action: `Withdraw from the ${s} vault, then swap the underlying on SwapChan`,
+          action:
+            asset[i] && !redeemOk[i]
+              ? `redeem() did not simulate from your wallet; withdraw on the ${s} vault's own app, then swap the underlying on SwapChan`
+              : `Withdraw from the ${s} vault, then swap the underlying on SwapChan`,
           link: `${EXPLORER[chainId] ?? "https://etherscan.io"}/address/${x.a}`,
-          claimTx: {
-            chainId,
-            to: x.a,
-            data: asset[i]
-              ? encodeFunctionData({
-                  abi: fn("redeem(uint256,address,address)"),
-                  functionName: "redeem",
-                  args: [x.bal, owner, owner],
-                })
-              : encodeFunctionData({ abi: fn("withdraw()"), functionName: "withdraw" }),
-            value: "0",
-            description: asset[i]
-              ? `redeem(all shares, you, you): withdraw from ${s}`
-              : `withdraw(): exit the ${s} Yearn vault`,
-          },
+          ...(asset[i] && !redeemOk[i]
+            ? {}
+            : {
+                claimTx: {
+                  chainId,
+                  to: x.a,
+                  data: asset[i]
+                    ? vaultRedeemData(x.bal, owner)
+                    : encodeFunctionData({ abi: fn("withdraw()"), functionName: "withdraw" }),
+                  value: "0",
+                  description: asset[i]
+                    ? `redeem(all shares, you, you): withdraw from ${s}`
+                    : `withdraw(): exit the ${s} Yearn vault`,
+                },
+              }),
           underlying: und,
           evidence: [
             {
@@ -5446,7 +5500,7 @@ export async function findMoney(
   env: NodeJS.ProcessEnv,
   db: DatabaseSync | null,
   input: string,
-  opts: { fresh?: boolean; client?: string } = {},
+  opts: { fresh?: boolean; client?: string; gate?: ReturnType<typeof gate> } = {},
 ) {
   const { address, name } = await resolveAddr(f, env, input);
   // known burn/dead address: nothing there is recoverable, so skip the scan
@@ -5457,7 +5511,7 @@ export async function findMoney(
   const cachedScan = <T extends object>(key: string, ttlMs: number, scan: () => Promise<T>) =>
     moneyWithFreshness(key, ttlMs, address, !!opts.fresh, ethBlock, scan, opts.client ?? "local");
   return cachedScan(`money:${address}`, 180_000, () =>
-    scanGate.run(() =>
+    (opts.gate ?? scanGate).run(() =>
       withScanScope(STAGE_HARD_MS, async () => {
         const t0scan = Date.now();
         const vm = vmOfAddr(address);
@@ -6052,13 +6106,14 @@ export function intelRoutes(
     }
   }
   const run = async (
-    c: { json: (b: unknown, s?: 200 | 400 | 404 | 502 | 503) => Response },
+    c: { json: (b: unknown, s?: 200 | 400 | 404 | 429 | 502 | 503) => Response },
     fnc: () => Promise<unknown> | unknown,
   ) => {
     try {
       const r = await fnc();
       return r === null ? c.json({ error: "not found" }, 404) : c.json(r);
     } catch (e) {
+      if (e instanceof RateLimited) return c.json({ error: e.message }, 429);
       if (e instanceof BusyError) return c.json({ error: e.message }, 503);
       const bad = e instanceof BadRequest || e instanceof z.ZodError;
       return bad
@@ -6263,7 +6318,8 @@ export function intelRoutes(
       return readChain(f, env, b as never, { contract: (id, a) => contractReader(f, env, id, a) });
     }),
   );
-  const findOne = (a: string) => findMoney(f, env, linksDb, a) as never;
+  const findOne = (a: string) => findMoney(f, env, linksDb, a, { gate: batchGate }) as never;
+  const batchLimit = batchIpLimiter(Number(env.SWAPCHAN_BATCH_ADDRS_PER_HOUR) || 500);
   if (!env.VITEST) {
     const resumed = initBatchStore(
       env.SWAPCHAN_DATA_DIR ? `${env.SWAPCHAN_DATA_DIR}/batches.db` : null,
@@ -6289,6 +6345,17 @@ export function intelRoutes(
           ]),
         })
         .parse(await c.req.json());
+      const n = parseAddresses(b.addresses).addresses.length;
+      const lim = batchLimit(
+        broadcastClientKey((h) => c.req.header(h), socketAddressOf(c.env)),
+        n,
+      );
+      if (!lim.ok) {
+        c.header("retry-after", String(lim.retryAfter));
+        throw new RateLimited(
+          `batch limit: at most ${lim.max} addresses per hour from one client; retry in ${lim.retryAfter}s`,
+        );
+      }
       return startBatch(findOne, b.addresses);
     }),
   );
@@ -6413,7 +6480,15 @@ export function linkRoutes(f: F, env: NodeJS.ProcessEnv, db: DatabaseSync) {
   app.post("/", (c) =>
     run(c, async () => {
       const b = (await c.req.json()) as { url?: string; items?: unknown[]; ref?: string };
-      if (b.url) return shorten(db, b.url);
+      if (b.url) {
+        // a /recover?to=&data= signing page only gets a permanent link when SwapChan signed it (fail closed)
+        const u = new URL(b.url, SITE);
+        if (/^\/recover\/?$/.test(u.pathname) && u.searchParams.has("to") && !recoverUrlSigned(u))
+          throw new BadRequest(
+            "unsigned /recover link: only SwapChan-built recovery links can be shortened",
+          );
+        return shorten(db, b.url);
+      }
       if (Array.isArray(b.items))
         return batchLink(f, env, db, z.array(LinkParams).min(1).max(20).parse(b.items), b.ref);
       return buildSwapLink(f, env, db, LinkParams.parse(b));

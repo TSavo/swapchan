@@ -24,6 +24,7 @@ import {
   swapUrl,
   usdcOf,
 } from "./onchain.js";
+import { signRecover } from "./recoverSig.js";
 import { checkSolSpec, encodeSol, type SolIx, type SolSpec } from "./solrecover.js";
 import { encodeSpec, tronSpec, verifyTronSpec } from "./tronrecover.js";
 
@@ -251,14 +252,18 @@ export function verifyRecovery(
   return btVerifyRecovery({ to: tx.to, data: tx.data, value: tx.value }, owner, nowS);
 }
 
-/** Permanent in-app signing page for one recovery step. */
-export function recoverUrl(tx: RecoveryTx, title: string, next?: string) {
+/** Permanent in-app signing page for one recovery step, for the wallet the scan was for (owner), HMAC-signed. */
+export function recoverUrl(tx: RecoveryTx, title: string, owner: string, next?: string) {
+  const t = title.slice(0, 140);
+  const sig = signRecover({ chain: tx.chainId, to: tx.to, data: tx.data, title: t, owner });
   const q = new URLSearchParams({
     chain: String(tx.chainId),
     to: tx.to,
     data: tx.data,
     ...(tx.value && tx.value !== "0" ? { value: tx.value } : {}),
-    title: title.slice(0, 140),
+    title: t,
+    owner,
+    ...(sig ? { sig } : {}),
     ...(next ? { next } : {}),
   });
   return `${SITE}/recover?${q}`;
@@ -361,7 +366,7 @@ export function recoveryFlow(
   const tx = it.claimTx as RecoveryTx | undefined;
   let rurl: string | undefined;
   if (tx && "data" in (tx as object) && verifyRecovery(tx, owner).verified) {
-    rurl = recoverUrl(tx, it.title, it.swapUrl);
+    rurl = recoverUrl(tx, it.title, owner, it.swapUrl);
     steps.push({
       step: 1,
       kind: "recover",

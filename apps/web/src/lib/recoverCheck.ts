@@ -24,7 +24,8 @@ export function localCallPaysOwner(
     case "withdraw":
     case "exit":
     case "getReward":
-    case "claim":
+    case "claim": // claim() pays msg.sender; merkle claim(index, account, amount, proof) pays account
+      return a.length === 0 || (a.length === 4 && eq(a[1], owner));
     case "claimRewards":
     case "withdrawToken":
     case "claimWithdrawal":
@@ -33,4 +34,12 @@ export function localCallPaysOwner(
     default:
       return false;
   }
+}
+
+/** The /recover link was built for `scanOwner`; signing is only allowed from that wallet. */
+export function ownerMatches(
+  scanOwner: string | undefined,
+  connected: string | undefined,
+): boolean {
+  return eq(scanOwner, connected ?? ZERO) && eq(connected, scanOwner ?? ZERO);
 }
