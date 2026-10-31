@@ -202,6 +202,29 @@ export function startBatch(find: FindOne, input: string | AddrIn[], concurrency 
   return { ignored, ...view(job) };
 }
 
+export class BatchRateLimited extends Error {}
+
+/**
+ * Per-client address budget for POST /money/batch: at most `maxAddrs` addresses per `windowMs` from one client key
+ * (fixed window). A batch that would exceed the budget is refused whole and charges nothing.
+ */
+export function batchIpLimiter(maxAddrs = 500, windowMs = 3600_000, now: () => number = Date.now) {
+  const windows = new Map<string, { start: number; used: number }>();
+  return (
+    who: string,
+    n: number,
+  ): { ok: true } | { ok: false; retryAfter: number; max: number } => {
+    const t = now();
+    for (const [k, v] of windows) if (t - v.start >= windowMs) windows.delete(k);
+    const w = windows.get(who) ?? { start: t, used: 0 };
+    if (w.used + n > maxAddrs)
+      return { ok: false, retryAfter: Math.ceil((w.start + windowMs - t) / 1000), max: maxAddrs };
+    w.used += n;
+    windows.set(who, w);
+    return { ok: true };
+  };
+}
+
 const usd = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 

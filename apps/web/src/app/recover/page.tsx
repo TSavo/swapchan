@@ -7,6 +7,7 @@ import { RelatedTools } from "@/components/tools/RelatedTools";
 import { SolRecover, type SolSpec } from "@/components/tools/SolRecover";
 import { SweepRecover } from "@/components/tools/SweepRecover";
 import { TronRecover, type TronSpec } from "@/components/tools/TronRecover";
+import { verifyRecoverSig } from "@/lib/recoverSig";
 import { safeNext } from "@/lib/safeNext";
 
 export const metadata: Metadata = {
@@ -65,6 +66,21 @@ export default async function Page({
       </main>
     );
   const ok = q.to?.match(/^0x[0-9a-fA-F]{40}$/) && q.data?.match(/^0x[0-9a-fA-F]*$/);
+  if (ok && !(q.owner?.match(/^0x[0-9a-fA-F]{40}$/) && verifyRecoverSig(q)))
+    return (
+      <main className="flex min-h-screen flex-col items-center px-4 py-10 text-white">
+        <div
+          className="w-full max-w-2xl rounded-2xl border-2 border-rose-400 bg-rose-950 p-6"
+          data-testid="recover-unsigned"
+        >
+          <h1 className="text-2xl font-black">This recovery link wasn&apos;t made by SwapChan</h1>
+          <p className="mt-2">
+            Its signature is missing or doesn&apos;t match, so I won&apos;t show it or let you sign
+            it. Run find_money again for your wallet to get a fresh link.
+          </p>
+        </div>
+      </main>
+    );
   if (ok) {
     return (
       <main className="flex min-h-screen flex-col items-center px-4 py-10 text-white">
@@ -74,6 +90,7 @@ export default async function Page({
           data={q.data as `0x${string}`}
           value={q.value ?? "0"}
           title={q.title ?? "Recover funds"}
+          owner={q.owner as `0x${string}`}
           next={next}
         />
       </main>

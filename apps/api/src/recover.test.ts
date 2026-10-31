@@ -43,7 +43,7 @@ describe("verifyRecovery (only pays the owner)", () => {
       swapUrl: "https://swapchan.com/?fromChain=1",
     });
     expect(f.steps.map((s) => s.kind)).toEqual(["recover", "swap"]);
-    expect(f.steps[0]!.url).toBe(recoverUrl(tx, "P3D", "https://swapchan.com/?fromChain=1"));
+    expect(f.steps[0]!.url).toBe(recoverUrl(tx, "P3D", ME, "https://swapchan.com/?fromChain=1"));
     expect(f.steps.every((s) => s.shortUrl?.startsWith("https://swapchan.com/s/"))).toBe(true);
   });
 });

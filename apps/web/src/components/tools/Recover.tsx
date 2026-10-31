@@ -7,7 +7,7 @@ import { SpeechBubble } from "@/components/Character";
 import { ConnectButton } from "@/components/ConnectButton";
 import { FullAddress } from "@/components/FullAddress";
 import { describeCall, explorerAddressUrl } from "@/lib/callSummary";
-import { localCallPaysOwner } from "@/lib/recoverCheck";
+import { localCallPaysOwner, ownerMatches } from "@/lib/recoverCheck";
 import { RelatedTools } from "./RelatedTools";
 
 const ABI = parseAbi([
@@ -15,6 +15,7 @@ const ABI = parseAbi([
   "function exit()",
   "function getReward()",
   "function claim()",
+  "function claim(uint256 index, address account, uint256 amount, bytes32[] merkleProof)",
   "function claimRewards()",
   "function withdraw(uint256 amount)",
   "function redeem(uint256 shares, address receiver, address owner)",
@@ -50,6 +51,8 @@ export function Recover(p: {
   data: `0x${string}`;
   value: string;
   title: string;
+  /** wallet the scan was for (signed into the link) */
+  owner: `0x${string}`;
   next?: string;
 }) {
   const { address, chainId } = useAccount();
@@ -80,7 +83,11 @@ export function Recover(p: {
   }, [known, address, p.to, p.data, p.value]);
   // Locally decoded calls still need every receiver/holder to be the connected wallet.
   const sig = describeCall(p.to, p.data);
-  const safe = (known ? localCallPaysOwner(call, address) : !!remote?.verified) && p.value === "0";
+  const wrongWallet = !!address && !ownerMatches(p.owner, address);
+  const safe =
+    !wrongWallet &&
+    (known ? localCallPaysOwner(call, address) : !!remote?.verified) &&
+    p.value === "0";
   return (
     <div className="flex w-full max-w-2xl flex-col gap-4" data-testid="recover">
       <div className="flex items-end gap-3">
@@ -143,12 +150,17 @@ export function Recover(p: {
             Protect (rpc.flashbots.net) or MEV Blocker (rpc.mevblocker.io) in your wallet first.
           </p>
         )}
-        {!safe && (
+        {wrongWallet && (
+          <p className="mt-2 font-bold text-rose-300" data-testid="wrong-wallet">
+            I found this for {p.owner}, connect that wallet.
+          </p>
+        )}
+        {!safe && !wrongWallet && (
           <p className="mt-2 font-bold text-rose-300">
             I don't recognise this call as a withdraw-to-you, so I won't let you sign it here.
           </p>
         )}
-        {known && address && !localCallPaysOwner(call, address) && (
+        {known && address && !wrongWallet && !localCallPaysOwner(call, address) && (
           <p className="mt-2 font-bold text-rose-300">
             This call pays or moves funds for someone other than the connected wallet. Don't sign.
           </p>

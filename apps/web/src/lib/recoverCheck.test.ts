@@ -1,6 +1,6 @@
 import { decodeFunctionData, encodeFunctionData, parseAbi } from "viem";
 import { describe, expect, it } from "vitest";
-import { localCallPaysOwner } from "./recoverCheck";
+import { localCallPaysOwner, ownerMatches } from "./recoverCheck";
 
 const ME = "0x1111111111111111111111111111111111111111";
 const EVIL = "0x2222222222222222222222222222222222222222";
@@ -47,5 +47,29 @@ describe("localCallPaysOwner (audit: /recover signable for foreign receivers)", 
     ).toBe(false);
     expect(localCallPaysOwner(dec("withdraw", []), undefined)).toBe(false);
     expect(localCallPaysOwner(undefined, ME)).toBe(false);
+  });
+});
+
+describe("Bloqarl #3: scan owner + merkle claim", () => {
+  const m = parseAbi([
+    "function claim(uint256 index, address account, uint256 amount, bytes32[] merkleProof)",
+  ]);
+  const P = `0x${"ab".repeat(32)}` as const;
+  const mdec = (acct: string) =>
+    decodeFunctionData({
+      abi: m,
+      data: encodeFunctionData({ abi: m, functionName: "claim", args: [1n, acct as `0x${string}`, 5n, [P]] }),
+    });
+  it("recognizes a merkle claim paying the connected wallet", () => {
+    expect(localCallPaysOwner(mdec(ME), ME)).toBe(true);
+  });
+  it("rejects a merkle claim for another account", () => {
+    expect(localCallPaysOwner(mdec(EVIL), ME)).toBe(false);
+  });
+  it("signing only from the wallet the scan was for", () => {
+    expect(ownerMatches(ME, ME.toUpperCase().replace("0X", "0x"))).toBe(true);
+    expect(ownerMatches(ME, EVIL)).toBe(false);
+    expect(ownerMatches(undefined, ME)).toBe(false);
+    expect(ownerMatches(ME, undefined)).toBe(false);
   });
 });
