@@ -141,6 +141,15 @@ export const BT_ITEMS: BtItem[] = [
   },
   {
     kind: "recipes",
+    slug: "bolt11",
+    group: "chain",
+    file: "recipes/bolt11.md",
+    title: "Inspect a BOLT11 Lightning invoice",
+    description:
+      "bolt11 decodes a BOLT11 Lightning invoice to its fields and re-encodes it byte-identically. It is offline, holds no keys, and signs nothing. It is a…",
+  },
+  {
+    kind: "recipes",
     slug: "chain-algorand",
     group: "chain",
     file: "recipes/chain-algorand.md",
@@ -258,6 +267,15 @@ export const BT_ITEMS: BtItem[] = [
   },
   {
     kind: "recipes",
+    slug: "chain-thorchain",
+    group: "chain",
+    file: "recipes/chain-thorchain.md",
+    title: "THORChain (RUNE)",
+    description:
+      "Address thor1... = bech32 thor of hash160(compressed secp256k1 pubkey); path m/44'/931'/0'/0/{i}. The key is 32-byte hex (private_key, redacted).…",
+  },
+  {
+    kind: "recipes",
     slug: "chain-ton",
     group: "chain",
     file: "recipes/chain-ton.md",
@@ -303,12 +321,138 @@ export const BT_ITEMS: BtItem[] = [
   },
   {
     kind: "recipes",
+    slug: "evm-check-approval",
+    group: "goal",
+    file: "recipes/evm-check-approval.md",
+    title: "EVM: check an ERC-20 approve or permit before signing",
+    description:
+      "Task: a dApp asks you to sign an approve transaction or an EIP-2612 permit. Before signing, read three things: who gets the allowance (spender), how…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-check-proxy-delegation",
+    group: "goal",
+    file: "recipes/evm-check-proxy-delegation.md",
+    title: "EVM: check an EIP-1167 proxy or EIP-7702 delegation before interacting",
+    description:
+      "Task: the address you are about to call or sign for may run someone else's code. An EIP-1167 minimal proxy forwards every call to a fixed…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-contract-address",
+    group: "goal",
+    file: "recipes/evm-contract-address.md",
+    title: "EVM: compute a CREATE or CREATE2 address",
+    description:
+      "Task: know where a contract is (or will be) deployed before you trust or fund that address. Part of the EVM contract recipes.",
+  },
+  {
+    kind: "recipes",
     slug: "evm-contract-data",
     group: "goal",
     file: "recipes/evm-contract-data.md",
-    title: "Contract data (EVM): selectors, calldata, logs, returndata, reverts, deploy addresses",
+    title: "EVM contract recipes: index",
     description:
-      "Tiny offline stdin→stdout filters: sig-hash, abi-decode, abi-encode, create-address. No network client, no project, no config, no built-in chain list…",
+      "Short, one-task recipes for contract data on any EVM chain. The tools are offline stdin→stdout filters (sig-hash, abi-decode, abi-encode, log-decode,…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-contract-tx",
+    group: "goal",
+    file: "recipes/evm-contract-tx.md",
+    title: "EVM contract calls and contract creation: build, verify, sign, broadcast",
+    description:
+      "Works on any EVM chain: the chain is the --chain-id N you pin (tx-build writes it into the transaction, tx-verify and tx-sign refuse any other).…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-decode-calldata",
+    group: "goal",
+    file: "recipes/evm-decode-calldata.md",
+    title: "EVM: decode a transaction's calldata (and encode it back)",
+    description:
+      "Task: you have a transaction and want its function arguments. abi-decode is offline and has no signature database: you give it the signature. Part of…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-decode-logs",
+    group: "goal",
+    file: "recipes/evm-decode-logs.md",
+    title: "EVM: decode event logs",
+    description:
+      "Task: turn eth_getLogs output or a receipt's logs into named fields. Part of the EVM contract recipes.",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-decode-multicall",
+    group: "goal",
+    file: "recipes/evm-decode-multicall.md",
+    title: "EVM: decode a multicall or a Universal Router execute",
+    description:
+      "Task: one transaction carries several calls packed as bytes[]. Decode the outer call, then each inner one. No tool recurses for you: it is a pipeline…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-decode-revert",
+    group: "goal",
+    file: "recipes/evm-decode-revert.md",
+    title: "EVM: decode a revert",
+    description:
+      "Task: an eth_call or simulation failed and you want the reason. Error(string) and Panic(uint256) decode with no signature; a custom error needs its…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-eip712-verify",
+    group: "goal",
+    file: "recipes/evm-eip712-verify.md",
+    title: "EVM: check an EIP-712 signature and digest",
+    description:
+      "Task: see what a typed-data signature commits to (domain separator, message hash, digest) and who signed it, offline. Part of the EVM contract recipes.…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-eth-call",
+    group: "goal",
+    file: "recipes/evm-eth-call.md",
+    title: "EVM: run an eth_call and decode the return",
+    description:
+      "Task: read contract state (balanceOf, decimals, …) and get typed values back. Part of the EVM contract recipes.",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-inspect-contract",
+    group: "goal",
+    file: "recipes/evm-inspect-contract.md",
+    title: "EVM: inspect a deployed contract (code, ABI, selectors, sources)",
+    description:
+      "Task: before interacting, see what is deployed and what its ABI claims. Part of the EVM contract recipes. Proxies and EIP-7702 delegations:…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-permit2-signing-request",
+    group: "goal",
+    file: "recipes/evm-permit2-signing-request.md",
+    title: "EVM: what a Permit2 signing request commits to, verified offline",
+    description:
+      "Task: a dApp (here Uniswap) asks your wallet to sign Permit2 typed data. See exactly what the signature authorises and check who signed it, with no…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-tx-end-to-end",
+    group: "goal",
+    file: "recipes/evm-tx-end-to-end.md",
+    title: "EVM: from a tx hash to the decoded call, logs and revert",
+    description:
+      "Task: you have a transaction hash. Fetch the transaction and its receipt, then decode the input, the logs and, if it failed, the reason. Part of the…",
+  },
+  {
+    kind: "recipes",
+    slug: "evm-unknown-selector",
+    group: "goal",
+    file: "recipes/evm-unknown-selector.md",
+    title: "EVM: look up an unknown selector",
+    description:
+      "Task: calldata or a revert starts with a 4-byte selector you do not recognise. sig-hash has no database: you supply candidate signatures (from the…",
   },
   {
     kind: "recipes",
@@ -318,6 +462,24 @@ export const BT_ITEMS: BtItem[] = [
     title: "Check whether anything is left (balance only, nothing signed)",
     description:
       "recipes/recover.sh FILE - --goal balance runs the right reader, keeps public addresses only, and asks the chain: Esplora for btc/ltc/doge, JSON-RPC for…",
+  },
+  {
+    kind: "recipes",
+    slug: "goal-find-funded-phrase",
+    group: "goal",
+    file: "recipes/goal-find-funded-phrase.md",
+    title: "Find which of your phrases still holds coins (offline UTXO set)",
+    description:
+      "You have text you wrote yourself (old notes, a diary, a password list) and suspect one sentence in it was a brainwallet. Checking every candidate on a…",
+  },
+  {
+    kind: "recipes",
+    slug: "goal-make-a-wallet",
+    group: "goal",
+    file: "recipes/goal-make-a-wallet.md",
+    title: "Make a new wallet",
+    description:
+      "new-seed is a BIP39 keygen: it draws fresh entropy from the OS CSPRNG and prints a mnemonic in the exact shape seed-to-master reads, so making a wallet…",
   },
   {
     kind: "recipes",
@@ -445,12 +607,57 @@ export const BT_ITEMS: BtItem[] = [
   },
   {
     kind: "recipes",
+    slug: "multisig",
+    group: "chain",
+    file: "recipes/multisig.md",
+    title: "M-of-n multisig: build, carry into a Plan, each cosigner partial-signs, combine",
+    description:
+      "A multisig output needs m of n cosigners to spend. blocktools builds the script, carries it through the declarative Plan, lets each cosigner sign in…",
+  },
+  {
+    kind: "recipes",
     slug: "offline-recovery-guide",
     group: "goal",
     file: "recipes/offline-recovery-guide.md",
     title: "Offline recovery guide (seed phrase or private key → addresses)",
     description:
       "This page replaces hand-written recovery scripts (for example SwapChan's embedded JS/Python snippets): every step that touches a seed or key runs…",
+  },
+  {
+    kind: "recipes",
+    slug: "rpc-decode",
+    group: "chain",
+    file: "recipes/rpc-decode.md",
+    title: "Fetch a transaction from your node and decode it (rpc | tx-decode)",
+    description:
+      "rpc talks to a node you run. It refuses secret methods, has a read allowlist and never prints credentials. tx-decode is offline and never opens a…",
+  },
+  {
+    kind: "recipes",
+    slug: "thorchain-swap-evm",
+    group: "chain",
+    file: "recipes/thorchain-swap-evm.md",
+    title: "Cross-chain swap: send an EVM token into THORChain (router depositWithExpiry)",
+    description:
+      "Swap a token on an EVM chain (BNB, Ethereum, Avalanche, ...) to an asset on another chain — Bitcoin, Dogecoin, Litecoin, RUNE — by depositing it into…",
+  },
+  {
+    kind: "recipes",
+    slug: "thorchain-swap-utxo",
+    group: "chain",
+    file: "recipes/thorchain-swap-utxo.md",
+    title: "Cross-chain swap: send a UTXO coin into THORChain (OP_RETURN memo)",
+    description:
+      "Swap a UTXO coin (DOGE, LTC, BCH, BTC) for an asset on another chain — RUNE, ETH, another UTXO coin — by paying the coin to a THORChain vault with a…",
+  },
+  {
+    kind: "recipes",
+    slug: "thorchain-thorname",
+    group: "chain",
+    file: "recipes/thorchain-thorname.md",
+    title: "THORName: register and manage an affiliate name on THORChain",
+    description:
+      "A THORName maps a short name to a payout address per chain, so THORChain routes can pay an affiliate fee to it. Registering and updating a name is a…",
   },
   {
     kind: "recipes",

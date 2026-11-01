@@ -10,6 +10,13 @@ const CHAIN_LINKED = new Set([
   "supported-chains",
 ]);
 
+const RECIPE: Record<string, string> = {
+  "evm-abi": "evm-decode-calldata",
+  "create-address": "evm-contract-address",
+  "bytecode-inspect": "evm-inspect-contract",
+  "typed-data-verify": "evm-eip712-verify",
+};
+
 /** Shared layout for every /tools/<slug> developer tool: H1, form, copy, FAQ, related, JSON-LD. */
 export function DevToolPage({ tool }: { tool: DevTool }) {
   const related = tool.related
@@ -36,6 +43,16 @@ export function DevToolPage({ tool }: { tool: DevTool }) {
             Set up MCP
           </Link>
         </p>
+        {RECIPE[tool.slug] && (
+          <p className="text-sm">
+            <Link
+              href={`/blocktools/recipes/${RECIPE[tool.slug]}`}
+              className="underline hover:text-amber-300"
+            >
+              Recipe
+            </Link>
+          </p>
+        )}
         {CHAIN_LINKED.has(tool.slug) && (
           <p className="text-sm text-violet-300">
             Address format, prefixes and decimals per chain:{" "}

@@ -13,3 +13,19 @@ Sweep: `recipes/recover.sh in/seed.txt ltc1q... --chain ltc` (e2e: full sweep fo
 both codes typed by the pty driver). Defaults: litecoinspace.org. Dogecoin has no
 default Esplora, so pass `--url`.
 UNTESTED against a live LTC or DOGE network.
+
+## Dogecoin (or any fork) without dumptxoutset
+
+Dogecoin 1.14 has no `dumptxoutset`. Stop the node (or copy `chainstate/` while it is stopped), then
+build the dump from its chainstate directly and search your notes against it:
+
+    dogecoin-cli stop
+    utxo-set --chainstate ~/.dogecoin/chainstate --write-dump /in/doge-utxo.dat --stats
+    wallet-finder --dump /in/doge-utxo.dat --chain doge < /in/notes.txt > /secrets/hits.jsonl
+
+Tested against a real Dogecoin 1.14.9 regtest chainstate, end to end through wallet-finder.
+To list the coins themselves (JSON lines, or `--addresses-only`, or a `--census` summary):
+
+    chainstate-dump --chain doge --census ~/.dogecoin/chainstate
+
+Mainnet chainstates are not measured here. Details: docs/CHAINS.md.
