@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ContractTool } from "@/components/tools/ContractTool";
 
 export const metadata: Metadata = {
@@ -18,6 +19,11 @@ export default function ContractPage() {
         your own connected wallet: SwapChan never signs or sends anything.
       </p>
       <ContractTool />
+      <p className="mt-6 text-sm">
+        <Link href="/blocktools/recipes/evm-contract-tx" className="underline hover:text-amber-300">
+          Recipe
+        </Link>
+      </p>
     </article>
   );
 }

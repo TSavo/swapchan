@@ -25,6 +25,7 @@ and see addresses and signed transactions only.
 | Offline guide: seed/key → EVM, Tron, BTC, LTC, DOGE | [offline-recovery-guide.md](offline-recovery-guide.md) | built, tested |
 | Electrum seed / wallet file (2.x+, and 1.x old 12-word seed) | [input-electrum.md](input-electrum.md) | built, tested; old seed btc only |
 | Brainwallet phrase (brainwallet.org / bitaddress.org sha256, WarpWallet) | [input-brainwallet.md](input-brainwallet.md) | built, tested on public vectors |
+| Which of my phrases is funded? (offline UTXO set from `dumptxoutset`: utxo-set, wallet-finder) | [goal-find-funded-phrase.md](goal-find-funded-phrase.md) | built, tested on a real Core 25.2 dump (regtest) |
 | Bitcoin Core / old-client `wallet.dat` | [input-wallet-dat.md](input-wallet-dat.md) | built, tested; real altcoin-client file untested |
 | Armory `.wallet` | [input-armory.md](input-armory.md) | built, tested on one public test wallet |
 | MultiBit Classic `.key` | [input-multibit.md](input-multibit.md) | built, tested; MultiBit HD / bitcoinj `.wallet` built, tested on public test wallets |
@@ -52,6 +53,7 @@ and see addresses and signed transactions only.
 | Tron | ✅ | ✗ | ✗ | [chain-tron.md](chain-tron.md) |
 | Solana | ✅ | ✗ | ✗ | [chain-solana.md](chain-solana.md) |
 | Cosmos Hub | ✅ | ✅ utxo-fetch (host-side, manual) | ✅ MsgSend (acct-tx, TTY confirm) | [chain-cosmos.md](chain-cosmos.md) |
+| THORChain (RUNE) | ✅ thor1 | ✅ rpc (host-side) | ✅ MsgDeposit (acct-tx, TTY confirm) | [chain-thorchain.md](chain-thorchain.md) |
 | Algorand | ✅ (own mnemonic) | ✅ utxo-fetch (host-side, manual) | ✅ pay / close-to (acct-tx, TTY confirm) | [chain-algorand.md](chain-algorand.md) |
 | Cardano | ✅ (Shelley base, Icarus) | ✅ utxo-fetch (Koios, host-side) | ✅ ADA-only payment/sweep (acct-tx, TTY confirm) | [chain-cardano.md](chain-cardano.md) |
 | Zcash shielded (Sapling, unified u1) | ✅ (address + Sapling viewing key) | ✗ | ✗ | [zcash-shielded.md](zcash-shielded.md) |
@@ -60,6 +62,34 @@ and see addresses and signed transactions only.
 | Stellar | ✅ | ✅ utxo-fetch (host-side, manual) | ✅ Payment / AccountMerge (acct-tx, TTY confirm) | [chain-stellar.md](chain-stellar.md) |
 | Monero | ✅ | ✅ xmr-wallet scan (stagenet) | ✅ xmr-wallet sweep (stagenet, TTY confirm) | [monero.md](monero.md) |
 
+## EVM contracts (any EVM chain)
+
+| Goal | Recipe | Status |
+|---|---|---|
+| Index of the short EVM contract recipes below | [evm-contract-data.md](evm-contract-data.md) | index |
+| Decode a transaction's calldata; encode calldata (`abi-decode`, `abi-encode`) | [evm-decode-calldata.md](evm-decode-calldata.md) | offline examples run in CI |
+| Look up an unknown selector (`sig-hash --lookup`, your own candidate list) | [evm-unknown-selector.md](evm-unknown-selector.md) | offline examples run in CI |
+| Decode event logs (`abi-decode`, `log-decode`) | [evm-decode-logs.md](evm-decode-logs.md) | offline examples run in CI |
+| Decode a revert: `Error(string)`, `Panic`, custom errors | [evm-decode-revert.md](evm-decode-revert.md) | offline examples run in CI |
+| Run an `eth_call` and decode the return; state overrides, traces (`contract-call`, `contract-trace`) | [evm-eth-call.md](evm-eth-call.md) | run in CI against a mock RPC only |
+| Compute a CREATE or CREATE2 address (`create-address`) | [evm-contract-address.md](evm-contract-address.md) | offline examples run in CI |
+| Inspect a deployed contract: code, ABI, selectors, offline source/metadata check | [evm-inspect-contract.md](evm-inspect-contract.md) | offline examples run in CI |
+| Check an EIP-712 signature and digest (`typed-data-verify`) | [evm-eip712-verify.md](evm-eip712-verify.md) | offline examples run in CI |
+| Check an ERC-20 approve or EIP-2612 permit before signing | [evm-check-approval.md](evm-check-approval.md) | offline examples run in CI on constructed data; automatic unlimited-approval flagging NOT BUILT |
+| Decode a multicall or a Universal Router `execute` (nested calls) | [evm-decode-multicall.md](evm-decode-multicall.md) | run in CI; naming router commands / v4 actions NOT BUILT |
+| Tx hash → decoded call, logs and revert, end to end | [evm-tx-end-to-end.md](evm-tx-end-to-end.md) | run in CI against a mock RPC; live node untested; tracing a mined tx NOT BUILT |
+| What a Permit2 signing request commits to, verified offline | [evm-permit2-signing-request.md](evm-permit2-signing-request.md) | run in CI on a real mainnet permit |
+| Check an EIP-1167 proxy or EIP-7702 delegation before interacting (`bytecode-inspect`) | [evm-check-proxy-delegation.md](evm-check-proxy-delegation.md) | run in CI; storage-slot proxies NOT BUILT |
+| Build, verify, sign and broadcast a contract call or a deployment (`tx-build --data/--create` → `tx-verify` → `tx-sign`) | [evm-contract-tx.md](evm-contract-tx.md) | build, verify, sign and broadcast covered by e2e against a mock that does not execute the EVM; the real-geth devnet script is untested |
+
+## Cross-chain swaps (THORChain)
+
+| Goal | Recipe | Status |
+|---|---|---|
+| Register / manage an affiliate THORName | [thorchain-thorname.md](thorchain-thorname.md) | built, tested; measured on mainnet |
+| Swap an EVM token into another chain (router depositWithExpiry) | [thorchain-swap-evm.md](thorchain-swap-evm.md) | built (shipped EVM tx tools + allow_calls); measured on mainnet |
+| Swap a UTXO coin (DOGE/LTC/BCH/BTC) into another chain (OP_RETURN memo) | [thorchain-swap-utxo.md](thorchain-swap-utxo.md) | built (shipped `tx-build --memo` + `tx-sign --expect-memo` exact-memo OP_RETURN accept); e2e + regtest; measured on mainnet |
+
 ## By goal
 | Goal | Recipe |
 |---|---|
@@ -67,6 +97,9 @@ and see addresses and signed transactions only.
 | Check whether anything is left | [goal-check-balance.md](goal-check-balance.md) |
 | Move everything to a new address | [goal-sweep.md](goal-sweep.md) |
 | Read a transaction before signing/sending | [decode-a-transaction.md](decode-a-transaction.md) |
+| Fetch a tx from your bitcoind and decode it, fee included (`rpc \| tx-decode`) | [rpc-decode.md](rpc-decode.md) |
+| m-of-n multisig: build, carry into a Plan, each cosigner partial-signs, combine (P2WSH and Taproot script-path) | [multisig.md](multisig.md) |
+| Inspect a BOLT11 Lightning invoice (decode fields + recovered payee, re-encode) | [bolt11.md](bolt11.md) |
 
 Fee warnings (`high_fee`, `high_fee_rate`) use per-coin limits from measured mainnet fee rates (docs/CHAINS.md "Fee-warning limits").
 | Verify, and sign on an offline machine | [goal-verify-and-offline.md](goal-verify-and-offline.md) |
@@ -95,6 +128,7 @@ Worldcoin (wdc) txs decode as Bitcoin-legacy (mainnet-checked) but wdc remains u
 | monero_address | exit 3 (needs the view key) | monero.md |
 | xrp_seed | xrp-tx keys, exit 3 -> xrp-tx build/sign | xrp.md |
 | ton_mnemonic, algo_mnemonic, xlm_seed | address, exit 3 -> acct-tx build/sign | chain-ton/algorand/stellar.md |
+| (Signum/Burst passphrase) | `recover.sh --chain signum`: signum-account -> S- address, exit 3 (sweep in Signum XT wallet) | chain-old-coins.md |
 | unknown | exit 3 | input-unknown.md |
 
 Sweep is automated for btc/ltc/doge/eth. For any other `--chain`, recover.sh prints the addresses, exits 3 and names
