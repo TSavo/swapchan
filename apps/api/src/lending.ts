@@ -757,10 +757,11 @@ export async function lendingChecks(
           step(i, `calls ${x.to}, which is not one of Morpho's adapters.`);
           continue;
         }
-        let s: { functionName: string; args: readonly unknown[] };
-        try {
-          s = decodeFunctionData({ abi: GENERAL_ADAPTER1, data: x.data }) as typeof s;
-        } catch {
+        // Decode the inner adapter call through the same vendored, keyless blocktools WASM
+        // (evmAbiDecode) the other lending decodes use, with viem as the WASM-null fallback;
+        // tryAbi returns null (not a throw) when the calldata is not a GeneralAdapter1 call.
+        const s = tryAbi(GENERAL_ADAPTER1, x.data);
+        if (!s) {
           step(i, "unrecognized adapter call; cannot verify it.");
           continue;
         }
