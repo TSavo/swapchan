@@ -45,6 +45,7 @@ export const explainPlan: (a: number, b: number) => [number, number, number, num
 export const legacyToCashAddr: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const listChains: () => [number, number];
 export const msgVerify: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const msgVerifyOpts: (a: number, b: number) => [number, number, number, number];
 export const multisigAddress: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const polkadotAccountStorageKey: (a: number, b: number) => [number, number, number, number];
 export const recoveryTables: () => [number, number];
