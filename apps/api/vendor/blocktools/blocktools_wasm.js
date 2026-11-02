@@ -1046,14 +1046,18 @@ module.exports.decodeTx = function(input, chain) {
 
 /**
  * EIP-712 typed data: encodeType, domain separator, message hash, digest; with a signature (65-byte or EIP-2098 64-byte) the recovered signer; with an expected signer a verdict.
+ * `options_json` (optional) `{expect_chain_id?: "decimal", expect_verifying_contract?: "0x.."}`: the
+ * typed-data-verify --expect-chain-id / --expect-verifying-contract checks (status chain_id_mismatch /
+ * verifying_contract_mismatch). Wrong types throw `<key>_must_be_string`.
  * @param {string} typed_data_json
  * @param {string | null} [sig_hex]
  * @param {string | null} [signer]
+ * @param {string | null} [options_json]
  * @returns {string}
  */
-module.exports.evmTypedDataVerify = function(typed_data_json, sig_hex, signer) {
-    let deferred5_0;
-    let deferred5_1;
+module.exports.evmTypedDataVerify = function(typed_data_json, sig_hex, signer, options_json) {
+    let deferred6_0;
+    let deferred6_1;
     try {
         const ptr0 = passStringToWasm0(typed_data_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
@@ -1061,18 +1065,20 @@ module.exports.evmTypedDataVerify = function(typed_data_json, sig_hex, signer) {
         var len1 = WASM_VECTOR_LEN;
         var ptr2 = isLikeNone(signer) ? 0 : passStringToWasm0(signer, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len2 = WASM_VECTOR_LEN;
-        const ret = wasm.evmTypedDataVerify(ptr0, len0, ptr1, len1, ptr2, len2);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
+        var ptr3 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.evmTypedDataVerify(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
         if (ret[3]) {
-            ptr4 = 0; len4 = 0;
+            ptr5 = 0; len5 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
     } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
     }
 };
 
