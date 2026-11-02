@@ -322,8 +322,9 @@ export function btcReceiverWord(a: string): string | null {
 function checkLifiNonEvm(c: Acc, data: Hex, dest: string, taker: string | undefined) {
   const f = lifiNonEvm(data);
   if (!f) {
-    // Unknown facet: fall back to locating the destination anywhere in calldata.
-    c.test("recipient", contains(data, dest), `non-EVM recipient ${dest} not found in calldata`);
+    // Unknown/undecodable non-EVM facet: refund and receiver can't be checked, so fail closed.
+    c.bad("refund", "LI.FI non-EVM facet not recognized: refund/depositor not verifiable");
+    c.bad("recipient", `LI.FI non-EVM facet not recognized: receiver ${dest} not verifiable`);
     return;
   }
   c.test(

@@ -84,6 +84,21 @@ describe("LI.FI ETH->BTC receiver decode", () => {
       expect((await check(payload(tool, tampered), "refund"))?.ok).toBe(false);
     });
   }
+  for (const tool of ["layerswap", "near", "relaydepository"]) {
+    it(`${tool}: unrecognized bridge name fails closed`, async () => {
+      const f = FX[tool]!;
+      const name = Buffer.from(tool).toString("hex");
+      const d = f.data.toLowerCase();
+      expect(d).toContain(name);
+      // Flip the last char of BridgeData.bridge so the facet is no longer recognized.
+      const last = (Number.parseInt(name.slice(-2), 16) ^ 1).toString(16);
+      const p = payload(tool, d.replace(name, `${name.slice(0, -2)}${last}`));
+      const v = await verifyPayload(p, ctx);
+      expect(v.verified).toBe(false);
+      expect((await check(p, "refund"))?.ok).toBe(false);
+      expect((await check(p, "recipient"))?.ok).toBe(false);
+    });
+  }
   it("relaydepository: depositor must be taker, recipient partial (off-chain order)", async () => {
     const v = await verifyPayload(payload("relaydepository"), ctx);
     expect(v.verified).toBe(true);
