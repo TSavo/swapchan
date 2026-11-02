@@ -97,6 +97,54 @@ const bad = (code: string, status = 400): never => {
 };
 const w = () => blocktools() ?? bad("blocktools_unavailable", 503);
 
+const PRESIGN_ADDR = /^0x[0-9a-fA-F]{40}$/;
+const PRESIGN_DEC = /^\d{1,78}$/;
+const PRESIGN_STR = [
+  "expect_spender",
+  "expect_amount",
+  "expect_recipient",
+  "expect_value",
+] as const;
+/**
+ * Optional blocktools verifyTx pre-sign assertions (blocktools 10a1356a), passed through in its call_json next
+ * to the ABI. Types are checked here with blocktools' own error codes. None given: blocktools' deny-by-default
+ * checks run as before (unlimited_approval, inner_calls_not_asserted, delegatecall).
+ */
+export function presignOptions(i: Record<string, unknown>): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  for (const k of PRESIGN_STR) {
+    const v = i[k];
+    if (v === undefined || v === null || v === "") continue;
+    if (typeof v !== "string") return bad(`${k}_must_be_string`);
+    const s = v.trim();
+    const re = k === "expect_spender" || k === "expect_recipient" ? PRESIGN_ADDR : PRESIGN_DEC;
+    if (!re.test(s)) return bad(`bad_${k}`);
+    o[k] = s;
+  }
+  const u = i.expect_unlimited;
+  if (u !== undefined && u !== null) {
+    if (typeof u !== "boolean") return bad("expect_unlimited_must_be_bool");
+    if (u) {
+      if (o.expect_spender === undefined) return bad("expect_unlimited_needs_expect_spender");
+      if (o.expect_amount !== undefined)
+        return bad("expect_unlimited_conflicts_with_expect_amount");
+      o.expect_unlimited = true;
+    }
+  }
+  const lists = [
+    ["allow_inner_call", /^0x[0-9a-fA-F]{40}:0x[0-9a-fA-F]{8}$/],
+    ["allow_delegatecall", PRESIGN_ADDR],
+  ] as const;
+  for (const [k, re] of lists) {
+    const v = i[k];
+    if (v === undefined || v === null) continue;
+    if (!Array.isArray(v) || v.length > 64 || v.some((x) => typeof x !== "string"))
+      return bad(`${k}_must_be_string_array`);
+    o[k] = (v as string[]).map((x) => (re.test(x.trim()) ? x.trim() : bad(`bad_${k}`)));
+  }
+  return o;
+}
+
 export function evmChain(v: unknown): number {
   if (typeof v !== "string" && typeof v !== "number") return bad("missing_chainId");
   let id: number;
@@ -624,6 +672,7 @@ export function contractTool(d: Deps) {
    * the ABI (evmApproveCall) and checks the unsigned tx with verifyTx and the ABI. Any failed step makes it "fail".
    */
   async function approveCall(i: Record<string, unknown>) {
+    const presign = presignOptions(i);
     const info = await resolve(i);
     const fn = pickFn(info.functions, i.function ?? i.signature);
     const args = shapeArgs(fn, i.args);
@@ -678,7 +727,7 @@ export function contractTool(d: Deps) {
           ],
           info.chainId,
           null,
-          JSON.stringify({ abi: info.abi }),
+          JSON.stringify({ abi: info.abi, ...presign }),
         )
       : null;
     return {
@@ -912,6 +961,9 @@ function check(
     warnings: Array.isArray(v.v.warnings) ? (v.v.warnings as string[]) : [],
     check_these: typeof v.v.check_these === "string" ? v.v.check_these : null,
     call: v.v.call ?? null,
+    approvals: Array.isArray(v.v.approvals) ? v.v.approvals : [],
+    transfers: Array.isArray(v.v.transfers) ? v.v.transfers : [],
+    inner_calls: Array.isArray(v.v.inner_calls) ? v.v.inner_calls : [],
   };
 }
 

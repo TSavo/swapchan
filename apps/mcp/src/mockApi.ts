@@ -123,6 +123,7 @@ export function startMockApi(port = 0): Promise<{ server: Server; url: string; c
       if (op === "approve")
         return send(200, {
           ok: true,
+          request: b,
           verdict: "pass",
           reasons: [],
           to: b.address,

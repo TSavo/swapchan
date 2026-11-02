@@ -330,7 +330,21 @@ export const DEV_TOOLS: Record<string, (i: In) => unknown> = {
   "typed-data-verify": (i) => {
     const sig = optStr(i, "signature", /^(0x)?([0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/);
     const signer = optStr(i, "signer", EVM_ADDR);
-    return json(w().evmTypedDataVerify(doc(i, "typed_data", 15_000), sig ?? null, signer ?? null));
+    // optional domain assertions (blocktools 10a1356a options_json); none given: unchanged
+    for (const k of ["expect_chain_id", "expect_verifying_contract"])
+      if (i[k] !== undefined && typeof i[k] !== "string") bad(`${k}_must_be_string`);
+    const chainId = optStr(i, "expect_chain_id", /^\d{1,78}$/);
+    const contract = optStr(i, "expect_verifying_contract", EVM_ADDR);
+    const opts =
+      chainId || contract
+        ? JSON.stringify({
+            ...(chainId ? { expect_chain_id: chainId } : {}),
+            ...(contract ? { expect_verifying_contract: contract } : {}),
+          })
+        : null;
+    return json(
+      w().evmTypedDataVerify(doc(i, "typed_data", 15_000), sig ?? null, signer ?? null, opts),
+    );
   },
   "supported-chains": (i) => {
     const all = [
