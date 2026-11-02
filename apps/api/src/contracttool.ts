@@ -555,7 +555,11 @@ export function contractTool(d: Deps) {
         calldata: data,
       };
     const types = `(${fn.outputs.map((o) => o.type).join(",")})`;
-    const dec = JSON.parse(w().evmAbiDecode(JSON.stringify({ input: raw, types }))) as {
+    const dec = JSON.parse(
+      w().evmAbiDecode(
+        JSON.stringify({ input: raw, types, allow_trailing: true, allow_gaps: true }),
+      ),
+    ) as {
       status?: string;
       args?: { type: string; value: unknown }[];
     };

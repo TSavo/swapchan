@@ -113,6 +113,23 @@ describe("EVM guard call decoding parity: blocktools vs viem", () => {
     }
   });
 
+  it("accepts trailing bytes after the last ABI word, like viem (blocktools allow_trailing)", () => {
+    const abi = parseAbi(["function approve(address spender,uint256 amount)"]);
+    const data = vEnc({
+      abi,
+      functionName: "approve",
+      args: ["0xeb0eC7a28E4B6B175806E21D9D3afE45792C5c7B", 2n ** 128n],
+    }) as Hex;
+    for (const suffix of ["00", "deadbeef", "ab".repeat(32), "cd".repeat(45)]) {
+      const d = `${data}${suffix}` as Hex;
+      expect(decodeFunctionData({ abi, data: d }).args).toEqual(vDec({ abi, data: d }).args);
+    }
+    const T = [{ type: "uint256" }, { type: "address" }] as const;
+    const enc = vEncParams(T, [7n, "0xeb0eC7a28E4B6B175806E21D9D3afE45792C5c7B"]);
+    const d = `${enc}${"11".repeat(40)}` as Hex;
+    expect(decodeAbiParameters(T as never, d)).toEqual(vDecParams(T, d));
+  });
+
   it("throws (like viem) on calldata that matches no ABI function", () => {
     expect(() => decodeFunctionData({ abi: ABIS.oneinch, data: "0xdeadbeef" })).toThrow();
   });
