@@ -601,7 +601,11 @@ export const encodeAbiParameters = (params: readonly AbiParam[], values: readonl
  *  objects, element arrays, checksummed addresses). blocktools returns ints as decimal strings and tuples as
  *  positional arrays, so the value tree is re-shaped against the viem param tree — which also carries the
  *  component names viem keys named tuples by (the raw `types` path has none). Fail closed: throws when the
- *  WASM is unavailable or the calldata does not decode (the guard's tryDecode catches it, as with viem). */
+ *  WASM is unavailable or the calldata does not decode (the guard's tryDecode catches it, as with viem).
+ *  allow_trailing: viem ignores bytes after the last ABI word, so these drop-ins ask blocktools (strict by
+ *  default since ac0b3f7) to do the same; dirty padding and truncated words are still rejected. allow_gaps:
+ *  viem also follows forward offsets past the canonical tail position (LI.FI BridgeData at 0x60/0x80 in
+ *  multi-param calldata); backward, overlapping and aliased offsets still throw non_canonical_offset. */
 type AbiArg = { readonly value: unknown };
 /** blocktools value (ints as decimal strings, tuples as positional arrays) -> viem's native value for `p`. */
 const abiValueOf = (p: AbiParam, v: unknown): unknown => {
@@ -630,7 +634,14 @@ export function decodeFunctionData(p: { readonly abi: readonly unknown[]; readon
   args: readonly unknown[];
 } {
   const r = JSON.parse(
-    need().evmAbiDecode(JSON.stringify({ input: p.data, abi: JSON.stringify(p.abi) })),
+    need().evmAbiDecode(
+      JSON.stringify({
+        input: p.data,
+        abi: JSON.stringify(p.abi),
+        allow_trailing: true,
+        allow_gaps: true,
+      }),
+    ),
   ) as { status?: string; signature?: string; args?: AbiArg[] };
   if (r.status !== "ok" || !r.signature || !Array.isArray(r.args))
     throw new Error(`abi: cannot decode ${String(p.data).slice(0, 10)}`);
@@ -646,7 +657,12 @@ export function decodeFunctionData(p: { readonly abi: readonly unknown[]; readon
 export function decodeAbiParameters(params: readonly AbiParam[], data: Hex): unknown[] {
   const r = JSON.parse(
     need().evmAbiDecode(
-      JSON.stringify({ input: data, types: `(${params.map(canonType).join(",")})` }),
+      JSON.stringify({
+        input: data,
+        types: `(${params.map(canonType).join(",")})`,
+        allow_trailing: true,
+        allow_gaps: true,
+      }),
     ),
   ) as { status?: string; args?: AbiArg[] };
   if (r.status !== "ok" || !Array.isArray(r.args) || r.args.length !== params.length)
