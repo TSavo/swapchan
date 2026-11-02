@@ -419,3 +419,50 @@ describe("multisig / combine / plan resolve / msg verify (blocktools wasm, keyle
     });
   });
 });
+
+describe("typed-data-verify domain options (blocktools 10a1356a options_json)", () => {
+  const A = "0x1111111111111111111111111111111111111111";
+  const td = JSON.stringify({
+    types: {
+      EIP712Domain: [
+        { name: "chainId", type: "uint256" },
+        { name: "verifyingContract", type: "address" },
+      ],
+      M: [{ name: "x", type: "uint256" }],
+    },
+    primaryType: "M",
+    domain: { chainId: 1, verifyingContract: A },
+    message: { x: 1 },
+  });
+  const run = (o: Record<string, unknown>) => ok("typed-data-verify", { typed_data: td, ...o });
+  it("unchanged without options; matching options ok", () => {
+    expect(run({}).status).toBe("ok");
+    expect(run({ expect_chain_id: "1", expect_verifying_contract: A }).status).toBe("ok");
+    expect(run({ expect_chain_id: "", expect_verifying_contract: "" }).status).toBe("ok");
+  });
+  it("chain id and verifying contract mismatches", () => {
+    const c = run({ expect_chain_id: "8453" });
+    expect(c.status).toBe("chain_id_mismatch");
+    expect(String(c.expected_chain_id)).toBe("8453");
+    const v = run({ expect_verifying_contract: "0x2222222222222222222222222222222222222222" });
+    expect(v.status).toBe("verifying_contract_mismatch");
+    expect(v.verifying_contract).toBe(A);
+    // chain id mismatch takes priority
+    expect(
+      run({
+        expect_chain_id: "10",
+        expect_verifying_contract: "0x2222222222222222222222222222222222222222",
+      }).status,
+    ).toBe("chain_id_mismatch");
+  });
+  it("bad option types are rejected", () => {
+    expect(() => run({ expect_chain_id: 1 })).toThrow("expect_chain_id_must_be_string");
+    expect(() => run({ expect_chain_id: "x" })).toThrow("bad_expect_chain_id");
+    expect(() => run({ expect_verifying_contract: true })).toThrow(
+      "expect_verifying_contract_must_be_string",
+    );
+    expect(() => run({ expect_verifying_contract: "0x12" })).toThrow(
+      "bad_expect_verifying_contract",
+    );
+  });
+});

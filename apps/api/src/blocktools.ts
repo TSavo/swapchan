@@ -29,7 +29,11 @@ type Wasm = {
     allowWarnings: boolean,
     /** 8dfbe68: nonzero ETH value beside ERC-20 transfer calldata fails (eth_value_with_token_call) unless true */
     allowValueWithToken?: boolean | null,
-    /** f90a6dd: {abi} / {sigs} to check non-token calldata against, or {createHash} to pin a creation's initcode */
+    /**
+     * f90a6dd: {abi} / {sigs} to check non-token calldata against, or {createHash} to pin a creation's initcode.
+     * 10a1356a: also expect_spender, expect_amount, expect_unlimited, expect_recipient, expect_value,
+     * allow_inner_call ("TO:SELECTOR"[]), allow_delegatecall (TO[]).
+     */
     callJson?: string | null,
   ): string;
   /** f90a6dd: unsigned EVM tx (transfer, call `data`, or creation `create`) as JSON */
@@ -61,7 +65,13 @@ type Wasm = {
   /** 5dd2037: runtime bytecode classification (EIP-1167 / EIP-7702 / EOF), EIP-170 size, keccak256 */
   evmBytecodeInspect(codeHex: string): string;
   /** 69e09b9: EIP-712 digest; with a signature the recovered signer; with an expected signer a verdict */
-  evmTypedDataVerify(typedDataJson: string, sigHex?: string | null, signer?: string | null): string;
+  /** 10a1356a: optionsJson {expect_chain_id?: decimal string, expect_verifying_contract?: 0x address} */
+  evmTypedDataVerify(
+    typedDataJson: string,
+    sigHex?: string | null,
+    signer?: string | null,
+    optionsJson?: string | null,
+  ): string;
   twox128(text: string): string;
   ss58Encode(accountHex: string, prefix: number): string;
   ss58Decode(addr: string): string;

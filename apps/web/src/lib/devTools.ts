@@ -1017,6 +1017,7 @@ export const DEV_TOOLS: DevTool[] = [
     body: [
       "The page computes the encoded type, domain separator, message hash and final digest exactly as wallets do. With a signature it recovers the signer's address; with an expected address it tells you if they match.",
       "This checks signatures that already exist. It never signs anything and never needs a private key. Both 65-byte and EIP-2098 compact signatures are accepted.",
+      "Optionally give the chain id and contract you expect. If the domain names a different chain the status is chain_id_mismatch; a different verifyingContract gives verifying_contract_mismatch.",
     ],
     keywords: ["eip712 hash", "verify typed data signature", "signTypedData decoder"],
     faq: [
@@ -1043,6 +1044,18 @@ export const DEV_TOOLS: DevTool[] = [
           { name: "typed_data", label: "Typed data (JSON)", kind: "block", max: 15000 },
           { name: "signature", label: "Signature (hex)", placeholder: "0x…", optional: true },
           { name: "signer", label: "Expected signer", placeholder: "0x…", optional: true },
+          {
+            name: "expect_chain_id",
+            label: "Expected chain id",
+            placeholder: "1",
+            optional: true,
+          },
+          {
+            name: "expect_verifying_contract",
+            label: "Expected verifying contract",
+            placeholder: "0x…",
+            optional: true,
+          },
         ],
       },
     ],

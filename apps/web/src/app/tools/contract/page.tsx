@@ -18,6 +18,13 @@ export default function ContractPage() {
         Contract tab. Read functions run as an eth_call. Write functions are built here and sent by
         your own connected wallet: SwapChan never signs or sends anything.
       </p>
+      <p className="mb-4 text-sm text-violet-200 md:text-base">
+        Before the wallet button, blocktools verifyTx checks the call. By default it fails an
+        approval of 2^128 or more, inner calls inside a multicall or Safe transaction that were not
+        allowed, and any delegatecall. Through the API (/contract-tool/approve) and the MCP tool
+        contract_approve_call you can also state what you intend: expect_spender, expect_amount,
+        expect_unlimited, expect_recipient, expect_value, allow_inner_call and allow_delegatecall.
+      </p>
       <ContractTool />
       <p className="mt-6 text-sm">
         <Link href="/blocktools/recipes/evm-contract-tx" className="underline hover:text-amber-300">

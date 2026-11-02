@@ -231,6 +231,39 @@ describe("swapchan mcp over streamable http", () => {
         }),
       ),
     ).toContain("initcode_keccak256");
+    const S = "0x2222222222222222222222222222222222222222";
+    const opts = {
+      expect_spender: S,
+      expect_unlimited: true,
+      expect_recipient: S,
+      expect_value: "0",
+      allow_inner_call: [`${S}:0xa9059cbb`],
+      allow_delegatecall: [S],
+    };
+    const ap = data(
+      await c.callTool({
+        name: "contract_approve_call",
+        arguments: { chainId: 1, address: A, function: "name()", ...opts },
+      }),
+    );
+    expect(ap.request).toMatchObject(opts);
+    const badOpt = (await c.callTool({
+      name: "contract_approve_call",
+      arguments: { chainId: 1, address: A, function: "name()", expect_amount: "1.5" },
+    })) as { isError?: boolean };
+    expect(badOpt.isError).toBe(true);
+    const td = data(
+      await c.callTool({
+        name: "typed_data_verify",
+        arguments: { typed_data: "{}", expect_chain_id: "1", expect_verifying_contract: S },
+      }),
+    );
+    expect(td.result.echo).toMatchObject({ expect_chain_id: "1", expect_verifying_contract: S });
+    const badTd = (await c.callTool({
+      name: "typed_data_verify",
+      arguments: { typed_data: "{}", expect_chain_id: 1 },
+    })) as { isError?: boolean };
+    expect(badTd.isError).toBe(true);
     const bad = (await c.callTool({
       name: "contract_read",
       arguments: { chainId: 1, address: "0x12", function: "name" },

@@ -216,6 +216,170 @@ describe("pre-signing verdict (approveCall)", () => {
   });
 });
 
+describe("pre-sign options (blocktools 10a1356a verifyTx call_json)", () => {
+  const S = "0x2222222222222222222222222222222222222222";
+  const R2 = "0x4444444444444444444444444444444444444444";
+  const MAX = ((1n << 256n) - 1n).toString();
+  const abi = JSON.stringify([
+    fn(
+      "approve",
+      "nonpayable",
+      [
+        { name: "s", type: "address" },
+        { name: "a", type: "uint256" },
+      ],
+      [{ name: "", type: "bool" }],
+    ),
+    fn(
+      "transfer",
+      "nonpayable",
+      [
+        { name: "t", type: "address" },
+        { name: "v", type: "uint256" },
+      ],
+      [{ name: "", type: "bool" }],
+    ),
+    fn("deposit", "payable"),
+    fn("multicall", "nonpayable", [{ name: "d", type: "bytes[]" }]),
+    fn("execTransaction", "payable", [
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "data", type: "bytes" },
+      { name: "operation", type: "uint8" },
+      { name: "safeTxGas", type: "uint256" },
+      { name: "baseGas", type: "uint256" },
+      { name: "gasPrice", type: "uint256" },
+      { name: "gasToken", type: "address" },
+      { name: "refundReceiver", type: "address" },
+      { name: "signatures", type: "bytes" },
+    ]),
+  ]);
+  const p = { chainId: 1, address: A, abi };
+  const ap = (amount: string, o: Record<string, unknown> = {}) =>
+    tool().approveCall({ ...p, function: "approve", args: [S, amount], ...o });
+  const transfer = `0xa9059cbb${S.slice(2).padStart(64, "0")}${(5).toString(16).padStart(64, "0")}`;
+  const Z = "0x0000000000000000000000000000000000000000";
+  const exec = (op: number, o: Record<string, unknown> = {}) =>
+    tool().approveCall({
+      ...p,
+      function: "execTransaction",
+      args: [S, "0", transfer, String(op), "0", "0", "0", Z, Z, "0x"],
+      ...o,
+    });
+  it("approve: spender and amount mismatches fail; matching passes; approvals[] passed through", async () => {
+    const s = await ap("5", { expect_spender: R2 });
+    expect(s.verdict).toBe("fail");
+    expect(s.reasons).toContain("verify_spender_not_expected");
+    expect(s.verify?.approvals).toEqual([
+      expect.objectContaining({ spender: S, amount: "5", unlimited: false }),
+    ]);
+    const a = await ap("5", { expect_spender: S, expect_amount: "6" });
+    expect(a.reasons).toContain("verify_amount_not_expected");
+    const ok = await ap("5", { expect_spender: S, expect_amount: "5" });
+    expect([ok.verdict, ok.reasons]).toEqual(["pass", []]);
+  });
+  it("unlimited approval: refused by default, passes with expect_unlimited + expect_spender", async () => {
+    const d = await ap(MAX);
+    expect(d.verdict).toBe("fail");
+    expect(d.reasons).toContain("verify_unlimited_approval");
+    const ok = await ap(MAX, { expect_spender: S, expect_unlimited: true });
+    expect([ok.verdict, ok.reasons]).toEqual(["pass", []]);
+    expect(ok.verify?.approvals[0]).toMatchObject({ unlimited: true });
+  });
+  it("transfer recipient and native value mismatches fail", async () => {
+    const t = await tool().approveCall({
+      ...p,
+      function: "transfer",
+      args: [S, "5"],
+      expect_recipient: R2,
+    });
+    expect(t.reasons).toContain("verify_recipient_not_expected");
+    expect(t.verify?.transfers).toEqual([expect.objectContaining({ recipient: S, amount: "5" })]);
+    const ok = await tool().approveCall({
+      ...p,
+      function: "transfer",
+      args: [S, "5"],
+      expect_recipient: S,
+      expect_amount: "5",
+    });
+    expect(ok.reasons).not.toContain("verify_recipient_not_expected");
+    const v = await tool().approveCall({
+      ...p,
+      function: "deposit",
+      value: "7",
+      expect_value: "8",
+    });
+    expect(v.reasons).toContain("verify_value_not_expected");
+    const v2 = await tool().approveCall({
+      ...p,
+      function: "deposit",
+      value: "7",
+      expect_value: "7",
+    });
+    expect(v2.reasons).not.toContain("verify_value_not_expected");
+  });
+  it("multicall inner call: not asserted by default, passes once allowed", async () => {
+    const m = await tool().approveCall({ ...p, function: "multicall", args: [[transfer]] });
+    expect(m.verdict).toBe("fail");
+    expect(m.reasons).toContain("verify_inner_calls_not_asserted");
+    expect(m.verify?.inner_calls).toEqual([
+      expect.objectContaining({ to: A, selector: "0xa9059cbb", operation: "call" }),
+    ]);
+    const ok = await tool().approveCall({
+      ...p,
+      function: "multicall",
+      args: [[transfer]],
+      allow_inner_call: [`${A}:0xa9059cbb`],
+    });
+    expect(ok.reasons).not.toContain("verify_inner_calls_not_asserted");
+    expect(ok.verdict).toBe("pass");
+  });
+  it("Safe delegatecall: refused by default, passes when target and inner call are allowed", async () => {
+    const d = await exec(1);
+    expect(d.verdict).toBe("fail");
+    expect(d.reasons).toContain("verify_delegatecall");
+    const ok = await exec(1, {
+      allow_delegatecall: [S],
+      allow_inner_call: [`${S}:0xa9059cbb`],
+      expect_recipient: S,
+      expect_amount: "5",
+    });
+    expect(ok.reasons).not.toContain("verify_delegatecall");
+    expect(ok.verdict).toBe("pass");
+  });
+  it("bad option types and combinations are rejected before any network read", async () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ expect_spender: 1 }, "expect_spender_must_be_string"],
+      [{ expect_spender: "0x12" }, "bad_expect_spender"],
+      [{ expect_amount: 5 }, "expect_amount_must_be_string"],
+      [{ expect_amount: "1.5" }, "bad_expect_amount"],
+      [{ expect_recipient: false }, "expect_recipient_must_be_string"],
+      [{ expect_value: 7 }, "expect_value_must_be_string"],
+      [{ expect_unlimited: "yes" }, "expect_unlimited_must_be_bool"],
+      [{ expect_unlimited: true }, "expect_unlimited_needs_expect_spender"],
+      [
+        { expect_unlimited: true, expect_spender: S, expect_amount: "5" },
+        "expect_unlimited_conflicts_with_expect_amount",
+      ],
+      [{ allow_inner_call: "x" }, "allow_inner_call_must_be_string_array"],
+      [{ allow_inner_call: [S] }, "bad_allow_inner_call"],
+      [{ allow_delegatecall: [1] }, "allow_delegatecall_must_be_string_array"],
+    ];
+    for (const [o, code] of cases) {
+      const n = net({ code: { [A]: "0x6080" } });
+      await expect(
+        contractTool({ f: sourcify({}).f, env: {}, rpc: n.rpc }).approveCall({
+          ...p,
+          function: "approve",
+          args: [S, "5"],
+          ...o,
+        }),
+      ).rejects.toThrow(code);
+      expect(n.seen).toEqual([]);
+    }
+  });
+});
+
 const INIT = "0x6080604052348015600f57600080fd5b50";
 describe("contract creation (buildCreation)", () => {
   it("builds initcode, reports its keccak, approves against it, predicts the address", async () => {

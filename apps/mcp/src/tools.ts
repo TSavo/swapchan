@@ -2687,11 +2687,23 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     "typed_data_verify",
     {
       title: "EIP-712 typed data hash / signer check (dev tool)",
-      description: `Hash EIP-712 typed data (typed_data as JSON text, as passed to eth_signTypedData_v4): encoded type, domain separator, struct hash and digest. With an existing public signature (65-byte or EIP-2098 64-byte) it recovers the signer address and low_s flag; with signer it reports valid or signer_mismatch. Checks existing signatures only; never signs. ${OFFLINE}`,
+      description: `Hash EIP-712 typed data (typed_data as JSON text, as passed to eth_signTypedData_v4): encoded type, domain separator, struct hash and digest. With an existing public signature (65-byte or EIP-2098 64-byte) it recovers the signer address and low_s flag; with signer it reports valid or signer_mismatch. Optional expect_chain_id / expect_verifying_contract assert the domain (status chain_id_mismatch or verifying_contract_mismatch). Checks existing signatures only; never signs. ${OFFLINE}`,
       inputSchema: z.object({
         typed_data: pub(15000),
         signature: pub(140).optional(),
         signer: pub(64).optional(),
+        expect_chain_id: z
+          .string()
+          .regex(/^\d{1,78}$/)
+          .optional()
+          .describe("Decimal chain id the domain must carry; else status chain_id_mismatch"),
+        expect_verifying_contract: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]{40}$/)
+          .optional()
+          .describe(
+            "Address the domain's verifyingContract must equal; else verifying_contract_mismatch",
+          ),
       }),
       annotations: devAnn,
     },
@@ -2806,7 +2818,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     "contract_approve_call",
     {
       title: "Pre-signing check of a contract call (unsigned, nothing sent)",
-      description: `Pre-signing verdict for one EVM contract call: builds the calldata, re-encodes it with the full ABI and exact signature, builds an unsigned tx (placeholder nonce and gas; the wallet sets the real ones), approves the calldata against the ABI (blocktools evmApproveCall: ok, unknown_selector or bad_calldata) and checks the unsigned tx with blocktools verifyTx. Returns verdict pass or fail with reasons, the data, target and value, and verifyTx's CHECK THESE text. Show the verdict before the user signs; do not send on fail. SwapChan never signs, sends or broadcasts. ${POWERED}`,
+      description: `Pre-signing verdict for one EVM contract call: builds the calldata, re-encodes it with the full ABI and exact signature, builds an unsigned tx (placeholder nonce and gas; the wallet sets the real ones), approves the calldata against the ABI (blocktools evmApproveCall: ok, unknown_selector or bad_calldata) and checks the unsigned tx with blocktools verifyTx. verifyTx refuses by default an approval of 2^128 or more, unasserted inner calls (multicall, Safe) and delegatecall; optional expect_spender, expect_amount, expect_unlimited, expect_recipient, expect_value, allow_inner_call and allow_delegatecall state what the user intends (failures such as spender_not_expected, amount_not_expected, recipient_not_expected, value_not_expected). Returns verdict pass or fail with reasons, the data, target and value, verifyTx's CHECK THESE text and its approvals, transfers and inner_calls. Show the verdict before the user signs; do not send on fail. SwapChan never signs, sends or broadcasts. ${POWERED}`,
       inputSchema: z.object({
         chainId: evmChainArg,
         address: contractAddr,
@@ -2818,6 +2830,40 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           .optional()
           .describe("Wei to send (payable functions only)"),
         abi: abiArg,
+        expect_spender: contractAddr
+          .optional()
+          .describe("Spender any approval must name; else spender_not_expected"),
+        expect_amount: z
+          .string()
+          .regex(/^\d{1,78}$/)
+          .optional()
+          .describe("Exact approval or transfer amount (base units); else amount_not_expected"),
+        expect_unlimited: z
+          .boolean()
+          .optional()
+          .describe(
+            "Allow an unlimited approval to expect_spender (needs expect_spender; not with expect_amount)",
+          ),
+        expect_recipient: contractAddr
+          .optional()
+          .describe("Recipient any token transfer must pay; else recipient_not_expected"),
+        expect_value: z
+          .string()
+          .regex(/^\d{1,78}$/)
+          .optional()
+          .describe("Exact native value in wei; else value_not_expected"),
+        allow_inner_call: z
+          .array(z.string().regex(/^0x[0-9a-fA-F]{40}:0x[0-9a-fA-F]{8}$/))
+          .max(64)
+          .optional()
+          .describe(
+            'Inner calls allowed inside multicall / Safe, as "TO:SELECTOR"; else inner_calls_not_asserted',
+          ),
+        allow_delegatecall: z
+          .array(contractAddr)
+          .max(64)
+          .optional()
+          .describe("Targets a Safe delegatecall may reach; else delegatecall"),
       }),
       annotations: cRo,
     },
