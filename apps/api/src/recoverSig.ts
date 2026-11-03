@@ -32,12 +32,54 @@ export function signRecover(
   return createHmac("sha256", secret).update(recoverSigPayload(p)).digest("hex");
 }
 
-/** True only for a /recover?to=&data= URL whose sig matches; missing secret, params or sig = false. */
+/**
+ * The Tron, Solana and sweep /recover forms (?tron=, ?sol=, ?sweep=) are signed the same way: the HMAC covers
+ * the form kind and every param the page renders (the owner is inside the tron/sol spec and is `from` for a
+ * sweep). Same key; the web verifier (apps/web/src/lib/recoverSig.ts) uses the same payload and fails closed.
+ */
+export const RECOVER_FORMS = {
+  tron: ["tron", "title"],
+  sol: ["sol", "title"],
+  sweep: ["sweep", "coin", "from", "sym", "token", "title"],
+} as const;
+export type RecoverForm = keyof typeof RECOVER_FORMS;
+
+export function recoverFormPayload(
+  form: RecoverForm,
+  q: Partial<Record<string, string | null | undefined>>,
+): string {
+  return ["swapchan-recover-form-v1", form, ...RECOVER_FORMS[form].map((k) => `${k}=${q[k] ?? ""}`)].join(
+    "\n",
+  );
+}
+
+export function signRecoverForm(
+  form: RecoverForm,
+  q: Partial<Record<string, string | null | undefined>>,
+  secret: string | undefined = process.env.SWAPCHAN_RECOVER_LINK_SECRET,
+): string | undefined {
+  if (!secret) return undefined;
+  return createHmac("sha256", secret).update(recoverFormPayload(form, q)).digest("hex");
+}
+
+/** Which signed form a /recover URL is, in the order the page checks them; null for a plain /recover. */
+export function recoverForm(q: URLSearchParams): RecoverForm | "to" | null {
+  for (const f of ["tron", "sol", "sweep"] as const) if (q.has(f)) return f;
+  return q.has("to") ? "to" : null;
+}
+
+/** True only for a /recover?to=&data= (or ?tron=, ?sol=, ?sweep=) URL whose sig matches; missing secret, params or sig = false. */
 export function recoverUrlSigned(
   u: URL,
   secret: string | undefined = process.env.SWAPCHAN_RECOVER_LINK_SECRET,
 ): boolean {
   const q = u.searchParams;
+  const form = recoverForm(q);
+  if (form && form !== "to") {
+    const sig = q.get(RECOVER_SIG_PARAM);
+    const want = signRecoverForm(form, Object.fromEntries(q), secret);
+    return !!want && !!sig && want.length === sig.length && sameHex(want, sig);
+  }
   const to = q.get("to");
   const data = q.get("data");
   const owner = q.get("owner");

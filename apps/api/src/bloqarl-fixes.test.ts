@@ -4,8 +4,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isVaultCandidate, linkRoutes } from "./intel.js";
 import { merkleLeaf, verifyMerkleRow } from "./merkleClaims.js";
 import { batchIpLimiter } from "./moneybatch.js";
-import { recoverUrl } from "./recover.js";
-import { recoverSigPayload, recoverUrlSigned, signRecover } from "./recoverSig.js";
+import { recoverUrl, sweepUrl } from "./recover.js";
+import {
+  recoverSigPayload,
+  recoverUrlSigned,
+  signRecover,
+  signRecoverForm,
+} from "./recoverSig.js";
 
 const ME = "0x1111111111111111111111111111111111111111";
 const OTHER = "0x2222222222222222222222222222222222222222";
@@ -81,6 +86,81 @@ describe("2/3. signed /recover links with owner", () => {
     const r = await post(recoverUrl(tx, "P3D", ME));
     expect(r.status).toBe(200);
     expect(((await r.json()) as { shortUrl: string }).shortUrl).toMatch(/\/s\//);
+  });
+});
+
+describe("2/3b. signed /recover?tron=, ?sol= and ?sweep= links", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const DOGE = "DAddr1111111111111111111111111";
+  const sw = { kind: "utxo", coin: "doge", from: DOGE, sym: "DOGE" } as const;
+  it("sweep payload matches the web verifier's vector", () => {
+    expect(
+      signRecoverForm(
+        "sweep",
+        { sweep: "utxo", coin: "doge", from: DOGE, sym: "DOGE", title: "Sweep DOGE" },
+        "test-secret",
+      ),
+    ).toBe("dcaeaec08c9a710155fab3e36f27bd08987a6d521d7a7fe0c89fc52edcf747c4");
+  });
+  it("sweepUrl carries a sig that verifies; tampering any signed field fails", () => {
+    vi.stubEnv("SWAPCHAN_RECOVER_LINK_SECRET", "test-secret");
+    const u = new URL(sweepUrl(sw as never, "Sweep DOGE"));
+    expect(recoverUrlSigned(u)).toBe(true);
+    for (const [k, v] of [
+      ["sweep", "fork"],
+      ["coin", "ltc"],
+      ["from", "DOther111111111111111111111111"],
+      ["sym", "LTC"],
+      ["token", OTHER],
+      ["title", "I found your money"],
+    ]) {
+      const t = new URL(u);
+      t.searchParams.set(k!, v!);
+      expect(recoverUrlSigned(t)).toBe(false);
+    }
+  });
+  it("tron and sol forms: signed verifies, tampered spec or missing sig fails", () => {
+    vi.stubEnv("SWAPCHAN_RECOVER_LINK_SECRET", "test-secret");
+    for (const f of ["tron", "sol"] as const) {
+      const q = { [f]: "eyJhIjoxfQ", title: "x" };
+      const u = new URL(
+        `https://swapchan.com/recover?${new URLSearchParams({ ...q, sig: signRecoverForm(f, q)! })}`,
+      );
+      expect(recoverUrlSigned(u)).toBe(true);
+      const t = new URL(u);
+      t.searchParams.set(f, "eyJhIjoyfQ");
+      expect(recoverUrlSigned(t)).toBe(false);
+      t.searchParams.delete("sig");
+      expect(recoverUrlSigned(t)).toBe(false);
+    }
+  });
+  it("no secret: no sig is emitted and nothing verifies (fail closed)", () => {
+    vi.stubEnv("SWAPCHAN_RECOVER_LINK_SECRET", "");
+    const u = new URL(sweepUrl(sw as never, "Sweep DOGE"));
+    expect(u.searchParams.has("sig")).toBe(false);
+    expect(recoverUrlSigned(u)).toBe(false);
+  });
+  it("POST /links refuses unsigned ?sweep=/?tron=/?sol= URLs and shortens a signed one", async () => {
+    vi.stubEnv("SWAPCHAN_RECOVER_LINK_SECRET", "test-secret");
+    const app = linkRoutes(
+      fetch,
+      { VITEST: "1" } as NodeJS.ProcessEnv,
+      new DatabaseSync(":memory:"),
+    );
+    const post = (url: string) =>
+      app.request("/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+    for (const forged of [
+      `https://swapchan.com/recover?sweep=utxo&coin=doge&from=${DOGE}&sym=DOGE&title=x`,
+      "https://swapchan.com/recover?tron=eyJhIjoxfQ&title=x",
+      "https://swapchan.com/recover?sol=eyJhIjoxfQ&title=x",
+    ])
+      expect((await post(forged)).status).toBe(400);
+    const r = await post(sweepUrl(sw as never, "Sweep DOGE"));
+    expect(r.status).toBe(200);
   });
 });
 

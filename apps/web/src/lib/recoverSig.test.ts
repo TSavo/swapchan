@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { recoverSigPayload, verifyRecoverSig } from "./recoverSig";
+import { recoverSigPayload, verifyRecoverFormSig, verifyRecoverSig } from "./recoverSig";
 
 const ME = "0x1111111111111111111111111111111111111111";
 const TO = "0x3333333333333333333333333333333333333333";
@@ -27,5 +27,38 @@ describe("/recover link HMAC (fail closed)", () => {
     expect(verifyRecoverSig({ ...base, sig: "zz" }, "test-secret")).toBe(false);
     expect(verifyRecoverSig({ ...base, sig: SIG }, "other")).toBe(false);
     expect(verifyRecoverSig({ ...base, sig: SIG }, undefined)).toBe(false);
+  });
+});
+
+describe("/recover?tron=, ?sol=, ?sweep= link HMAC (fail closed)", () => {
+  const sw = {
+    sweep: "utxo",
+    coin: "doge",
+    from: "DAddr1111111111111111111111111",
+    sym: "DOGE",
+    title: "Sweep DOGE",
+  };
+  // same vector as apps/api/src/bloqarl-fixes.test.ts (API signer)
+  const SW_SIG = "dcaeaec08c9a710155fab3e36f27bd08987a6d521d7a7fe0c89fc52edcf747c4";
+  it("verifies the API's sweep signature", () => {
+    expect(verifyRecoverFormSig("sweep", { ...sw, sig: SW_SIG }, "test-secret")).toBe(true);
+  });
+  it("rejects a tampered sweep/coin/from/sym/token/title", () => {
+    for (const k of ["sweep", "coin", "from", "sym", "title"] as const)
+      expect(
+        verifyRecoverFormSig("sweep", { ...sw, [k]: `${sw[k]}0`, sig: SW_SIG }, "test-secret"),
+      ).toBe(false);
+    expect(
+      verifyRecoverFormSig("sweep", { ...sw, token: TO, sig: SW_SIG }, "test-secret"),
+    ).toBe(false);
+  });
+  it("tron and sol: missing sig, malformed sig, wrong or unset secret all fail", () => {
+    for (const f of ["tron", "sol"] as const) {
+      const q = { [f]: "eyJhIjoxfQ", title: "x" };
+      expect(verifyRecoverFormSig(f, q, "test-secret")).toBe(false);
+      expect(verifyRecoverFormSig(f, { ...q, sig: "zz" }, "test-secret")).toBe(false);
+      expect(verifyRecoverFormSig(f, { ...q, sig: SW_SIG }, "test-secret")).toBe(false);
+      expect(verifyRecoverFormSig(f, { ...q, sig: SW_SIG }, undefined)).toBe(false);
+    }
   });
 });
