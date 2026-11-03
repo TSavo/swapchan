@@ -14,6 +14,7 @@ import {
   parseTransaction,
   recoverTransactionAddress,
   type TransactionSerialized,
+  toFunctionSelector,
 } from "viem";
 import { fullAddress } from "./addrDisplay.js";
 import { type BtSolTx, blocktools, btKeccak256, btSolDecodeTx } from "./blocktools.js";
@@ -71,6 +72,8 @@ const DANGER = parseAbi([
   "function execTransaction(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, bytes signatures)",
   "function multicall(bytes[] data)",
   "function multicall(uint256 deadline, bytes[] data)",
+  "function multicall(bytes32 previousBlockhash, bytes[] data)",
+  "function multiSend(bytes transactions)",
 ]);
 const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
 // legacy OpenZeppelin (zos) slot, used by e.g. USDC
@@ -82,6 +85,145 @@ const short = fullAddress;
 /** Address poisoning: same first 4 and last 4 chars, different address. */
 export const lookalike = (a: string, b: string) =>
   lc(a) !== lc(b) && lc(a).slice(2, 6) === lc(b).slice(2, 6) && lc(a).slice(-4) === lc(b).slice(-4);
+
+/** Safe MultiSend / MultiSendCallOnly deployments (v1.3.0, v1.3.0 eip155, v1.4.1). DELEGATECALL into anything else is unchecked. */
+export const SAFE_MULTISEND = new Set(
+  [
+    "0xA238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761",
+    "0x40A2aCCbd92BCA938b02010E17A5b8929b49130D",
+    "0x998739BFdAAdde7C933B942a68053933098f9EDa",
+    "0xA1dabEF33b3B82c7814B6D82A79e50F4AC44102B",
+    "0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526",
+    "0x9641d764fc13c8B624c04430C7356C1C7C8102e2",
+  ].map((a) => a.toLowerCase()),
+);
+export const MAX_BATCH_DEPTH = 4;
+const MAX_BATCH_CALLS = 256;
+const MULTISEND_SELECTOR = toFunctionSelector("function multiSend(bytes)");
+const BATCH_SELECTORS = new Set<string>(
+  [
+    "function multicall(bytes[])",
+    "function multicall(uint256,bytes[])",
+    "function multicall(bytes32,bytes[])",
+    "function multiSend(bytes)",
+    "function execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)",
+  ].map((x) => toFunctionSelector(x)),
+);
+interface Approval {
+  spender: string;
+  amount?: bigint;
+  path: string;
+}
+
+/** Safe MultiSend packed encoding: operation(1) to(20) value(32) dataLength(32) data. Throws on malformed input. */
+export function decodeMultiSend(packed: Hex): { op: number; to: string; data: Hex }[] {
+  const h = packed.slice(2);
+  const out: { op: number; to: string; data: Hex }[] = [];
+  let i = 0;
+  while (i < h.length) {
+    if (h.length - i < 170) throw new Error("multiSend: truncated header");
+    const op = Number.parseInt(h.slice(i, i + 2), 16);
+    const to = `0x${h.slice(i + 2, i + 42)}`;
+    const len = BigInt(`0x${h.slice(i + 106, i + 170)}`);
+    if (op > 1 || len * 2n > BigInt(h.length - i - 170)) throw new Error("multiSend: bad entry");
+    const end = i + 170 + Number(len) * 2;
+    out.push({ op, to, data: `0x${h.slice(i + 170, end)}` as Hex });
+    if (out.length > MAX_BATCH_CALLS) throw new Error("multiSend: too many calls");
+    i = end;
+  }
+  return out;
+}
+
+/** Every approval-type call in a tx, recursing into multicall / Safe execTransaction / MultiSend. Undecodable batches are reported as unchecked (fail closed). */
+export function collectApprovals(
+  to: string,
+  data: Hex,
+  path: string,
+  depth: number,
+): { aps: Approval[]; unchecked: string[] } {
+  const aps: Approval[] = [];
+  const unchecked: string[] = [];
+  if (!data || data === "0x") return { aps, unchecked };
+  const isBatch = BATCH_SELECTORS.has(data.slice(0, 10).toLowerCase());
+  let fn: string;
+  let a: readonly unknown[];
+  try {
+    const d = decodeFunctionData({ abi: DANGER, data });
+    fn = d.functionName;
+    a = (d.args ?? []) as readonly unknown[];
+  } catch {
+    if (isBatch) unchecked.push(`${path} is a batch call that does not decode`);
+    return { aps, unchecked };
+  }
+  const sub = (t: string, x: Hex, p: string) => {
+    if (depth + 1 > MAX_BATCH_DEPTH) {
+      unchecked.push(`${p} is nested deeper than ${MAX_BATCH_DEPTH} batches`);
+      return;
+    }
+    const r = collectApprovals(t, x, p, depth + 1);
+    aps.push(...r.aps);
+    unchecked.push(...r.unchecked);
+  };
+  switch (fn) {
+    case "approve":
+      if (lc(to) === PERMIT2 && a.length === 4)
+        aps.push({ spender: String(a[1]), amount: a[2] as bigint, path });
+      else aps.push({ spender: String(a[0]), amount: a[1] as bigint, path });
+      break;
+    case "increaseAllowance":
+      aps.push({ spender: String(a[0]), amount: a[1] as bigint, path });
+      break;
+    case "permit":
+      aps.push({ spender: String(a[1]), amount: a[2] as bigint, path });
+      break;
+    case "setApprovalForAll":
+      if (a[1] === true) aps.push({ spender: String(a[0]), path });
+      break;
+    case "multicall": {
+      const calls = a[a.length - 1] as readonly Hex[];
+      if (calls.length > MAX_BATCH_CALLS) {
+        unchecked.push(`${path} multicall has more than ${MAX_BATCH_CALLS} calls`);
+        break;
+      }
+      // multicall self-calls: every inner call runs against the same contract.
+      calls.forEach((c, k) => {
+        sub(to, c, `${path}.multicall[${k}]`);
+      });
+      break;
+    }
+    case "execTransaction": {
+      const t = String(a[0]);
+      const x = a[2] as Hex;
+      if (Number(a[3]) === 0) sub(t, x, `${path}.execTransaction`);
+      else if (!SAFE_MULTISEND.has(lc(t)))
+        unchecked.push(
+          `${path} is a Safe DELEGATECALL into ${t}, which is not a known Safe MultiSend`,
+        );
+      else if (x.slice(0, 10).toLowerCase() !== MULTISEND_SELECTOR)
+        unchecked.push(
+          `${path} is a Safe DELEGATECALL into MultiSend that is not multiSend(bytes)`,
+        );
+      else sub(t, x, `${path}.execTransaction`);
+      break;
+    }
+    case "multiSend": {
+      let inner: { op: number; to: string; data: Hex }[];
+      try {
+        inner = decodeMultiSend(a[0] as Hex);
+      } catch {
+        unchecked.push(`${path} multiSend payload does not decode`);
+        break;
+      }
+      inner.forEach((c, k) => {
+        const p = `${path}.multiSend[${k}]`;
+        if (c.op === 1) unchecked.push(`${p} is a DELEGATECALL inside MultiSend`);
+        else sub(c.to, c.data, p);
+      });
+      break;
+    }
+  }
+  return { aps, unchecked };
+}
 
 /** Pure calldata checks (no network). */
 export function calldataChecks(
@@ -208,53 +350,40 @@ export function calldataChecks(
   }
   if (exp.spender || exp.amount) {
     // Fail closed: the spender is what matters (an exact-balance approval to a drainer is not "unlimited").
-    let ap: { spender: string; amount?: bigint } | undefined;
-    if (call && tx.data && tx.data !== "0x") {
-      try {
-        const d = decodeFunctionData({ abi: DANGER, data: tx.data });
-        const a = (d.args ?? []) as readonly unknown[];
-        if (d.functionName === "approve" && lc(tx.to) === PERMIT2 && a.length === 4)
-          ap = { spender: String(a[1]), amount: a[2] as bigint };
-        else if (d.functionName === "approve" || d.functionName === "increaseAllowance")
-          ap = { spender: String(a[0]), amount: a[1] as bigint };
-        else if (d.functionName === "permit")
-          ap = { spender: String(a[1]), amount: a[2] as bigint };
-        else if (d.functionName === "setApprovalForAll" && a[1] === true)
-          ap = { spender: String(a[0]) };
-        else if (d.functionName === "multicall" || d.functionName === "execTransaction")
-          add(
-            "high",
-            "spender-unchecked",
-            `expected spender/amount given, but this is a ${d.functionName} batch whose inner calls are not decoded here, so it cannot be shown to hold.`,
-          );
-      } catch {
-        /* undecodable: handled below */
-      }
-    }
-    if (ap) {
+    // Batches (multicall, Safe execTransaction, MultiSend) are decoded and every inner approval checked.
+    const { aps, unchecked } = collectApprovals(tx.to, tx.data ?? "0x", "tx", 0);
+    for (const u of unchecked)
+      add(
+        "high",
+        "spender-unchecked",
+        `expected spender/amount given, but ${u}, so it cannot be shown to hold.`,
+      );
+    for (const ap of aps) {
+      const at = ap.path === "tx" ? "" : ` (${ap.path})`;
       if (exp.spender && lc(ap.spender) !== lc(exp.spender))
         add(
           lookalike(ap.spender, exp.spender) ? "critical" : "high",
           "spender-not-expected",
           lookalike(ap.spender, exp.spender)
-            ? `Approval spender ${ap.spender} LOOKS LIKE the expected ${exp.spender} but is a different address (address poisoning).`
-            : `Approval spender ${ap.spender} is not the expected spender ${exp.spender}. Do not sign.`,
+            ? `Approval spender ${ap.spender}${at} LOOKS LIKE the expected ${exp.spender} but is a different address (address poisoning).`
+            : `Approval spender ${ap.spender}${at} is not the expected spender ${exp.spender}. Do not sign.`,
         );
       if (exp.amount !== undefined) {
         if (ap.amount === undefined)
           add(
             "high",
             "amount-not-expected",
-            `setApprovalForAll has no amount; expected ${exp.amount}.`,
+            `setApprovalForAll${at} has no amount; expected ${exp.amount}.`,
           );
         else if (ap.amount !== BigInt(exp.amount))
           add(
             "high",
             "amount-not-expected",
-            `Approval amount ${ap.amount} is not the expected ${exp.amount}.`,
+            `Approval amount ${ap.amount}${at} is not the expected ${exp.amount}.`,
           );
       }
-    } else if (!out.some((f) => f.check === "spender-unchecked"))
+    }
+    if (!aps.length && !unchecked.length)
       add(
         "info",
         "spender",

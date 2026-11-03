@@ -55,15 +55,15 @@ describe("expected.spender / expected.amount", () => {
       true,
     );
   });
-  it("multicall batch fails closed", () => {
+  it("multicall inner approvals are decoded and checked", () => {
     const mc = encodeFunctionData({
       abi,
       functionName: "multicall",
-      args: [[approve(ROUTER, maxUint256)]],
+      args: [[approve(DRAINER, maxUint256)]],
     });
-    expect(
-      run(mc, { spender: ROUTER }).find((x) => x.check === "spender-unchecked")?.severity,
-    ).toBe("high");
+    const f = run(mc, { spender: ROUTER });
+    expect(f.some((x) => x.check === "spender-not-expected")).toBe(true);
+    expect(f.some((x) => x.check === "spender-unchecked")).toBe(false);
   });
   it("input validation", () => {
     expect(() => checkExpectedSpender(1, { spender: "0x12" })).toThrow(/bad_expected_spender/);
