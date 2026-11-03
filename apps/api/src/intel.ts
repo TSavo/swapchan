@@ -106,7 +106,7 @@ import {
   verifyRecovery,
   wrappedNative,
 } from "./recover.js";
-import { recoverUrlSigned } from "./recoverSig.js";
+import { recoverForm, recoverUrlSigned } from "./recoverSig.js";
 import { daoRefunds } from "./refunds.js";
 import { migrateLinksRetention } from "./retention.js";
 import { BusyError, gate, recordScan, withScanScope } from "./scanctx.js";
@@ -6481,9 +6481,14 @@ export function linkRoutes(f: F, env: NodeJS.ProcessEnv, db: DatabaseSync) {
     run(c, async () => {
       const b = (await c.req.json()) as { url?: string; items?: unknown[]; ref?: string };
       if (b.url) {
-        // a /recover?to=&data= signing page only gets a permanent link when SwapChan signed it (fail closed)
+        // a /recover signing page (?to=&data=, ?tron=, ?sol=, ?sweep=) only gets a permanent link when
+        // SwapChan signed it (fail closed)
         const u = new URL(b.url, SITE);
-        if (/^\/recover\/?$/.test(u.pathname) && u.searchParams.has("to") && !recoverUrlSigned(u))
+        if (
+          /^\/recover\/?$/.test(u.pathname) &&
+          recoverForm(u.searchParams) &&
+          !recoverUrlSigned(u)
+        )
           throw new BadRequest(
             "unsigned /recover link: only SwapChan-built recovery links can be shortened",
           );

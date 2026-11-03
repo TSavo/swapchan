@@ -24,7 +24,7 @@ import {
   swapUrl,
   usdcOf,
 } from "./onchain.js";
-import { signRecover } from "./recoverSig.js";
+import { signRecover, signRecoverForm } from "./recoverSig.js";
 import { checkSolSpec, encodeSol, type SolIx, type SolSpec } from "./solrecover.js";
 import { encodeSpec, tronSpec, verifyTronSpec } from "./tronrecover.js";
 
@@ -380,11 +380,9 @@ export function recoveryFlow(
   const tt = (it.claimTx as { tronTx?: unknown; description?: string } | undefined)?.tronTx;
   const spec = tt ? tronSpec(tt) : null;
   if (spec && verifyTronSpec(spec, owner)) {
-    const q = new URLSearchParams({
-      tron: encodeSpec(spec),
-      title: it.title.slice(0, 140),
-      next: it.swapUrl,
-    });
+    const f = { tron: encodeSpec(spec), title: it.title.slice(0, 140) };
+    const sig = signRecoverForm("tron", f);
+    const q = new URLSearchParams({ ...f, ...(sig ? { sig } : {}), next: it.swapUrl });
     rurl = `${SITE}/recover?${q}`;
     steps.push({
       step: 1,
@@ -402,11 +400,9 @@ export function recoveryFlow(
   if (!rurl && st?.kind === "svm-instructions" && st.data?.instructions?.length) {
     const sspec: SolSpec = { owner, ix: st.data.instructions };
     if (!checkSolSpec(sspec, owner)) {
-      const q = new URLSearchParams({
-        sol: encodeSol(sspec),
-        title: it.title.slice(0, 140),
-        next: it.swapUrl,
-      });
+      const f = { sol: encodeSol(sspec), title: it.title.slice(0, 140) };
+      const sig = signRecoverForm("sol", f);
+      const q = new URLSearchParams({ ...f, ...(sig ? { sig } : {}), next: it.swapUrl });
       rurl = `${SITE}/recover?${q}`;
       steps.push({
         step: 1,
@@ -468,8 +464,18 @@ export type Sweep = {
   sym: string;
   token?: string;
 };
+/** Permanent in-app sweep page, HMAC-signed like recoverUrl (recoverSig.ts RECOVER_FORMS.sweep). */
 export function sweepUrl(sw: Sweep, title: string) {
-  return `${SITE}/recover?${new URLSearchParams({ sweep: sw.kind, coin: sw.coin, from: sw.from, sym: sw.sym, ...(sw.token ? { token: sw.token } : {}), title: title.slice(0, 140) })}`;
+  const f = {
+    sweep: sw.kind,
+    coin: sw.coin,
+    from: sw.from,
+    sym: sw.sym,
+    ...(sw.token ? { token: sw.token } : {}),
+    title: title.slice(0, 140),
+  };
+  const sig = signRecoverForm("sweep", f);
+  return `${SITE}/recover?${new URLSearchParams({ ...f, ...(sig ? { sig } : {}) })}`;
 }
 
 // ---------- unwrapped native (WETH/WBNB/WPOL/WAVAX) ----------
