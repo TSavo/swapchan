@@ -6136,6 +6136,9 @@ export function intelRoutes(
         minOut: z.string(),
         quotedOut: z.string(),
         outToken: z.string(),
+        // EVM only (checkExpectedSpender validates); without these zod stripped them before verifyTx.
+        spender: z.string(),
+        amount: z.string(),
       })
       .partial()
       .optional(),
