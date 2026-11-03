@@ -5,12 +5,7 @@ import { isVaultCandidate, linkRoutes } from "./intel.js";
 import { merkleLeaf, verifyMerkleRow } from "./merkleClaims.js";
 import { batchIpLimiter } from "./moneybatch.js";
 import { recoverUrl, sweepUrl } from "./recover.js";
-import {
-  recoverSigPayload,
-  recoverUrlSigned,
-  signRecover,
-  signRecoverForm,
-} from "./recoverSig.js";
+import { recoverSigPayload, recoverUrlSigned, signRecover, signRecoverForm } from "./recoverSig.js";
 
 const ME = "0x1111111111111111111111111111111111111111";
 const OTHER = "0x2222222222222222222222222222222222222222";

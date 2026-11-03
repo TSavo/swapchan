@@ -49,10 +49,15 @@ export const RECOVER_FORMS = {
 } as const;
 export type RecoverForm = keyof typeof RECOVER_FORMS;
 
-export function recoverFormPayload(form: RecoverForm, q: Record<string, string | undefined>): string {
-  return ["swapchan-recover-form-v1", form, ...RECOVER_FORMS[form].map((k) => `${k}=${q[k] ?? ""}`)].join(
-    "\n",
-  );
+export function recoverFormPayload(
+  form: RecoverForm,
+  q: Record<string, string | undefined>,
+): string {
+  return [
+    "swapchan-recover-form-v1",
+    form,
+    ...RECOVER_FORMS[form].map((k) => `${k}=${q[k] ?? ""}`),
+  ].join("\n");
 }
 
 /** Fails closed like verifyRecoverSig: no secret, no form param or no/invalid sig = not verified. */

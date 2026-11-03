@@ -25,18 +25,18 @@ export default async function Page({
   const q = await searchParams;
   const next = safeNext(q.next);
   const unsigned = (
-      <main className="flex min-h-screen flex-col items-center px-4 py-10 text-white">
-        <div
-          className="w-full max-w-2xl rounded-2xl border-2 border-rose-400 bg-rose-950 p-6"
-          data-testid="recover-unsigned"
-        >
-          <h1 className="text-2xl font-black">This recovery link wasn&apos;t made by SwapChan</h1>
-          <p className="mt-2">
-            Its signature is missing or doesn&apos;t match, so I won&apos;t show it or let you sign
-            it. Run find_money again for your wallet to get a fresh link.
-          </p>
-        </div>
-      </main>
+    <main className="flex min-h-screen flex-col items-center px-4 py-10 text-white">
+      <div
+        className="w-full max-w-2xl rounded-2xl border-2 border-rose-400 bg-rose-950 p-6"
+        data-testid="recover-unsigned"
+      >
+        <h1 className="text-2xl font-black">This recovery link wasn&apos;t made by SwapChan</h1>
+        <p className="mt-2">
+          Its signature is missing or doesn&apos;t match, so I won&apos;t show it or let you sign
+          it. Run find_money again for your wallet to get a fresh link.
+        </p>
+      </div>
+    </main>
   );
   // ?tron=, ?sol= and ?sweep= links are HMAC-signed by the API like ?to=&data= (fail closed)
   for (const f of ["tron", "sol", "sweep"] as const)
@@ -83,8 +83,7 @@ export default async function Page({
       </main>
     );
   const ok = q.to?.match(/^0x[0-9a-fA-F]{40}$/) && q.data?.match(/^0x[0-9a-fA-F]*$/);
-  if (ok && !(q.owner?.match(/^0x[0-9a-fA-F]{40}$/) && verifyRecoverSig(q)))
-    return unsigned;
+  if (ok && !(q.owner?.match(/^0x[0-9a-fA-F]{40}$/) && verifyRecoverSig(q))) return unsigned;
   if (ok) {
     return (
       <main className="flex min-h-screen flex-col items-center px-4 py-10 text-white">

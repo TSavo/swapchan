@@ -48,9 +48,11 @@ export function recoverFormPayload(
   form: RecoverForm,
   q: Partial<Record<string, string | null | undefined>>,
 ): string {
-  return ["swapchan-recover-form-v1", form, ...RECOVER_FORMS[form].map((k) => `${k}=${q[k] ?? ""}`)].join(
-    "\n",
-  );
+  return [
+    "swapchan-recover-form-v1",
+    form,
+    ...RECOVER_FORMS[form].map((k) => `${k}=${q[k] ?? ""}`),
+  ].join("\n");
 }
 
 export function signRecoverForm(

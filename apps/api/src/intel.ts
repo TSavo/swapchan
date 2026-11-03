@@ -6484,7 +6484,11 @@ export function linkRoutes(f: F, env: NodeJS.ProcessEnv, db: DatabaseSync) {
         // a /recover signing page (?to=&data=, ?tron=, ?sol=, ?sweep=) only gets a permanent link when
         // SwapChan signed it (fail closed)
         const u = new URL(b.url, SITE);
-        if (/^\/recover\/?$/.test(u.pathname) && recoverForm(u.searchParams) && !recoverUrlSigned(u))
+        if (
+          /^\/recover\/?$/.test(u.pathname) &&
+          recoverForm(u.searchParams) &&
+          !recoverUrlSigned(u)
+        )
           throw new BadRequest(
             "unsigned /recover link: only SwapChan-built recovery links can be shortened",
           );

@@ -48,9 +48,9 @@ describe("/recover?tron=, ?sol=, ?sweep= link HMAC (fail closed)", () => {
       expect(
         verifyRecoverFormSig("sweep", { ...sw, [k]: `${sw[k]}0`, sig: SW_SIG }, "test-secret"),
       ).toBe(false);
-    expect(
-      verifyRecoverFormSig("sweep", { ...sw, token: TO, sig: SW_SIG }, "test-secret"),
-    ).toBe(false);
+    expect(verifyRecoverFormSig("sweep", { ...sw, token: TO, sig: SW_SIG }, "test-secret")).toBe(
+      false,
+    );
   });
   it("tron and sol: missing sig, malformed sig, wrong or unset secret all fail", () => {
     for (const f of ["tron", "sol"] as const) {
