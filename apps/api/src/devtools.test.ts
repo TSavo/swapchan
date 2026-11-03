@@ -398,6 +398,17 @@ describe("multisig / combine / plan resolve / msg verify (blocktools wasm, keyle
     ).toMatchObject({ ok: false, error_code: "signature_not_65_bytes" });
   });
 
+  it("msg-verify: Cosmos/Solana-ambiguous addresses are refused (blocktools msg_chains.rs vectors)", () => {
+    for (const address of [
+      "osmo148yundzwcr97np3s8c8yrx2p6p33ck6sd4stfm",
+      "juno1av6j5wgy64cwknm75pwyvegpwduf753uytqkwk",
+    ])
+      expect(runDevTool("msg-verify", { address, message: "x", sig: "AA==" })).toMatchObject({
+        ok: false,
+        error_code: "ambiguous_address",
+      });
+  });
+
   it("bolt11-decode: BOLT11 spec vectors (recovers the payee, decodes fields, rejects junk)", () => {
     const INV =
       "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq9qrsgq357wnc5r2ueh7ck6q93dj32dlqnls087fxdwk8qakdyafkq3yap9us6v52vjjsrvywa6rt52cm9r9zqt8r2t7mlcwspyetp5h2tztugp9lfyql";
