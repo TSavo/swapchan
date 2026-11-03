@@ -2042,6 +2042,16 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         .string()
         .optional()
         .describe("Token whose simulated receipt must be >= minOut (default: largest receipt)"),
+      spender: z
+        .string()
+        .optional()
+        .describe(
+          "EVM only: the spender you intend to approve. Any approval (approve, increaseAllowance, permit, Permit2, setApprovalForAll) naming another address is danger (spender-not-expected); a multicall/Safe batch is danger (spender-unchecked).",
+        ),
+      amount: z
+        .string()
+        .optional()
+        .describe("EVM only, needs spender: exact approval amount in base units (amount-not-expected on mismatch)"),
     })
     .optional()
     .describe(
@@ -2052,7 +2062,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     "verify_tx",
     {
       title: "Verify an unsigned transaction before signing",
-      description: `Run SwapChan's calldata guard + simulation on any unsigned tx and return a verdict (ok / caution / danger), findings, balance-diff simulation and a plain-language summary for human sign-off. Covers unlimited approvals, Permit2, setApprovalForAll, Safe DELEGATECALL, proxy upgrades, EIP-7702, ownership transfers, address poisoning lookalikes, minOut vs quote, Solana program allowlist + simulateTransaction, Tron AccountPermissionUpdate. Always show the summary to the human and get an explicit yes for THIS tx before their wallet signs. Trustless: read-only, never signs. ${DISPLAY}`,
+      description: `Run SwapChan's calldata guard + simulation on any unsigned tx and return a verdict (ok / caution / danger), findings, balance-diff simulation and a plain-language summary for human sign-off. Covers unlimited approvals, approvals to a spender other than expected.spender (an exact-balance approval to a drainer is still danger when you name the spender), Permit2, setApprovalForAll, Safe DELEGATECALL, proxy upgrades, EIP-7702, ownership transfers, address poisoning lookalikes, minOut vs quote, Solana program allowlist + simulateTransaction, Tron AccountPermissionUpdate. Always show the summary to the human and get an explicit yes for THIS tx before their wallet signs. Trustless: read-only, never signs. ${DISPLAY}`,
       inputSchema: z.object({
         chainId: chainArg,
         tx: txObj.describe("EVM {from,to,data,value}, Solana base64 tx, or Tron tx JSON"),
