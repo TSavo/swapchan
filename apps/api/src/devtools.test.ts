@@ -409,6 +409,57 @@ describe("multisig / combine / plan resolve / msg verify (blocktools wasm, keyle
       });
   });
 
+  it("msg-verify chain option (msgVerifyOpts): named chain routes, mismatch is typed", () => {
+    for (const address of [
+      "osmo148yundzwcr97np3s8c8yrx2p6p33ck6sd4stfm",
+      "juno1av6j5wgy64cwknm75pwyvegpwduf753uytqkwk",
+    ]) {
+      expect(
+        runDevTool("msg-verify", { address, message: "x", sig: "AA==", pubkey: "AA==" }),
+      ).toMatchObject({ ok: false, error_code: "ambiguous_address" });
+      expect(
+        runDevTool("msg-verify", { address, message: "x", sig: "AA==", chain: "eth" }),
+      ).toMatchObject({ ok: false, error_code: "chain_does_not_match_address" });
+      // chain named: routed to Cosmos (no ambiguous_address); a bogus key is still never accepted
+      const r = runDevTool("msg-verify", {
+        address,
+        message: "x",
+        sig: "AA==",
+        pubkey: "AA==",
+        chain: "cosmos",
+      }) as Record<string, unknown>;
+      expect(r.error_code).not.toBe("ambiguous_address");
+      expect(r.error_code).not.toBe("pubkey_only_for_cosmos");
+      expect(r.ok === false || (r.result as Record<string, unknown>)?.status !== "ok").toBe(true);
+    }
+    // chain-named success: Trust Wallet Core Solana raw vector (msg_chains.rs solana_raw_twc_vector)
+    const sol = "H3imdwa5VQMB5V6yBNyrWwPdSKs4k9Pcpsu4diogoAcg";
+    const SOL_SIG =
+      "2iBZ6zrQRKHcbD8NWmm552gU5vGvh1dk3XV4jxnyEdRKm8up8AeQk1GFr9pJokSmchw7i9gMtNyFBdDt8tBxM1cG";
+    expect(
+      ok("msg-verify", { address: sol, message: "Hello world", sig: SOL_SIG, format: "raw", chain: "sol" }),
+    ).toMatchObject({ status: "ok", chain: "sol" });
+    expect(
+      ok("msg-verify", { address: sol, message: "Hello World", sig: SOL_SIG, format: "raw", chain: "sol" })
+        .status,
+    ).toBe("signer_mismatch");
+    expect(
+      runDevTool("msg-verify", { address: sol, message: "Hello world", sig: SOL_SIG, chain: "cosmos" }),
+    ).toMatchObject({ ok: false, error_code: "chain_does_not_match_address" });
+    // Tron (TWC TronMessageSignerTests) with chain named
+    expect(
+      ok("msg-verify", {
+        address: "TWWb9EjUWai17YEVB7FR8hreupYJKG9sMR",
+        message: "Hello World",
+        sig: "bc0753c070cc55693097df11bc11e1a7c4bd5e1a40b9dc94c75568e59bcc9d6b50a7873ef25b469e494490a54de37327b4bc7fc825c81a377b555e34fb7261ba1c",
+        chain: "tron",
+      }).status,
+    ).toBe("ok");
+    expect(
+      runDevTool("msg-verify", { address: sol, message: "x", sig: SOL_SIG, chain: "doge" }),
+    ).toMatchObject({ ok: false, error_code: "bad_chain" });
+  });
+
   it("bolt11-decode: BOLT11 spec vectors (recovers the payee, decodes fields, rejects junk)", () => {
     const INV =
       "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq9qrsgq357wnc5r2ueh7ck6q93dj32dlqnls087fxdwk8qakdyafkq3yap9us6v52vjjsrvywa6rt52cm9r9zqt8r2t7mlcwspyetp5h2tztugp9lfyql";

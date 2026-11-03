@@ -320,9 +320,24 @@ export const DEV_TOOLS: Record<string, (i: In) => unknown> = {
     // the message is used byte-for-byte (not trimmed): it is what was signed
     const m = i.message;
     if (typeof m !== "string" || m.length > 2_000) return bad("bad_message");
-    return json(
-      w().msgVerify(str(i, "address"), m, str(i, "sig", undefined, 200), i.message_is_hex === true),
-    );
+    // blocktools v0.4.0 msgVerifyOpts: optional chain (eth|btc|tron|sol|cosmos; required for strings valid
+    // as both Cosmos bech32 and a Solana key, else ambiguous_address; a mismatch gives
+    // chain_does_not_match_address), format (Solana raw|offchain-v0) and pubkey (Cosmos ADR-036, base64).
+    // Omitted options are not sent, so existing callers get the same result as msgVerify.
+    for (const k of ["chain", "format", "pubkey"])
+      if (i[k] !== undefined && typeof i[k] !== "string") bad(`${k}_must_be_string`);
+    const chain = optStr(i, "chain", /^(eth|btc|tron|sol|cosmos)$/);
+    const format = optStr(i, "format", /^(raw|offchain-v0)$/);
+    const pubkey = optStr(i, "pubkey", /^[A-Za-z0-9+/]{1,64}={0,2}$/, 100);
+    const req: Record<string, string> = {
+      address: str(i, "address"),
+      [i.message_is_hex === true ? "message_hex" : "message"]: m,
+      signature: str(i, "sig", undefined, 200),
+    };
+    if (format) req.format = format;
+    if (pubkey) req.pubkey = pubkey;
+    if (chain) req.chain = chain;
+    return json(w().msgVerifyOpts(JSON.stringify(req)));
   },
   // Keyless BOLT11 decode (blocktools tx::bolt11): public invoice string only, no keys, no channel.
   "bolt11-decode": (i) => json(w().bolt11Decode(str(i, "invoice", undefined, 8_000))),
