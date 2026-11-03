@@ -38,8 +38,8 @@ export default function Install() {
         <code className="break-all">{BT_TARBALL_SHA256}</code>. The tarball holds <code>bin/</code>{" "}
         (56 binaries, 42 of them on the sealed-run allowlist), 58 man(1) pages (including the{" "}
         <code>blocktools</code> wrapper and <code>recover.sh</code>) and recipes. The source tree
-        has 61 tool directories; 5 are test and parity tools with no man page. It has no Dockerfile: sealed runs (
-        <code>./blocktools build</code>) need a {BT_VERSION}
+        has 61 tool directories; 5 are test and parity tools with no man page. It has no Dockerfile:
+        sealed runs (<code>./blocktools build</code>) need a {BT_VERSION}
         source checkout and Docker.
       </p>
       <h2 className="mb-2 text-xl font-black">2. Build from source</h2>

@@ -19,8 +19,8 @@ export default function Commands() {
       lead={
         <p>
           {BT_GROUPS.reduce((n, g) => n + g.tools.length, 0)} of the 58 man(1) pages in v0.4.0,
-          grouped by job (<code>man blocktools</code> lists them all). Summaries are the
-          man pages&apos; NAME lines.
+          grouped by job (<code>man blocktools</code> lists them all). Summaries are the man
+          pages&apos; NAME lines.
         </p>
       }
       source={`${BT_REPO}/tree/main/man/man1`}
