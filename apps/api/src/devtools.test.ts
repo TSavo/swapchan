@@ -437,14 +437,30 @@ describe("multisig / combine / plan resolve / msg verify (blocktools wasm, keyle
     const SOL_SIG =
       "2iBZ6zrQRKHcbD8NWmm552gU5vGvh1dk3XV4jxnyEdRKm8up8AeQk1GFr9pJokSmchw7i9gMtNyFBdDt8tBxM1cG";
     expect(
-      ok("msg-verify", { address: sol, message: "Hello world", sig: SOL_SIG, format: "raw", chain: "sol" }),
+      ok("msg-verify", {
+        address: sol,
+        message: "Hello world",
+        sig: SOL_SIG,
+        format: "raw",
+        chain: "sol",
+      }),
     ).toMatchObject({ status: "ok", chain: "sol" });
     expect(
-      ok("msg-verify", { address: sol, message: "Hello World", sig: SOL_SIG, format: "raw", chain: "sol" })
-        .status,
+      ok("msg-verify", {
+        address: sol,
+        message: "Hello World",
+        sig: SOL_SIG,
+        format: "raw",
+        chain: "sol",
+      }).status,
     ).toBe("signer_mismatch");
     expect(
-      runDevTool("msg-verify", { address: sol, message: "Hello world", sig: SOL_SIG, chain: "cosmos" }),
+      runDevTool("msg-verify", {
+        address: sol,
+        message: "Hello world",
+        sig: SOL_SIG,
+        chain: "cosmos",
+      }),
     ).toMatchObject({ ok: false, error_code: "chain_does_not_match_address" });
     // Tron (TWC TronMessageSignerTests) with chain named
     expect(
