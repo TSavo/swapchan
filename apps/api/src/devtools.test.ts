@@ -544,3 +544,67 @@ describe("typed-data-verify domain options (blocktools 10a1356a options_json)", 
     );
   });
 });
+
+describe("typed-data-verify permit assertions (blocktools c9fe8428 permit::apply)", () => {
+  const TOKEN = "0x1111111111111111111111111111111111111111";
+  const OWNER = "0x2222222222222222222222222222222222222222";
+  const GOOD = "0x3333333333333333333333333333333333333333";
+  const DRAINER = "0x4444444444444444444444444444444444444444";
+  const permit = (spender: string, value: string) =>
+    JSON.stringify({
+      types: {
+        EIP712Domain: [
+          { name: "name", type: "string" },
+          { name: "chainId", type: "uint256" },
+          { name: "verifyingContract", type: "address" },
+        ],
+        Permit: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
+      primaryType: "Permit",
+      domain: { name: "T", chainId: 1, verifyingContract: TOKEN },
+      message: { owner: OWNER, spender, value, nonce: "0", deadline: "9999999999" },
+    });
+  const run = (td: string, o: Record<string, unknown> = {}) =>
+    ok("typed-data-verify", { typed_data: td, ...o });
+  it("shows the spender and leaves the status alone without assertions", () => {
+    const r = run(permit(DRAINER, "1000000"));
+    expect(r.status).toBe("ok");
+    expect(r.spender_unasserted).toBe(true);
+    expect((r.permit as { spender: string }).spender).toBe(DRAINER);
+  });
+  it("an exact-amount permit to another spender is spender_not_expected", () => {
+    expect(run(permit(DRAINER, "1000000"), { expect_spender: GOOD }).status).toBe(
+      "spender_not_expected",
+    );
+    expect(run(permit(GOOD, "1000000"), { expect_spender: GOOD }).status).toBe("ok");
+  });
+  it("amount and unlimited assertions", () => {
+    expect(
+      run(permit(GOOD, "1000000"), { expect_spender: GOOD, expect_amount: "999999" }).status,
+    ).toBe("amount_not_expected");
+    const big = (2n ** 255n).toString();
+    expect(run(permit(GOOD, big), { expect_spender: GOOD }).status).toBe("unlimited_approval");
+    expect(run(permit(GOOD, big), { expect_spender: GOOD, expect_unlimited: true }).status).toBe(
+      "ok",
+    );
+    expect(run(permit(GOOD, big), { expect_spender: GOOD, expect_unlimited: "true" }).status).toBe(
+      "ok",
+    );
+  });
+  it("bad permit options are rejected", () => {
+    const td = permit(GOOD, "1");
+    expect(() => run(td, { expect_spender: 1 })).toThrow("expect_spender_must_be_string");
+    expect(() => run(td, { expect_spender: "0x12" })).toThrow("bad_expect_spender");
+    expect(() => run(td, { expect_amount: "1.5" })).toThrow("bad_expect_amount");
+    expect(() => run(td, { expect_unlimited: "yes" })).toThrow("expect_unlimited_must_be_bool");
+    expect(() => run(td, { expect_unlimited: true })).toThrow(
+      "expect_unlimited_needs_expect_spender",
+    );
+  });
+});

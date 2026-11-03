@@ -231,7 +231,16 @@ export function buildUnsignedSweep(chain: string, utxos: string, to: string, fee
  * EIP-712 typed data: encodeType, domain separator, message hash, digest; with a signature (65-byte or EIP-2098 64-byte) the recovered signer; with an expected signer a verdict.
  * `options_json` (optional) `{expect_chain_id?: "decimal", expect_verifying_contract?: "0x.."}`: the
  * typed-data-verify --expect-chain-id / --expect-verifying-contract checks (status chain_id_mismatch /
- * verifying_contract_mismatch). Wrong types throw `<key>_must_be_string`.
+ * verifying_contract_mismatch). Permit checks (typed-data-verify --expect-spender / --expect-amount /
+ * --expect-unlimited, shared permit::apply): `{expect_spender?: "0x..", expect_amount?: "decimal", expect_unlimited?: bool}`
+ * (expect_unlimited needs expect_spender). Recognised permits (EIP-2612, DAI, Permit2 PermitSingle / PermitBatch /
+ * PermitTransferFrom / PermitBatchTransferFrom; primaryType plus exact field set) add `permit {kind, primary_type,
+ * spender, entries:[{token, amount, unlimited, allowed?, expiration?}], deadline, owner?}`, `unlimited_approval`,
+ * `spender_unasserted` and `permit_findings`; other shapes add `unrecognised_spender_fields`. With an assertion the
+ * status becomes spender_not_expected / amount_not_expected / unlimited_approval (>= 2^128, uint160 max, DAI
+ * allowed=true) or, for typed data that is not a recognised permit, spender_not_checkable / amount_not_checkable;
+ * every batch entry must match. Without assertions the status is unchanged (advisory fields only). Wrong types
+ * throw `<key>_must_be_string` / `expect_unlimited_must_be_bool`.
  */
 export function evmTypedDataVerify(typed_data_json: string, sig_hex?: string | null, signer?: string | null, options_json?: string | null): string;
 /**
