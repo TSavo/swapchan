@@ -2702,7 +2702,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     "typed_data_verify",
     {
       title: "EIP-712 typed data hash / signer check (dev tool)",
-      description: `Hash EIP-712 typed data (typed_data as JSON text, as passed to eth_signTypedData_v4): encoded type, domain separator, struct hash and digest. With an existing public signature (65-byte or EIP-2098 64-byte) it recovers the signer address and low_s flag; with signer it reports valid or signer_mismatch. Optional expect_chain_id / expect_verifying_contract assert the domain (status chain_id_mismatch or verifying_contract_mismatch). Checks existing signatures only; never signs. ${OFFLINE}`,
+      description: `Hash EIP-712 typed data (typed_data as JSON text, as passed to eth_signTypedData_v4): encoded type, domain separator, struct hash and digest. With an existing public signature (65-byte or EIP-2098 64-byte) it recovers the signer address and low_s flag; with signer it reports valid or signer_mismatch. Optional expect_chain_id / expect_verifying_contract assert the domain (status chain_id_mismatch or verifying_contract_mismatch). For permits (EIP-2612, DAI, Permit2 single, batch and transfer) the result shows the spender and amounts; expect_spender / expect_amount / expect_unlimited assert them (status spender_not_expected, amount_not_expected or unlimited_approval; spender_not_checkable or amount_not_checkable for typed data that is not a recognised permit). Checks existing signatures only; never signs. ${OFFLINE}`,
       inputSchema: z.object({
         typed_data: pub(15000),
         signature: pub(140).optional(),
@@ -2718,6 +2718,24 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           .optional()
           .describe(
             "Address the domain's verifyingContract must equal; else verifying_contract_mismatch",
+          ),
+        expect_spender: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]{40}$/)
+          .optional()
+          .describe("Address a permit's spender must equal; else status spender_not_expected"),
+        expect_amount: z
+          .string()
+          .regex(/^\d{1,78}$/)
+          .optional()
+          .describe(
+            "Decimal amount every permit entry must equal (needs a recognised permit); else amount_not_expected",
+          ),
+        expect_unlimited: z
+          .boolean()
+          .optional()
+          .describe(
+            "Needs expect_spender; accept an unlimited approval (2^128 or more) to that spender instead of status unlimited_approval",
           ),
       }),
       annotations: devAnn,

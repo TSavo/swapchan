@@ -1018,6 +1018,7 @@ export const DEV_TOOLS: DevTool[] = [
       "The page computes the encoded type, domain separator, message hash and final digest exactly as wallets do. With a signature it recovers the signer's address; with an expected address it tells you if they match.",
       "This checks signatures that already exist. It never signs anything and never needs a private key. Both 65-byte and EIP-2098 compact signatures are accepted.",
       "Optionally give the chain id and contract you expect. If the domain names a different chain the status is chain_id_mismatch; a different verifyingContract gives verifying_contract_mismatch.",
+      "For a signed permit (EIP-2612, DAI, Permit2) the page shows who is being approved and for how much. Give the spender you expect and any other address gives spender_not_expected, even when the amount is below the usual unlimited threshold.",
     ],
     keywords: ["eip712 hash", "verify typed data signature", "signTypedData decoder"],
     faq: [
@@ -1054,6 +1055,18 @@ export const DEV_TOOLS: DevTool[] = [
             name: "expect_verifying_contract",
             label: "Expected verifying contract",
             placeholder: "0x…",
+            optional: true,
+          },
+          {
+            name: "expect_spender",
+            label: "Expected permit spender",
+            placeholder: "0x…",
+            optional: true,
+          },
+          {
+            name: "expect_amount",
+            label: "Expected permit amount (integer)",
+            placeholder: "1000000",
             optional: true,
           },
         ],

@@ -345,16 +345,30 @@ export const DEV_TOOLS: Record<string, (i: In) => unknown> = {
   "typed-data-verify": (i) => {
     const sig = optStr(i, "signature", /^(0x)?([0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/);
     const signer = optStr(i, "signer", EVM_ADDR);
-    // optional domain assertions (blocktools 10a1356a options_json); none given: unchanged
-    for (const k of ["expect_chain_id", "expect_verifying_contract"])
+    // optional domain and permit assertions (blocktools options_json); none given: unchanged
+    for (const k of [
+      "expect_chain_id",
+      "expect_verifying_contract",
+      "expect_spender",
+      "expect_amount",
+    ])
       if (i[k] !== undefined && typeof i[k] !== "string") bad(`${k}_must_be_string`);
     const chainId = optStr(i, "expect_chain_id", /^\d{1,78}$/);
     const contract = optStr(i, "expect_verifying_contract", EVM_ADDR);
+    const spender = optStr(i, "expect_spender", EVM_ADDR);
+    const amount = optStr(i, "expect_amount", /^\d{1,78}$/);
+    const ul = i.expect_unlimited;
+    if (ul !== undefined && ul !== "" && typeof ul !== "boolean" && ul !== "true" && ul !== "false")
+      bad("expect_unlimited_must_be_bool");
+    const unlimited = ul === true || ul === "true";
     const opts =
-      chainId || contract
+      chainId || contract || spender || amount || unlimited
         ? JSON.stringify({
             ...(chainId ? { expect_chain_id: chainId } : {}),
             ...(contract ? { expect_verifying_contract: contract } : {}),
+            ...(spender ? { expect_spender: spender } : {}),
+            ...(amount ? { expect_amount: amount } : {}),
+            ...(unlimited ? { expect_unlimited: true } : {}),
           })
         : null;
     return json(
