@@ -1239,7 +1239,8 @@ module.exports.evmAbiEncodePacked = function(request_json) {
 /**
  * As `msg-verify` with options, for the chains whose verify needs them. Input JSON:
  * {"address", "message" | "message_hex", "signature", "format"? ("raw" | "offchain-v0", Solana, required there),
- * "pubkey"? (base64 33-byte compressed key, Cosmos ADR-036, required there)}. Unknown keys and options that do
+ * "pubkey"? (base64 33-byte compressed key, Cosmos ADR-036, required there), "chain"? ("eth"|"btc"|"tron"|"sol"|"cosmos",
+ * required when the address is both valid Cosmos bech32 and a valid Solana key, else `ambiguous_address`)}. Unknown keys and options that do
  * not apply to the detected chain are refused. Returns the same JSON as `msgVerify`
  * ({"status":"ok"|"signer_mismatch","chain","address","recovered"?,"v"?,"format"?,"hrp"?}). No keys.
  * @param {string} input
