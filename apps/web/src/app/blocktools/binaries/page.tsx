@@ -19,7 +19,35 @@ const ROWS: [string, string, string][] = [
   ["Linux ARM64", "No asset; source build not documented", "no"],
   ["macOS (Intel or Apple silicon)", "No asset; source build not documented", "no"],
   ["Windows", "No asset; source build not documented", "no"],
-  [".deb / .rpm / .apk packages", "Dry-run only, not published", "no"],
+  [".deb / .rpm / .apk packages (x86_64)", "Published, signed repos, x86_64 only", "yes"],
+];
+
+const REPOS: [string, string, string][] = [
+  [
+    "Debian / Ubuntu (apt, amd64)",
+    "Key fingerprint: 08D9 04B0 EB3B CC0F 6D24  C621 607A 6605 8B6C 256E",
+    `sudo install -d -m 0755 /etc/apt/keyrings
+sudo wget -O /etc/apt/keyrings/blocktools-archive-keyring.asc \\
+  https://raw.githubusercontent.com/TSavo/blocktools/main/packaging/apt/blocktools-archive-keyring.asc
+echo "deb [signed-by=/etc/apt/keyrings/blocktools-archive-keyring.asc] https://tsavo.github.io/blocktools/apt stable main" \\
+  | sudo tee /etc/apt/sources.list.d/blocktools.list
+sudo apt update && sudo apt install blocktools`,
+  ],
+  [
+    "Fedora / RHEL (dnf, x86_64)",
+    "Key fingerprint: 8C50 B7A7 95D1 D3EC C5FC  97FF B83B E907 A65A 3F3F",
+    `sudo curl -o /etc/yum.repos.d/blocktools.repo \\
+  https://raw.githubusercontent.com/TSavo/blocktools/main/packaging/rpm/blocktools.repo
+sudo dnf install blocktools`,
+  ],
+  [
+    "Alpine (apk, x86_64)",
+    "Key SHA-256: 07ca30cd9d1d599342d87514b8585326a28880d62308fe9304007b62db66c09f",
+    `wget -O /etc/apk/keys/blocktools@tsavo-2026.rsa.pub \\
+  https://raw.githubusercontent.com/TSavo/blocktools/main/packaging/alpine/keys/blocktools@tsavo-2026.rsa.pub
+echo https://tsavo.github.io/blocktools/alpine >> /etc/apk/repositories
+apk update && apk add blocktools`,
+  ],
 ];
 
 export default async function Binaries() {
@@ -60,9 +88,21 @@ export default async function Binaries() {
         </table>
       </div>
       <p className="mt-3 text-xs text-violet-400">
-        The Linux binaries are dynamically linked against glibc (not static). Packaging scripts for
-        deb/rpm/apk exist but only run as a dry run.
+        The tarball's Linux binaries are dynamically linked against glibc (not static). The deb and
+        rpm carry those same glibc binaries (most need glibc 2.34+; sealed-run and tx-decode need
+        2.39). The apk is a static musl build.
       </p>
+      <section className="mt-8">
+        <h2 className="mb-2 text-xl font-black">Package repos (0.4.0)</h2>
+        <p className="text-sm">Published, signed repos, x86_64 only.</p>
+        {REPOS.map(([name, key, cmd]) => (
+          <div key={name} className="mt-4">
+            <h3 className="font-bold">{name}</h3>
+            <p className="text-xs text-violet-400">{key}</p>
+            <pre className="mt-1 overflow-x-auto rounded bg-black/40 p-3 text-xs">{cmd}</pre>
+          </div>
+        ))}
+      </section>
       {r && (
         <section className="mt-8">
           <h2 className="mb-2 text-xl font-black">Release: {r.tag}</h2>
