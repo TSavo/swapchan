@@ -136,7 +136,7 @@ export const BT_ON_SWAPCHAN: { tool: string; href: string; label: string }[] = [
   { tool: "chain-table", href: "/tools/chain-params", label: "Chain parameters table" },
 ];
 
-/** The 44 man(1) pages at v0.1.1 (42 bin/ tools + blocktools + recover.sh), grouped by job. */
+/** Man(1) pages grouped by job: a subset of the 58 in v0.4.0, including blocktools and recover.sh. */
 export const BT_GROUPS: { id: string; label: string; blurb: string; tools: string[] }[] = [
   {
     id: "recover",
@@ -196,6 +196,7 @@ export const BT_GROUPS: { id: string; label: string; blurb: string; tools: strin
       "typed-data-verify",
       "msg-verify",
       "msg-sign",
+      "siwe",
     ],
   },
   {

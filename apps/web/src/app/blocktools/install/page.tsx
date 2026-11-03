@@ -29,14 +29,16 @@ export default function Install() {
       source={`${BT_REPO}#install`}
     >
       <h2 className="mb-2 text-xl font-black">
-        1. Release binaries (Linux x86_64, glibc 2.34+ (sealed-run needs 2.39+))
+        1. Release binaries (Linux x86_64, glibc 2.39 or newer)
       </h2>
       <CopyCode code={BT_INSTALL} />
       <p className="mt-2 mb-8 text-sm text-violet-300">
         Needs the GitHub CLI (<code>gh</code>). If <code>sha256sum -c</code> fails, delete the
         archive and do not run it. Expected SHA256 of <code>{BT_TARBALL}</code>:{" "}
         <code className="break-all">{BT_TARBALL_SHA256}</code>. The tarball holds <code>bin/</code>{" "}
-        (42 tools), man pages and recipes. It has no Dockerfile: sealed runs (
+        (56 binaries, 42 of them on the sealed-run allowlist), 58 man(1) pages (including the{" "}
+        <code>blocktools</code> wrapper and <code>recover.sh</code>) and recipes. The source tree
+        has 61 tool directories; 5 are test and parity tools with no man page. It has no Dockerfile: sealed runs (
         <code>./blocktools build</code>) need a {BT_VERSION}
         source checkout and Docker.
       </p>

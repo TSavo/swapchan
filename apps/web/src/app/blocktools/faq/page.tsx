@@ -19,7 +19,7 @@ const QA: [string, string][] = [
   ],
   [
     "Which platforms?",
-    "Release binaries: Linux x86_64, glibc 2.34+ (sealed-run needs 2.39+). Sealed runs (./blocktools build) need a v0.1.1 source checkout and Docker, not just the tarball. No macOS, Windows or ARM binaries yet.",
+    "Release binaries: Linux x86_64, glibc 2.39 or newer. Sealed runs (./blocktools build) need a v0.4.0 source checkout and Docker, not just the tarball. No macOS, Windows or ARM binaries yet.",
   ],
   [
     "Does SwapChan see my keys?",

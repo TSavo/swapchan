@@ -120,6 +120,10 @@
   "desc": "Solidity function/event/error selector and topic hash, plus reverse lookup against a file you supply"
  },
  {
+  "name": "siwe",
+  "desc": "EIP-4361 Sign-In with Ethereum messages, as a stdin/stdout filter. No keys, no signatures (CLI only, no wasm export)"
+ },
+ {
   "name": "sol-tron-tx",
   "desc": "build unsigned, decode and verify Solana and Tron transfers. The chain is detected"
  },
