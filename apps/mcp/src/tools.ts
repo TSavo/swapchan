@@ -2051,7 +2051,9 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       amount: z
         .string()
         .optional()
-        .describe("EVM only, needs spender: exact approval amount in base units (amount-not-expected on mismatch)"),
+        .describe(
+          "EVM only, needs spender: exact approval amount in base units (amount-not-expected on mismatch)",
+        ),
     })
     .optional()
     .describe(

@@ -217,8 +217,10 @@ export function calldataChecks(
           ap = { spender: String(a[1]), amount: a[2] as bigint };
         else if (d.functionName === "approve" || d.functionName === "increaseAllowance")
           ap = { spender: String(a[0]), amount: a[1] as bigint };
-        else if (d.functionName === "permit") ap = { spender: String(a[1]), amount: a[2] as bigint };
-        else if (d.functionName === "setApprovalForAll" && a[1] === true) ap = { spender: String(a[0]) };
+        else if (d.functionName === "permit")
+          ap = { spender: String(a[1]), amount: a[2] as bigint };
+        else if (d.functionName === "setApprovalForAll" && a[1] === true)
+          ap = { spender: String(a[0]) };
         else if (d.functionName === "multicall" || d.functionName === "execTransaction")
           add(
             "high",
@@ -240,7 +242,11 @@ export function calldataChecks(
         );
       if (exp.amount !== undefined) {
         if (ap.amount === undefined)
-          add("high", "amount-not-expected", `setApprovalForAll has no amount; expected ${exp.amount}.`);
+          add(
+            "high",
+            "amount-not-expected",
+            `setApprovalForAll has no amount; expected ${exp.amount}.`,
+          );
         else if (ap.amount !== BigInt(exp.amount))
           add(
             "high",
@@ -757,14 +763,23 @@ export function checkExpectedSpender(chainId: number, exp: Expected) {
   const { spender, amount } = exp as { spender?: unknown; amount?: unknown };
   if (spender === undefined && amount === undefined) return;
   if (chainId === SOLANA || chainId === TRON || chainId === BITCOIN)
-    throw new BadRequest("expected_spender_evm_only: expected.spender/amount are checked on EVM chains only");
-  if (spender !== undefined && (typeof spender !== "string" || !isAddress(spender, { strict: false })))
+    throw new BadRequest(
+      "expected_spender_evm_only: expected.spender/amount are checked on EVM chains only",
+    );
+  if (
+    spender !== undefined &&
+    (typeof spender !== "string" || !isAddress(spender, { strict: false }))
+  )
     throw new BadRequest("bad_expected_spender: expected.spender must be a 0x EVM address");
   if (amount !== undefined) {
     if (typeof amount !== "string" || !/^[0-9]{1,78}$/.test(amount))
-      throw new BadRequest("bad_expected_amount: expected.amount must be a decimal string of base units");
+      throw new BadRequest(
+        "bad_expected_amount: expected.amount must be a decimal string of base units",
+      );
     if (spender === undefined)
-      throw new BadRequest("expected_amount_needs_spender: give expected.spender with expected.amount");
+      throw new BadRequest(
+        "expected_amount_needs_spender: give expected.spender with expected.amount",
+      );
   }
 }
 

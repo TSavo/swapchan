@@ -27,7 +27,9 @@ describe("expected.spender / expected.amount", () => {
   });
   it("passes the spender check for the expected spender (any case)", () => {
     const f = run(approve(ROUTER, 1234n), { spender: ROUTER.toLowerCase(), amount: "1234" });
-    expect(f.some((x) => x.check === "spender-not-expected" || x.check === "amount-not-expected")).toBe(false);
+    expect(
+      f.some((x) => x.check === "spender-not-expected" || x.check === "amount-not-expected"),
+    ).toBe(false);
   });
   it("amount mismatch is danger", () => {
     const f = run(approve(ROUTER, 1235n), { spender: ROUTER, amount: "1234" });
@@ -41,17 +43,33 @@ describe("expected.spender / expected.amount", () => {
   });
   it("Permit2 approve and setApprovalForAll are checked", () => {
     const p2 = encodeFunctionData({ abi, functionName: "approve", args: [USDC, DRAINER, 5n, 0] });
-    expect(run(p2, { spender: ROUTER }, PERMIT2).some((x) => x.check === "spender-not-expected")).toBe(true);
-    const all = encodeFunctionData({ abi, functionName: "setApprovalForAll", args: [DRAINER, true] });
-    expect(run(all, { spender: ROUTER }).some((x) => x.check === "spender-not-expected")).toBe(true);
+    expect(
+      run(p2, { spender: ROUTER }, PERMIT2).some((x) => x.check === "spender-not-expected"),
+    ).toBe(true);
+    const all = encodeFunctionData({
+      abi,
+      functionName: "setApprovalForAll",
+      args: [DRAINER, true],
+    });
+    expect(run(all, { spender: ROUTER }).some((x) => x.check === "spender-not-expected")).toBe(
+      true,
+    );
   });
   it("multicall batch fails closed", () => {
-    const mc = encodeFunctionData({ abi, functionName: "multicall", args: [[approve(ROUTER, maxUint256)]] });
-    expect(run(mc, { spender: ROUTER }).find((x) => x.check === "spender-unchecked")?.severity).toBe("high");
+    const mc = encodeFunctionData({
+      abi,
+      functionName: "multicall",
+      args: [[approve(ROUTER, maxUint256)]],
+    });
+    expect(
+      run(mc, { spender: ROUTER }).find((x) => x.check === "spender-unchecked")?.severity,
+    ).toBe("high");
   });
   it("input validation", () => {
     expect(() => checkExpectedSpender(1, { spender: "0x12" })).toThrow(/bad_expected_spender/);
-    expect(() => checkExpectedSpender(1, { spender: ROUTER, amount: "1.5" })).toThrow(/bad_expected_amount/);
+    expect(() => checkExpectedSpender(1, { spender: ROUTER, amount: "1.5" })).toThrow(
+      /bad_expected_amount/,
+    );
     expect(() => checkExpectedSpender(1, { amount: "5" })).toThrow(/expected_amount_needs_spender/);
     expect(() => checkExpectedSpender(792703809, { spender: ROUTER } as never)).toThrow(/evm_only/);
     expect(() => checkExpectedSpender(1, { spender: ROUTER, amount: "5" })).not.toThrow();
