@@ -307,16 +307,13 @@ export default async function BlocktoolsHome() {
             ],
             [
               "Ambiguous addresses",
-              "Some strings are valid both as a Cosmos bech32 address and as a Solana key. They are now refused with ambiguous_address unless the chain is named: --chain cosmos|sol on the CLI, or the msgVerifyOpts key \"chain\" in wasm. A named chain that does not match gives chain_does_not_match_address.",
+              'Some strings are valid both as a Cosmos bech32 address and as a Solana key. They are now refused with ambiguous_address unless the chain is named: --chain cosmos|sol on the CLI, or the msgVerifyOpts key "chain" in wasm. A named chain that does not match gives chain_does_not_match_address.',
             ],
             [
               "Partial ABI decodes",
               "abi-decode --allow-gaps (wasm evmAbiDecode allow_gaps, a bool) is opt-in: a dynamic tail may start after its canonical position and the skipped bytes are reported as gap_bytes. Backwards or overlapping offsets, bounds, dirty padding and trailing_data are still refused by default; SwapChan also passes allow_trailing at its own decode sites.",
             ],
-            [
-              "76 wasm exports",
-              "Measured in a green main run (msgVerifyOpts is the 76th).",
-            ],
+            ["76 wasm exports", "Measured in a green main run (msgVerifyOpts is the 76th)."],
             [
               "Not tested",
               "Cosmos ADR-036 and Solana offchain-v0 are self round-trip only, with no published or real-wallet vector. siwe is tested only on spruceid's published vectors. The tx-verify checks have not been tested on transactions from a live wallet, and Universal Router commands are surfaced but not decoded.",
