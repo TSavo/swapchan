@@ -7,7 +7,8 @@ import { BT_ITEMS, type BtItem } from "@/lib/blocktoolsManifest";
 export const BT_REPO = "https://github.com/TSavo/blocktools";
 export const BT_COMMIT = "d98cb51";
 /** The release this site reviewed and links. Newer releases stay listed on /blocktools/releases. */
-export const BT_TAG = "v0.3.3";
+/** v0.4.0 is not tagged yet (TODO_V040_TAG: confirm the tag exists before deploy). Not in FALLBACK until its date and asset size are measured. */
+export const BT_TAG = "v0.4.0";
 export const pinnedRelease = <T extends { tag: string }>(rs: T[]): T | undefined =>
   rs.find((r) => r.tag === BT_TAG);
 const ROOT = path.join(process.cwd(), "content", "blocktools");
