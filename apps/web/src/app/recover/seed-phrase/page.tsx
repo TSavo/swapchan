@@ -73,12 +73,12 @@ export default function Page() {
           </Link>
           .
         </p>
-        <pre className="overflow-x-auto rounded-xl bg-black/50 p-3 text-xs">{`# while online: download blocktools v0.1.1 (Linux x86_64) and check it
-curl -LO https://github.com/TSavo/blocktools/releases/download/v0.1.1/blocktools-v0.1.1-linux-x86_64.tar.gz
-curl -LO https://github.com/TSavo/blocktools/releases/download/v0.1.1/SHA256SUMS
+        <pre className="overflow-x-auto rounded-xl bg-black/50 p-3 text-xs">{`# while online: download blocktools v0.4.0 (Linux x86_64) and check it
+curl -LO https://github.com/TSavo/blocktools/releases/download/v0.4.0/blocktools-v0.4.0-linux-x86_64.tar.gz
+curl -LO https://github.com/TSavo/blocktools/releases/download/v0.4.0/SHA256SUMS
 sha256sum -c SHA256SUMS   # must say OK; if not, stop
-tar xzf blocktools-v0.1.1-linux-x86_64.tar.gz
-export PATH="$PWD/blocktools-v0.1.1-linux-x86_64/bin:$PATH"
+tar xzf blocktools-v0.4.0-linux-x86_64.tar.gz
+export PATH="$PWD/blocktools-v0.4.0-linux-x86_64/bin:$PATH"
 # now disconnect from the internet; put the phrase in seed.txt (never in chat)
 seed-to-master < seed.txt | derive --preset scan-js --address-list > addresses.txt
 # optional 25th-word guesses, one per line (blank is always tried too):

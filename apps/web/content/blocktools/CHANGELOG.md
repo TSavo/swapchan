@@ -5,6 +5,86 @@ versions follow [Semantic Versioning](https://semver.org/). Every entry names th
 Numbers and security statements here are only those registered as measured in docs/claims.toml
 (claim id in brackets); anything not measured is under "Known limitations" in plain words.
 
+## [Unreleased]
+
+## [0.4.0] - 2026-11-02
+
+Minor release, not tagged yet. Highlights:
+- **Behaviour change:** `tx-sign` and the wasm `verifyTx` now refuse unlimited approvals, unasserted batch inner calls
+  and Safe delegatecalls by default (see Changed).
+- `msg-verify` and `msg-sign` support Tron signMessageV2, Solana (raw / offchain-v0) and Cosmos ADR-036.
+- New `siwe` tool (EIP-4361).
+- `abi-decode --allow-gaps` / `evmAbiDecode` `allow_gaps`.
+- Fixed: Cosmos addresses that were also valid Solana keys were misdetected; they now give `ambiguous_address`
+  unless the chain is named (new `msgVerifyOpts` key `"chain"`).
+- 76 wasm exports (was 75; new `msgVerifyOpts`).
+
+### Added
+- New tool `siwe`: builds an EIP-4361 Sign-In with Ethereum message from JSON fields (`siwe build [--raw]`) and
+  parses one strictly (`siwe parse`): only valid, canonical text is accepted, otherwise `refused` (exit 1). Opt-in
+  checks `--domain`, `--nonce`, `--now RFC3339` / `--check-time` (`domain_mismatch`, `nonce_mismatch`, `expired`,
+  `not_yet_valid`). No keys; the signature is not checked (use `msg-verify`). CLI only, no wasm export (76 exports,
+  unchanged). Vectors: spruceid/siwe 911f6f2c, docs/PROVENANCE-siwe.md.
+- `tx-verify` checks approvals and transfers in the calldata: `approve`, `increaseAllowance`, EIP-2612 and DAI
+  `permit`, Permit2 `approve`/`permit`, `setApprovalForAll`, `transfer`, `transferFrom`, at top level and inside
+  `multicall`, Multicall3 `aggregate*`, Universal Router `execute`, Safe `execTransaction` and Safe `multiSend`.
+  New output keys `approvals`, `transfers`, `inner_calls`. An approval of 2^128 or more, or of all tokens, fails with
+  `unlimited_approval`. New opt-in assertions `--expect-spender`, `--expect-amount`, `--expect-unlimited` (needs
+  `--expect-spender`), `--expect-recipient`, `--expect-value`, `--allow-inner-call TO:SELECTOR`,
+  `--allow-delegatecall TO`, failing with `spender_not_expected`, `amount_not_expected`, `recipient_not_expected`,
+  `value_not_expected`, `inner_calls_not_asserted`, `delegatecall`. No blanket allow.
+- `typed-data-verify` prints `verifying_contract` and takes `--expect-chain-id` / `--expect-verifying-contract`
+  (status `chain_id_mismatch` / `verifying_contract_mismatch`, exit 1). The wasm `evmTypedDataVerify` output gains
+  `verifying_contract`; no wasm export added or removed.
+- The wasm `verifyTx` runs the same approval / transfer / batch checks as `tx-verify` (one shared function,
+  `presign::apply`), deny by default with no options: `unlimited_approval`, `inner_calls_not_asserted`, `delegatecall`
+  now fail in wasm as in the CLI, and the result gains `approvals`, `transfers`, `inner_calls`. The opt-ins are new
+  `call_json` keys `expect_spender`, `expect_amount`, `expect_recipient`, `expect_value` (strings), `expect_unlimited`
+  (bool), `allow_inner_call` (["TO:SELECTOR"]), `allow_delegatecall` (["TO"]); wrong types throw `<key>_must_be_*`.
+  `evmTypedDataVerify` takes an optional 4th argument `options_json` `{expect_chain_id, expect_verifying_contract}`
+  (strings; shared `eip712::apply_expect` with typed-data-verify). Behaviour change: a wasm `verifyTx` that passed an
+  unlimited approval, an unasserted batch or a Safe delegatecall now fails. Table: EXPORTS.md.
+- `msg-verify` checks Tron signMessageV2, Solana (`--format raw|offchain-v0`, required) and Cosmos ADR-036
+  (`--pubkey`, required) message signatures, chain detected from the address; `--chain` gains `tron|sol|cosmos`.
+  Options for another chain are refused. The wasm `msgVerify` gains Tron; new export `msgVerifyOpts(inputJson)`
+  takes `format` / `pubkey` (76 exports, was 75). Vectors and sources: docs/PROVENANCE-msg.md.
+- `msg-sign` signs Tron signMessageV2, Solana (`--format raw|offchain-v0`, required) and Cosmos ADR-036 messages,
+  chain detected from the address; `--chain` gains `tron|sol|cosmos`. Same gate as Ethereum/Bitcoin: refusals
+  (blind 32-byte hash, hex, transaction-looking text) before any key is read, the signature re-verified, then the
+  message shown and a code typed on /dev/tty. Solana keys: 64-hex seed or a solana-keygen 64-byte JSON array (its
+  public half must match). Output `{"chain","address","signature"}` plus `format` (sol) or `pub_key`+`hrp` (cosmos).
+  CLI only: no wasm signing. Tron and Solana raw reproduce Trust Wallet Core's signatures byte for byte
+  (scripts/e2e.d/msg-chains-sign.sh, msg-chains-sign-e2e); Solana offchain-v0 and Cosmos are round-trip only (UNTESTED).
+- `scripts/recipe-check.py` runs a recipe `curl` example only in the exact shape `curl [opts] $ETH/... | filters`
+  (shlex-parsed; `;`, `&&`, `||`, `$(`, backticks, other URLs refused), with a self-test in hygiene-check.
+- `abi-decode --allow-gaps` (wasm `evmAbiDecode` request field `"allow_gaps": true`, must be a bool, else
+  `allow_gaps_must_be_bool`): opt-in partial decode where a dynamic tail may start after its canonical position (e.g.
+  one LI.FI `BridgeData` parameter out of longer calldata). Skipped bytes are reported as `gap_bytes` and never decoded;
+  backwards/overlapping offsets, bounds, dirty padding and `trailing_data` are still refused. docs/ABI-STRICT.md.
+
+### Changed
+- Behaviour change: `tx-sign` now runs the same approval/transfer/inner-call checks as `tx-verify` (shared
+  `presign::apply`) before it reads a key, and again on the signed bytes, deny by default. Batches (multicall,
+  Multicall3, Safe MultiSend) and unlimited approvals that `tx-sign` signed before are now refused unless asserted with
+  `--expect-spender ADDR --expect-unlimited`, `--allow-inner-call TO:SELECTOR` or `--allow-delegatecall TO`. The
+  optional `--expect-amount`, `--expect-recipient` and `--expect-value` flags work as in `tx-verify`, also with `--plan`.
+- `scripts/claims-check.py` K-ci: lists main push runs unfiltered and keeps completed+success runs client-side
+  (the `status=success` listing had omitted a green run), with a self-test and a negative case.
+
+### Fixed
+- `msg-verify` / wasm `msgVerify`, `msgVerifyOpts`: a Cosmos address with a 4-letter prefix that is also a valid
+  32-byte on-curve Solana base58 key (e.g. `osmo148yundzwcr97np3s8c8yrx2p6p33ck6sd4stfm`) was detected as Solana,
+  so `--pubkey` was refused with `pubkey_only_for_cosmos`. Such strings are now refused with `ambiguous_address`
+  unless the chain is named: `--chain cosmos|sol`, or the new `msgVerifyOpts` key `"chain"` (JSON string). A wrong
+  named chain is refused with `chain_does_not_match_address` (msg-ambiguous-address).
+
+### Known limitations
+- `siwe`: UNTESTED on messages from real wallets or dapps beyond spruceid's published vectors; no wasm export.
+- Message verify: Cosmos ADR-036 signatures and real `solana sign-offchain-message` signatures are UNTESTED
+  against wallet output (self round-trip and byte layout only), for msg-sign as well as msg-verify.
+- Universal Router command bytes are surfaced, not named or decoded. ERC-721 `approve` shares the
+  ERC-20 selector, so a token id of 2^128 or more is reported as unlimited. UNTESTED on transactions from a live wallet.
+
 ## [0.3.3] - 2026-10-30
 
 Patch release: no code change to any tool, wasm export or flag since v0.3.0. It makes the 0.3.x
@@ -91,7 +171,7 @@ carrier is standard BIP174 PSBT.
 - Cosmos legacy multisig (#27, c5a4b75, 8a29887). `LegacyAminoPubKey` (threshold + N child pubkeys) and N
   `SignerInfo`s with a `MultiSignature` bitarray in `crates/acct` (atom/thor), combined via the `acct-tx`
   partial-sign + combine path (SIGN_MODE_DIRECT; interop is a standard `TxRaw` + `MultiSignature`). e2e
-  `scripts/e2e.d/cosmos-multisig.sh`: a 2-of-3 combine. 33 Cosmos multisig transaction vectors pass
+  `scripts/e2e.d/cosmos-multisig.sh`: a 2-of-3 combine. 31 Cosmos single-signer MsgSend transaction vectors (10 from Trust Wallet Core's tests; Evmos and 20 more generated by running TWC adf80f8, not independent) pass, plus 2 refusal tests
   [twc-cosmos-vectors]; multisig addresses [twc-cosmos-addresses]. `acct-tx` message verify is shared
   [twc-message-vectors].
 - BOLT11 offline Lightning invoice decode/encode (195ae8f, ab8c2c0). New `bolt11` tool: bech32 + tagged-field

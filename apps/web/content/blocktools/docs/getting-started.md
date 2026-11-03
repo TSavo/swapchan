@@ -7,13 +7,13 @@ fixtures below and on mock chains before you touch a real key.
 
 Pick one.
 
-**Release tarball (Linux x86_64 only, glibc-linked, not static: 40 of 41 tools need glibc 2.34 or newer, `sealed-run` needs 2.39 or newer; see the README).** v0.1.0 ships `blocktools-v0.1.0-linux-x86_64.tar.gz` and
+**Release tarball (Linux x86_64 only, glibc-linked, not static: 53 of the v0.3.3 tarball's 55 binaries need glibc 2.34 or newer, `sealed-run` and `tx-decode` need 2.39 or newer; see the README).** v0.3.3 ships `blocktools-v0.3.3-linux-x86_64.tar.gz` and
 `SHA256SUMS`. Verify before you unpack:
 
 ```sh
-gh release download v0.1.0 -R TSavo/blocktools
-sha256sum -c SHA256SUMS            # blocktools-v0.1.0-linux-x86_64.tar.gz: OK  -- anything else: stop
-tar xzf blocktools-v0.1.0-linux-x86_64.tar.gz && cd blocktools-v0.1.0-linux-x86_64
+gh release download v0.3.3 -R TSavo/blocktools
+sha256sum -c SHA256SUMS            # blocktools-v0.3.3-linux-x86_64.tar.gz: OK  -- anything else: stop
+tar xzf blocktools-v0.3.3-linux-x86_64.tar.gz && cd blocktools-v0.3.3-linux-x86_64
 export PATH=$PWD/bin:$PATH MANPATH=$PWD/share/man:
 ```
 

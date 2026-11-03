@@ -1,9 +1,9 @@
 /** Client-safe blocktools hub data. Every fact is from the TSavo/blocktools README at 657458a. */
-/** The one place the release version, tarball name and its SHA256 live. SHA256 measured from the v0.1.1 release asset (matches its SHA256SUMS). */
-export const BT_VERSION = "v0.1.1";
+/** The one place the release version, tarball name and its SHA256 live. SHA256 measured 2026-11-02 from the v0.4.0 release asset (matches its SHA256SUMS). */
+export const BT_VERSION = "v0.4.0";
 export const BT_TARBALL_DIR = `blocktools-${BT_VERSION}-linux-x86_64`;
 export const BT_TARBALL = `${BT_TARBALL_DIR}.tar.gz`;
-export const BT_TARBALL_SHA256 = "6356f0a2053feee8c4d9bc48e2cdc0e62b88ba52d83b3431313458f46cd2f41e";
+export const BT_TARBALL_SHA256 = "978330caca87ea36804312f1c25922727061df25887c4938e179b9a95a66dcbc";
 export const BT_INSTALL = [
   `gh release download ${BT_VERSION} -R TSavo/blocktools`,
   "sha256sum -c SHA256SUMS",
@@ -136,7 +136,7 @@ export const BT_ON_SWAPCHAN: { tool: string; href: string; label: string }[] = [
   { tool: "chain-table", href: "/tools/chain-params", label: "Chain parameters table" },
 ];
 
-/** The 44 man(1) pages at v0.1.1 (42 bin/ tools + blocktools + recover.sh), grouped by job. */
+/** Man(1) pages grouped by job: a subset of the 58 in v0.4.0, including blocktools and recover.sh. */
 export const BT_GROUPS: { id: string; label: string; blurb: string; tools: string[] }[] = [
   {
     id: "recover",
@@ -196,6 +196,7 @@ export const BT_GROUPS: { id: string; label: string; blurb: string; tools: strin
       "typed-data-verify",
       "msg-verify",
       "msg-sign",
+      "siwe",
     ],
   },
   {

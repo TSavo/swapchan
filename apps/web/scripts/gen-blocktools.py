@@ -17,7 +17,7 @@ def meta(path):
 
 # From docs/README.md (the upstream docs index), where a page's own first paragraph is a poor summary.
 OVR = {
- "getting-started": "Getting started with blocktools: install from the v0.1.1 release or from source, then your first sealed run on public test data.",
+ "getting-started": "Getting started with blocktools: install from the v0.4.0 release or from source, then your first sealed run on public test data.",
  "security": "blocktools security: threat model, sealed runs, and what is and is not protected.",
  "claims": "Every blocktools number and security claim, the command that measured it, and where it was measured.",
  "refusals": "Every blocktools status and failure code, what causes it and what to do.",

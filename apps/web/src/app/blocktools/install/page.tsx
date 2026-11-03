@@ -28,16 +28,18 @@ export default function Install() {
       }
       source={`${BT_REPO}#install`}
     >
-      <h2 className="mb-2 text-xl font-black">
-        1. Release binaries (Linux x86_64, glibc 2.34+ (sealed-run needs 2.39+))
-      </h2>
+      <h2 className="mb-2 text-xl font-black">1. Release binaries (Linux x86_64)</h2>
       <CopyCode code={BT_INSTALL} />
       <p className="mt-2 mb-8 text-sm text-violet-300">
-        Needs the GitHub CLI (<code>gh</code>). If <code>sha256sum -c</code> fails, delete the
-        archive and do not run it. Expected SHA256 of <code>{BT_TARBALL}</code>:{" "}
+        Needs glibc 2.39+ for the full set (54 of 56 binaries need 2.34; sealed-run and tx-decode
+        need 2.39; objdump -T on the published tarball, not CI-stamped). Needs the GitHub CLI (
+        <code>gh</code>). If <code>sha256sum -c</code> fails, delete the archive and do not run it.
+        Expected SHA256 of <code>{BT_TARBALL}</code>:{" "}
         <code className="break-all">{BT_TARBALL_SHA256}</code>. The tarball holds <code>bin/</code>{" "}
-        (42 tools), man pages and recipes. It has no Dockerfile: sealed runs (
-        <code>./blocktools build</code>) need a {BT_VERSION}
+        (56 binaries, 42 of them on the sealed-run allowlist), 58 man(1) pages (including the{" "}
+        <code>blocktools</code> wrapper and <code>recover.sh</code>) and recipes. The source tree
+        has 61 tool directories; 5 are test and parity tools with no man page. It has no Dockerfile:
+        sealed runs (<code>./blocktools build</code>) need a {BT_VERSION}
         source checkout and Docker.
       </p>
       <h2 className="mb-2 text-xl font-black">2. Build from source</h2>

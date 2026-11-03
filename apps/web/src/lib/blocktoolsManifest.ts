@@ -93,7 +93,7 @@ export const BT_ITEMS: BtItem[] = [
     file: "docs/getting-started.md",
     title: "Getting started",
     description:
-      "Getting started with blocktools: install from the v0.1.1 release or from source, then your first sealed run on public test data.",
+      "Getting started with blocktools: install from the v0.4.0 release or from source, then your first sealed run on public test data.",
   },
   {
     kind: "docs",
