@@ -2558,12 +2558,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     "msg_verify",
     {
       title: "Verify a signed message (dev tool)",
-      description: `Check a PUBLIC message signature: EIP-191 personal_sign (0x address, 65-byte hex sig) or Bitcoin Core signmessage (P2PKH address, base64 sig). message_is_hex=true when the message is hex bytes. Returns status ok or signer_mismatch, chain, address and the recovered signer. ${OFFLINE}`,
+      description: `Check a PUBLIC message signature (blocktools msgVerifyOpts): EIP-191 personal_sign (0x address, 65-byte hex sig), Bitcoin Core signmessage (P2PKH address, base64 sig), Tron signMessageV2, Solana (format raw|offchain-v0, required) or Cosmos ADR-036 (pubkey, base64 33-byte compressed key, required). The chain is detected from the address; optional chain (eth|btc|tron|sol|cosmos) names it, and is required for an address valid both as Cosmos bech32 and as a Solana key (else error ambiguous_address). A named chain that does not match the address gives chain_does_not_match_address. message_is_hex=true when the message is hex bytes. Returns status ok or signer_mismatch, chain, address and the recovered signer. ${OFFLINE}`,
       inputSchema: z.object({
         address: z.string().max(100),
         message: z.string().max(2_000),
         sig: z.string().max(200),
         message_is_hex: z.boolean().optional(),
+        chain: z.enum(["eth", "btc", "tron", "sol", "cosmos"]).optional(),
+        format: z.enum(["raw", "offchain-v0"]).optional(),
+        pubkey: z.string().max(100).optional(),
       }),
       annotations: devAnn,
     },

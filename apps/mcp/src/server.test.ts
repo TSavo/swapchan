@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { NATIVE_TOKEN } from "@swapchan/shared";
@@ -176,6 +177,18 @@ describe("swapchan mcp over streamable http", () => {
         "build_send_tx",
       ].sort(),
     );
+    await c.close();
+  });
+
+  it("llms.txt lists every MCP tool, with the measured count", async () => {
+    const c = await connect();
+    const { tools } = await c.listTools();
+    const llms = readFileSync(new URL("../../web/public/llms.txt", import.meta.url), "utf8");
+    const m = llms.match(/^- Tools \((\d+)\): (.+)$/m);
+    expect(m).not.toBeNull();
+    const listed = (m?.[2] ?? "").split(", ");
+    expect(Number(m?.[1])).toBe(tools.length);
+    expect([...listed].sort()).toEqual(tools.map((t) => t.name).sort());
     await c.close();
   });
 
