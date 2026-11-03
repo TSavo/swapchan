@@ -160,3 +160,114 @@ describe("new providers", () => {
     expect(p.txOutputs[0]?.value).toBe(50_000n);
   });
 });
+
+describe("1inch fee", () => {
+  const key = { ...env, ONEINCH_API_KEY: "k" } as NodeJS.ProcessEnv;
+  const REF = FEE.slice(2).toLowerCase();
+  const seqFetch = (route: (url: string) => { status?: number; body: unknown }) => {
+    const urls: string[] = [];
+    let inflight = 0;
+    let maxInflight = 0;
+    const f = (async (url: string) => {
+      urls.push(url);
+      inflight++;
+      maxInflight = Math.max(maxInflight, inflight);
+      await new Promise((r) => setTimeout(r, 5));
+      inflight--;
+      const { status = 200, body } = route(url);
+      return Response.json(body, { status });
+    }) as unknown as typeof fetch;
+    return { f, urls, max: () => maxInflight };
+  };
+
+  it("runs the two quotes sequentially, fee first", async () => {
+    const m = seqFetch(() => ({ body: { dstAmount: "300000000" } }));
+    await oneinch(pricer, key, m.f, () => {}).quote(same, sig());
+    expect(m.max()).toBe(1);
+    expect(m.urls[0]).toContain("fee=0.1");
+    expect(m.urls[1]).not.toContain("fee=");
+  });
+
+  it("quote ignores fee (as measured): deducts expected fee, unverified", async () => {
+    const m = seqFetch(() => ({ body: { dstAmount: "300000000" } }));
+    const q = await oneinch(pricer, key, m.f, () => {}).quote(same, sig());
+    expect(q.toAmount).toBe("299700000");
+    expect(q.ourFeeUsd).toBeCloseTo(0.3, 6);
+    expect(q.ourFeeVerified).toBe(false);
+  });
+
+  it("quote deducts fee: measured and verified", async () => {
+    const m = seqFetch((u) => ({
+      body: { dstAmount: u.includes("fee=") ? "299700000" : "300000000" },
+    }));
+    const q = await oneinch(pricer, key, m.f, () => {}).quote(same, sig());
+    expect(q.toAmount).toBe("299700000");
+    expect(q.ourFeeUsd).toBeCloseTo(0.3, 6);
+    expect(q.ourFeeVerified).toBe(true);
+  });
+
+  it("logs a failed no-fee quote and stays unverified", async () => {
+    const logs: string[] = [];
+    const m = seqFetch((u) =>
+      u.includes("fee=") ? { body: { dstAmount: "300000000" } } : { status: 429, body: { e: 1 } },
+    );
+    const q = await oneinch(pricer, key, m.f, (s) => logs.push(s)).quote(same, sig());
+    expect(logs.join()).toMatch(/no-fee quote failed.*429/);
+    expect(q.ourFeeVerified).toBe(false);
+    expect(q.toAmount).toBe("299700000");
+  });
+
+  it("swap with referrer in calldata and fee taken: verified", async () => {
+    const m = seqFetch((u) =>
+      u.includes("/swap?")
+        ? {
+            body: {
+              dstAmount: "299700000",
+              tx: {
+                to: "0x111111125421cA6dc452d289314280a0f8842A65",
+                data: `0xabcd${REF}`,
+                value: "0",
+              },
+            },
+          }
+        : { body: { dstAmount: "300000000" } },
+    );
+    const q = await oneinch(pricer, key, m.f, () => {}).quote({ ...same, taker: FEE }, sig());
+    expect(m.urls.at(-1)).toContain(`referrer=${FEE}`);
+    expect(q.ourFeeVerified).toBe(true);
+    expect(q.toAmount).toBe("299700000");
+  });
+
+  it("swap without our referrer in calldata: not verified", async () => {
+    const logs: string[] = [];
+    const m = seqFetch((u) =>
+      u.includes("/swap?")
+        ? {
+            body: {
+              dstAmount: "300000000",
+              tx: { to: "0x111111125421cA6dc452d289314280a0f8842A65", data: "0xabcd", value: "0" },
+            },
+          }
+        : { body: { dstAmount: "300000000" } },
+    );
+    const q = await oneinch(pricer, key, m.f, (s) => logs.push(s)).quote(
+      { ...same, taker: FEE },
+      sig(),
+    );
+    expect(q.ourFeeVerified).toBe(false);
+    expect(logs.join()).toMatch(/fee not verified/);
+  });
+
+  it("no fee configured: one quote call, no fee", async () => {
+    const m = seqFetch(() => ({ body: { dstAmount: "300000000" } }));
+    const q = await oneinch(
+      pricer,
+      { ONEINCH_API_KEY: "k" } as NodeJS.ProcessEnv,
+      m.f,
+      () => {},
+    ).quote(same, sig());
+    expect(m.urls).toHaveLength(1);
+    expect(q.ourFeeUsd).toBe(0);
+    expect(q.ourFeeVerified).toBe(false);
+  });
+});
