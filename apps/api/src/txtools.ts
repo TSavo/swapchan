@@ -47,6 +47,10 @@ export interface Expected {
   quotedOut?: string;
   /** Token whose simulated receipt is checked against minOut (default: the largest receipt). */
   outToken?: string;
+  /** EVM only: every approval in the tx (approve, increaseAllowance, permit, Permit2 approve, setApprovalForAll) must name this spender. */
+  spender?: string;
+  /** EVM only, needs spender: the approval amount must equal this (decimal base units). */
+  amount?: string;
 }
 
 const MAX_HALF = 2n ** 255n;
@@ -201,6 +205,61 @@ export function calldataChecks(
     } catch {
       call = tx.data.slice(0, 10);
     }
+  }
+  if (exp.spender || exp.amount) {
+    // Fail closed: the spender is what matters (an exact-balance approval to a drainer is not "unlimited").
+    let ap: { spender: string; amount?: bigint } | undefined;
+    if (call && tx.data && tx.data !== "0x") {
+      try {
+        const d = decodeFunctionData({ abi: DANGER, data: tx.data });
+        const a = (d.args ?? []) as readonly unknown[];
+        if (d.functionName === "approve" && lc(tx.to) === PERMIT2 && a.length === 4)
+          ap = { spender: String(a[1]), amount: a[2] as bigint };
+        else if (d.functionName === "approve" || d.functionName === "increaseAllowance")
+          ap = { spender: String(a[0]), amount: a[1] as bigint };
+        else if (d.functionName === "permit")
+          ap = { spender: String(a[1]), amount: a[2] as bigint };
+        else if (d.functionName === "setApprovalForAll" && a[1] === true)
+          ap = { spender: String(a[0]) };
+        else if (d.functionName === "multicall" || d.functionName === "execTransaction")
+          add(
+            "high",
+            "spender-unchecked",
+            `expected spender/amount given, but this is a ${d.functionName} batch whose inner calls are not decoded here, so it cannot be shown to hold.`,
+          );
+      } catch {
+        /* undecodable: handled below */
+      }
+    }
+    if (ap) {
+      if (exp.spender && lc(ap.spender) !== lc(exp.spender))
+        add(
+          lookalike(ap.spender, exp.spender) ? "critical" : "high",
+          "spender-not-expected",
+          lookalike(ap.spender, exp.spender)
+            ? `Approval spender ${ap.spender} LOOKS LIKE the expected ${exp.spender} but is a different address (address poisoning).`
+            : `Approval spender ${ap.spender} is not the expected spender ${exp.spender}. Do not sign.`,
+        );
+      if (exp.amount !== undefined) {
+        if (ap.amount === undefined)
+          add(
+            "high",
+            "amount-not-expected",
+            `setApprovalForAll has no amount; expected ${exp.amount}.`,
+          );
+        else if (ap.amount !== BigInt(exp.amount))
+          add(
+            "high",
+            "amount-not-expected",
+            `Approval amount ${ap.amount} is not the expected ${exp.amount}.`,
+          );
+      }
+    } else if (!out.some((f) => f.check === "spender-unchecked"))
+      add(
+        "info",
+        "spender",
+        "expected spender/amount given; this tx makes no approval (approve, increaseAllowance, permit, Permit2, setApprovalForAll).",
+      );
   }
   if (
     tx.from &&
@@ -699,6 +758,31 @@ export function verifyTron(tx: TronTx, exp: Expected = {}) {
   };
 }
 
+/** expected.spender / expected.amount: EVM only; bad input is refused rather than ignored. */
+export function checkExpectedSpender(chainId: number, exp: Expected) {
+  const { spender, amount } = exp as { spender?: unknown; amount?: unknown };
+  if (spender === undefined && amount === undefined) return;
+  if (chainId === SOLANA || chainId === TRON || chainId === BITCOIN)
+    throw new BadRequest(
+      "expected_spender_evm_only: expected.spender/amount are checked on EVM chains only",
+    );
+  if (
+    spender !== undefined &&
+    (typeof spender !== "string" || !isAddress(spender, { strict: false }))
+  )
+    throw new BadRequest("bad_expected_spender: expected.spender must be a 0x EVM address");
+  if (amount !== undefined) {
+    if (typeof amount !== "string" || !/^[0-9]{1,78}$/.test(amount))
+      throw new BadRequest(
+        "bad_expected_amount: expected.amount must be a decimal string of base units",
+      );
+    if (spender === undefined)
+      throw new BadRequest(
+        "expected_amount_needs_spender: give expected.spender with expected.amount",
+      );
+  }
+}
+
 export async function verifyTx(
   f: F,
   env: NodeJS.ProcessEnv,
@@ -706,6 +790,7 @@ export async function verifyTx(
   tx: unknown,
   exp: Expected = {},
 ) {
+  checkExpectedSpender(chainId, exp);
   if (chainId === SOLANA) return verifySolana(f, env, String(tx), exp);
   if (chainId === TRON)
     return verifyTron((typeof tx === "string" ? JSON.parse(tx) : tx) as TronTx, exp);
