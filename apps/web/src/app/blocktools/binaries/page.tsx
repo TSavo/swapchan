@@ -6,11 +6,11 @@ export const revalidate = 3600;
 export const metadata = btMeta(
   "/blocktools/binaries",
   "blocktools binaries and platforms",
-  "Which platforms have prebuilt blocktools binaries: Linux x86_64 (glibc 2.39 or newer). macOS, Windows and ARM build from source.",
+  "Which platforms have prebuilt blocktools binaries: Linux x86_64 only (glibc 2.39+ for the full set (54 of 56 binaries need 2.34; sealed-run and tx-decode need 2.39; objdump -T on the published tarball, not CI-stamped)). No macOS, Windows or ARM binaries.",
 );
 
 const ROWS: [string, string, string][] = [
-  ["Linux x86_64 (glibc 2.39 or newer)", "Prebuilt tarball", "yes"],
+  ["Linux x86_64 (glibc 2.39+ for the full set (54 of 56 binaries need 2.34; sealed-run and tx-decode need 2.39; objdump -T on the published tarball, not CI-stamped))", "Prebuilt tarball", "yes"],
   ["Linux, older glibc", "Build from source", "no"],
   ["Linux ARM64", "No asset; source build not documented", "no"],
   ["macOS (Intel or Apple silicon)", "No asset; source build not documented", "no"],

@@ -124,8 +124,7 @@ export default async function BlocktoolsHome() {
             <Ctas />
           </div>
           <p className="mt-3 text-xs text-violet-400">
-            {tarball ? `${tarball.name} · ${mb(tarball.size)}` : ""} · Linux x86_64, glibc 2.39 or
-            newer · verify with{" "}
+            {tarball ? `${tarball.name} · ${mb(tarball.size)}` : ""} · Linux x86_64, glibc 2.39+ for the full set (54 of 56 binaries need 2.34; sealed-run and tx-decode need 2.39; objdump -T on the published tarball, not CI-stamped) · verify with{" "}
             {sums ? (
               <a href={sums.url} className="underline">
                 SHA256SUMS

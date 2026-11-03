@@ -1,9 +1,9 @@
 /** Client-safe blocktools hub data. Every fact is from the TSavo/blocktools README at 657458a. */
-/** The one place the release version, tarball name and its SHA256 live. v0.4.0 is not tagged yet: TODO_V040_SHA256 must be replaced with the SHA256 of the v0.4.0 release asset (from its SHA256SUMS) before deploy. */
+/** The one place the release version, tarball name and its SHA256 live. SHA256 measured 2026-11-02 from the v0.4.0 release asset (matches its SHA256SUMS). */
 export const BT_VERSION = "v0.4.0";
 export const BT_TARBALL_DIR = `blocktools-${BT_VERSION}-linux-x86_64`;
 export const BT_TARBALL = `${BT_TARBALL_DIR}.tar.gz`;
-export const BT_TARBALL_SHA256 = "TODO_V040_SHA256";
+export const BT_TARBALL_SHA256 = "978330caca87ea36804312f1c25922727061df25887c4938e179b9a95a66dcbc";
 export const BT_INSTALL = [
   `gh release download ${BT_VERSION} -R TSavo/blocktools`,
   "sha256sum -c SHA256SUMS",
