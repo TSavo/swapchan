@@ -268,10 +268,19 @@ describe("swapchan mcp over streamable http", () => {
     const td = data(
       await c.callTool({
         name: "typed_data_verify",
-        arguments: { typed_data: "{}", expect_chain_id: "1", expect_verifying_contract: S },
+        arguments: {
+          typed_data: "{}",
+          expect_chain_id: "1",
+          expect_verifying_contract: S,
+          expect_min_consideration: "native:1,0x1111111111111111111111111111111111111111:2",
+        },
       }),
     );
-    expect(td.result.echo).toMatchObject({ expect_chain_id: "1", expect_verifying_contract: S });
+    expect(td.result.echo).toMatchObject({
+      expect_chain_id: "1",
+      expect_verifying_contract: S,
+      expect_min_consideration: "native:1,0x1111111111111111111111111111111111111111:2",
+    });
     const badTd = (await c.callTool({
       name: "typed_data_verify",
       arguments: { typed_data: "{}", expect_chain_id: 1 },

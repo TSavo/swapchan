@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { CHAIN_COUNT, UTXO_CHAIN_COUNT } from "@swapchan/shared";
 import { parseTransaction, recoverMessageAddress } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEV_TOOLS, devToolRoutes, MAX_BODY, refuseSecrets, runDevTool } from "./devtools.js";
 
@@ -606,5 +607,201 @@ describe("typed-data-verify permit assertions (blocktools c9fe8428 permit::apply
     expect(() => run(td, { expect_unlimited: true })).toThrow(
       "expect_unlimited_needs_expect_spender",
     );
+  });
+});
+
+describe("typed-data-verify Seaport orders (blocktools 2cacc446 seaport::apply)", () => {
+  const OFFERER = "0x2222222222222222222222222222222222222222";
+  const OTHER = "0x1111111111111111111111111111111111111111";
+  const NFT = "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d";
+  const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+  const ZERO = "0x0000000000000000000000000000000000000000";
+  const SEAPORT_16 = "0x0000000000000068F116a894984e2DB1123eB395";
+  const SEAPORT_15 = "0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC";
+  const f = (name: string, type: string) => ({ name, type });
+  const order = (
+    consideration: { token: string; amount: string; recipient: string; itemType?: number }[],
+    o: {
+      verifyingContract?: string;
+      version?: string;
+      chainId?: number;
+      offerItemType?: number;
+    } = {},
+  ) =>
+    JSON.stringify({
+      types: {
+        EIP712Domain: [
+          f("name", "string"),
+          f("version", "string"),
+          f("chainId", "uint256"),
+          f("verifyingContract", "address"),
+        ],
+        OrderComponents: [
+          f("offerer", "address"),
+          f("zone", "address"),
+          f("offer", "OfferItem[]"),
+          f("consideration", "ConsiderationItem[]"),
+          f("orderType", "uint8"),
+          f("startTime", "uint256"),
+          f("endTime", "uint256"),
+          f("zoneHash", "bytes32"),
+          f("salt", "uint256"),
+          f("conduitKey", "bytes32"),
+          f("counter", "uint256"),
+        ],
+        OfferItem: [
+          f("itemType", "uint8"),
+          f("token", "address"),
+          f("identifierOrCriteria", "uint256"),
+          f("startAmount", "uint256"),
+          f("endAmount", "uint256"),
+        ],
+        ConsiderationItem: [
+          f("itemType", "uint8"),
+          f("token", "address"),
+          f("identifierOrCriteria", "uint256"),
+          f("startAmount", "uint256"),
+          f("endAmount", "uint256"),
+          f("recipient", "address"),
+        ],
+      },
+      primaryType: "OrderComponents",
+      domain: {
+        name: "Seaport",
+        version: o.version ?? "1.6",
+        chainId: o.chainId ?? 1,
+        verifyingContract: o.verifyingContract ?? SEAPORT_16,
+      },
+      message: {
+        offerer: OFFERER,
+        zone: ZERO,
+        offer: [
+          {
+            itemType: o.offerItemType ?? 2,
+            token: NFT,
+            identifierOrCriteria: "1234",
+            startAmount: "1",
+            endAmount: "1",
+          },
+        ],
+        consideration: consideration.map((c) => ({
+          itemType: c.itemType ?? (c.token === ZERO ? 0 : 1),
+          token: c.token,
+          identifierOrCriteria: "0",
+          startAmount: c.amount,
+          endAmount: c.amount,
+          recipient: c.recipient,
+        })),
+        orderType: 0,
+        startTime: "1730000000",
+        endTime: "1732600000",
+        zoneHash: `0x${"00".repeat(32)}`,
+        salt: "24446860302761739304752683030156737591518664810215442929818227897836383814680",
+        conduitKey: "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000",
+        counter: "0",
+      },
+    });
+  const run = (td: string, o: Record<string, unknown> = {}) =>
+    ok("typed-data-verify", { typed_data: td, ...o });
+  const listing = order([
+    { token: ZERO, amount: "975000000000000000", recipient: OFFERER },
+    {
+      token: ZERO,
+      amount: "25000000000000000",
+      recipient: "0x0000a26b00c1f0df003000390027140000faa719",
+    },
+  ]);
+  const drainer = order([{ token: ZERO, amount: "1", recipient: OTHER }]);
+
+  it("the listing fixture is ok and shows what the signer receives", () => {
+    const r = run(listing);
+    expect(r.status).toBe("ok");
+    const s = r.seaport as { version: string; canonical_deployment: boolean };
+    expect(s.version).toBe("1.6");
+    expect(s.canonical_deployment).toBe(true);
+  });
+  it("the drainer fixture (nothing returns to the signer) is seaport_no_consideration", () => {
+    expect(run(drainer).status).toBe("seaport_no_consideration");
+    expect(run(order([]), {}).status).toBe("seaport_no_consideration");
+  });
+  it("fails closed whatever the options", () => {
+    expect(run(drainer, { expect_min_consideration: "native:0" }).status).toBe(
+      "seaport_no_consideration",
+    );
+    expect(
+      run(order([{ token: ZERO, amount: "5", recipient: OFFERER }], { verifyingContract: OTHER }))
+        .status,
+    ).toBe("seaport_unknown_deployment");
+  });
+  it("seaport 1.5 at its canonical address is recognised", () => {
+    const r = run(
+      order([{ token: ZERO, amount: "5", recipient: OFFERER }], {
+        verifyingContract: SEAPORT_15,
+        version: "1.5",
+      }),
+    );
+    expect(r.status).toBe("ok");
+    expect((r.seaport as { version: string }).version).toBe("1.5");
+  });
+  it("expect_min_consideration: dust is seaport_dust_consideration, enough passes", () => {
+    const dust = order([{ token: ZERO, amount: "1", recipient: OFFERER }]);
+    expect(run(dust).status).toBe("ok");
+    expect(run(dust, { expect_min_consideration: "native:975000000000000000" }).status).toBe(
+      "seaport_dust_consideration",
+    );
+    expect(run(listing, { expect_min_consideration: "native:975000000000000000" }).status).toBe(
+      "ok",
+    );
+    expect(run(listing, { expect_min_consideration: "975000000000000001" }).status).toBe(
+      "seaport_dust_consideration",
+    );
+    // a currency counts only if it is actually received
+    expect(run(listing, { expect_min_consideration: `${USDC}:1` }).status).toBe(
+      "seaport_dust_consideration",
+    );
+    const erc20 = order([{ token: USDC, amount: "2000000", recipient: OFFERER }]);
+    expect(run(erc20, { expect_min_consideration: `${USDC}:2000000` }).status).toBe("ok");
+    expect(run(erc20, { expect_min_consideration: `${USDC}:2000001` }).status).toBe(
+      "seaport_dust_consideration",
+    );
+  });
+  it("consideration to the offerer is what counts, not consideration to others", () => {
+    const toOthers = order([
+      { token: ZERO, amount: "975000000000000000", recipient: OTHER },
+      { token: ZERO, amount: "1", recipient: OFFERER },
+    ]);
+    expect(run(toOthers, { expect_min_consideration: "native:975000000000000000" }).status).toBe(
+      "seaport_dust_consideration",
+    );
+  });
+  it("signer_mismatch wins over the Seaport status; a matching signer still gets the Seaport status", async () => {
+    const acct = privateKeyToAccount(`0x${"01".repeat(32)}`);
+    const td = JSON.parse(drainer) as {
+      types: Record<string, { name: string; type: string }[]>;
+      primaryType: string;
+      domain: Record<string, unknown>;
+      message: Record<string, unknown>;
+    };
+    const { EIP712Domain: _d, ...types } = td.types;
+    const signature = await acct.signTypedData({
+      domain: td.domain,
+      types,
+      primaryType: "OrderComponents",
+      message: td.message,
+    });
+    expect(run(drainer, { signature, signer: OTHER }).status).toBe("signer_mismatch");
+    expect(run(drainer, { signature, signer: acct.address }).status).toBe(
+      "seaport_no_consideration",
+    );
+  });
+  it("bad min-consideration options are rejected", () => {
+    expect(() => run(listing, { expect_min_consideration: 1 })).toThrow(
+      "expect_min_consideration_must_be_string",
+    );
+    expect(() => run(listing, { expect_min_consideration: "native:1.5" })).toThrow();
+    expect(() => run(listing, { expect_min_consideration: "native:1;rm" })).toThrow(
+      "bad_expect_min_consideration",
+    );
+    expect(() => run(listing, { expect_min_consideration: "native:1,native:2" })).toThrow();
   });
 });
