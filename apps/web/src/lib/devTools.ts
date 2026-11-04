@@ -1019,6 +1019,7 @@ export const DEV_TOOLS: DevTool[] = [
       "This checks signatures that already exist. It never signs anything and never needs a private key. Both 65-byte and EIP-2098 compact signatures are accepted.",
       "Optionally give the chain id and contract you expect. If the domain names a different chain the status is chain_id_mismatch; a different verifyingContract gives verifying_contract_mismatch.",
       "For a signed permit (EIP-2612, DAI, Permit2) the page shows who is being approved and for how much. Give the spender you expect and any other address gives spender_not_expected, even when the amount is below the usual unlimited threshold.",
+      "For a Seaport 1.5 or 1.6 order (OrderComponents or BulkOrder) the page shows what the signer receives. An order that returns nothing to the signer gives seaport_no_consideration, an unrecognised Seaport address gives seaport_unknown_deployment, and a shape it cannot read gives seaport_not_checkable. Give the minimum you expect to receive (smallest units, for example native:975000000000000000) and anything less gives seaport_dust_consideration.",
     ],
     keywords: ["eip712 hash", "verify typed data signature", "signTypedData decoder"],
     faq: [
@@ -1067,6 +1068,12 @@ export const DEV_TOOLS: DevTool[] = [
             name: "expect_amount",
             label: "Expected permit amount (integer)",
             placeholder: "1000000",
+            optional: true,
+          },
+          {
+            name: "expect_min_consideration",
+            label: "Expected Seaport minimum received (smallest units)",
+            placeholder: "native:975000000000000000",
             optional: true,
           },
         ],

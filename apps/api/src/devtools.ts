@@ -351,24 +351,27 @@ export const DEV_TOOLS: Record<string, (i: In) => unknown> = {
       "expect_verifying_contract",
       "expect_spender",
       "expect_amount",
+      "expect_min_consideration",
     ])
       if (i[k] !== undefined && typeof i[k] !== "string") bad(`${k}_must_be_string`);
     const chainId = optStr(i, "expect_chain_id", /^\d{1,78}$/);
     const contract = optStr(i, "expect_verifying_contract", EVM_ADDR);
     const spender = optStr(i, "expect_spender", EVM_ADDR);
     const amount = optStr(i, "expect_amount", /^\d{1,78}$/);
+    const minConsideration = optStr(i, "expect_min_consideration", /^[0-9A-Za-z:, ]{1,2000}$/);
     const ul = i.expect_unlimited;
     if (ul !== undefined && ul !== "" && typeof ul !== "boolean" && ul !== "true" && ul !== "false")
       bad("expect_unlimited_must_be_bool");
     const unlimited = ul === true || ul === "true";
     const opts =
-      chainId || contract || spender || amount || unlimited
+      chainId || contract || spender || amount || unlimited || minConsideration
         ? JSON.stringify({
             ...(chainId ? { expect_chain_id: chainId } : {}),
             ...(contract ? { expect_verifying_contract: contract } : {}),
             ...(spender ? { expect_spender: spender } : {}),
             ...(amount ? { expect_amount: amount } : {}),
             ...(unlimited ? { expect_unlimited: true } : {}),
+            ...(minConsideration ? { expect_min_consideration: minConsideration } : {}),
           })
         : null;
     return json(

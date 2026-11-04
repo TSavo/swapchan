@@ -67,7 +67,7 @@ type Wasm = {
   /** 5dd2037: runtime bytecode classification (EIP-1167 / EIP-7702 / EOF), EIP-170 size, keccak256 */
   evmBytecodeInspect(codeHex: string): string;
   /** 69e09b9: EIP-712 digest; with a signature the recovered signer; with an expected signer a verdict */
-  /** 10a1356a: optionsJson {expect_chain_id?: decimal string, expect_verifying_contract?: 0x address}; c9fe8428 adds {expect_spender?: 0x address, expect_amount?: decimal string, expect_unlimited?: boolean} for permits */
+  /** 10a1356a: optionsJson {expect_chain_id?: decimal string, expect_verifying_contract?: 0x address}; c9fe8428 adds {expect_spender?: 0x address, expect_amount?: decimal string, expect_unlimited?: boolean} for permits; 2cacc446 adds {expect_min_consideration?: "N | native:N | 0xTOKEN:N, ..."} for Seaport orders */
   evmTypedDataVerify(
     typedDataJson: string,
     sigHex?: string | null,
