@@ -610,7 +610,7 @@ describe("typed-data-verify permit assertions (blocktools c9fe8428 permit::apply
   });
 });
 
-describe("typed-data-verify Seaport orders (blocktools 2cacc446 seaport::apply)", () => {
+describe("typed-data-verify Seaport orders (blocktools 2cacc446 seaport::apply; bulk heights a6c08e1b)", () => {
   const OFFERER = "0x2222222222222222222222222222222222222222";
   const OTHER = "0x1111111111111111111111111111111111111111";
   const NFT = "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d";
@@ -803,5 +803,40 @@ describe("typed-data-verify Seaport orders (blocktools 2cacc446 seaport::apply)"
       "bad_expect_min_consideration",
     );
     expect(() => run(listing, { expect_min_consideration: "native:1,native:2" })).toThrow();
+  });
+  // blocktools a6c08e1b: BulkOrder recognised at every official tree height 1..24 (was 7 only).
+  const bulk = (leaf: string, height: number) => {
+    const td = JSON.parse(leaf);
+    const pad = { ...td.message, offer: [], consideration: [] };
+    const tree = (d: number, first: boolean): unknown =>
+      d === height ? (first ? td.message : pad) : [tree(d + 1, first), tree(d + 1, false)];
+    td.types.BulkOrder = [f("tree", `OrderComponents${"[2]".repeat(height)}`)];
+    td.primaryType = "BulkOrder";
+    td.message = { tree: tree(0, true) };
+    return JSON.stringify(td);
+  };
+  // The API caps typed_data at 15,000 chars, so only small trees reach the wasm through this route.
+  it.each([1, 2, 3])("bulk order of height %i is checked leaf by leaf", (h) => {
+    const r = run(bulk(listing, h));
+    expect(r.status).toBe("ok");
+    expect((r.seaport as { orders: unknown[] }).orders).toHaveLength(2 ** h);
+    expect(run(bulk(drainer, h)).status).toBe("seaport_no_consideration");
+    expect(
+      run(bulk(listing, h), { expect_min_consideration: "native:2000000000000000000" }).status,
+    ).toBe("seaport_dust_consideration");
+  });
+  it("a height-7 bulk order exceeds the 15,000-char typed_data cap", () => {
+    expect(bulk(listing, 7).length).toBeGreaterThan(15_000);
+    expect(runDevTool("typed-data-verify", { typed_data: bulk(listing, 7) })).toMatchObject({
+      ok: false,
+      error_code: "too_long_typed_data",
+    });
+  });
+  it("a bulk tree deeper than 24 is not checkable (fails closed)", () => {
+    const td = JSON.parse(listing);
+    td.types.BulkOrder = [f("tree", `OrderComponents${"[2]".repeat(25)}`)];
+    td.primaryType = "BulkOrder";
+    td.message = { tree: [] };
+    expect(run(JSON.stringify(td)).status).toBe("seaport_not_checkable");
   });
 });
