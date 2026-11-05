@@ -2704,7 +2704,8 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       title: "EIP-712 typed data hash / signer check (dev tool)",
       description: `Hash EIP-712 typed data (typed_data as JSON text, as passed to eth_signTypedData_v4): encoded type, domain separator, struct hash and digest. With an existing public signature (65-byte or EIP-2098 64-byte) it recovers the signer address and low_s flag; with signer it reports valid or signer_mismatch. Optional expect_chain_id / expect_verifying_contract assert the domain (status chain_id_mismatch or verifying_contract_mismatch). For permits (EIP-2612, DAI, Permit2 single, batch and transfer) the result shows the spender and amounts; expect_spender / expect_amount / expect_unlimited assert them (status spender_not_expected, amount_not_expected or unlimited_approval; spender_not_checkable or amount_not_checkable for typed data that is not a recognised permit). Seaport 1.5 / 1.6 orders (OrderComponents, BulkOrder) show what the signer receives and fail closed: seaport_no_consideration when nothing returns to the signer, seaport_unknown_deployment, seaport_not_checkable; expect_min_consideration (smallest units, e.g. native:N or 0xTOKEN:N, comma-separated) adds seaport_dust_consideration. Checks existing signatures only; never signs. ${OFFLINE}`,
       inputSchema: z.object({
-        typed_data: pub(15000),
+        // Matches TYPED_DATA_MAX in apps/api/src/devtools.ts (Seaport bulk orders up to height 7-8).
+        typed_data: pub(262_144),
         signature: pub(140).optional(),
         signer: pub(64).optional(),
         expect_chain_id: z

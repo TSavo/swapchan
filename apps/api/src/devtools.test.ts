@@ -3,7 +3,14 @@ import { CHAIN_COUNT, UTXO_CHAIN_COUNT } from "@swapchan/shared";
 import { parseTransaction, recoverMessageAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEV_TOOLS, devToolRoutes, MAX_BODY, refuseSecrets, runDevTool } from "./devtools.js";
+import {
+  DEV_TOOLS,
+  devToolRoutes,
+  MAX_BODY,
+  refuseSecrets,
+  runDevTool,
+  TYPED_DATA_MAX,
+} from "./devtools.js";
 
 const XPUB =
   "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8";
@@ -815,8 +822,7 @@ describe("typed-data-verify Seaport orders (blocktools 2cacc446 seaport::apply; 
     td.message = { tree: tree(0, true) };
     return JSON.stringify(td);
   };
-  // The API caps typed_data at 15,000 chars, so only small trees reach the wasm through this route.
-  it.each([1, 2, 3])("bulk order of height %i is checked leaf by leaf", (h) => {
+  it.each([1, 2, 3, 4, 5, 6, 7])("bulk order of height %i is checked leaf by leaf", (h) => {
     const r = run(bulk(listing, h));
     expect(r.status).toBe("ok");
     expect((r.seaport as { orders: unknown[] }).orders).toHaveLength(2 ** h);
@@ -825,12 +831,45 @@ describe("typed-data-verify Seaport orders (blocktools 2cacc446 seaport::apply; 
       run(bulk(listing, h), { expect_min_consideration: "native:2000000000000000000" }).status,
     ).toBe("seaport_dust_consideration");
   });
-  it("a height-7 bulk order exceeds the 15,000-char typed_data cap", () => {
-    expect(bulk(listing, 7).length).toBeGreaterThan(15_000);
-    expect(runDevTool("typed-data-verify", { typed_data: bulk(listing, 7) })).toMatchObject({
+  const bulkRoute = async (td: string, o: Record<string, unknown> = {}) => {
+    const app = devToolRoutes({ perMinute: 1000 });
+    const r = await post(app, "typed-data-verify", { typed_data: td, ...o });
+    return { http: r.status, body: (await r.json()) as Record<string, unknown> };
+  };
+  it("a height-7 bulk order passes the typed_data cap and is checked through the HTTP route", async () => {
+    const td = bulk(listing, 7);
+    expect(td.length).toBeGreaterThan(15_000);
+    const a = await bulkRoute(td);
+    expect(a.http).toBe(200);
+    expect((a.body.result as Record<string, unknown>).status).toBe("ok");
+    const d = await bulkRoute(bulk(drainer, 7));
+    expect((d.body.result as Record<string, unknown>).status).toBe("seaport_no_consideration");
+    const fl = await bulkRoute(td, { expect_min_consideration: "native:2000000000000000000" });
+    expect((fl.body.result as Record<string, unknown>).status).toBe("seaport_dust_consideration");
+  });
+  it("a fully populated, pretty-printed height-7 bulk order still fits the cap", async () => {
+    const t = JSON.parse(listing);
+    const tree = (d: number): unknown => (d === 7 ? t.message : [tree(d + 1), tree(d + 1)]);
+    t.types.BulkOrder = [f("tree", `OrderComponents${"[2]".repeat(7)}`)];
+    t.primaryType = "BulkOrder";
+    t.message = { tree: tree(0) };
+    const td = JSON.stringify(t, null, 2);
+    expect(td.length).toBeLessThan(TYPED_DATA_MAX);
+    const r = await bulkRoute(td);
+    expect((r.body.result as Record<string, unknown>).status).toBe("ok");
+  });
+  it("typed_data over the cap is still too_long_typed_data; a bigger body is 413", async () => {
+    const big = bulk(listing, 10);
+    expect(big.length).toBeGreaterThan(TYPED_DATA_MAX);
+    expect(runDevTool("typed-data-verify", { typed_data: big })).toMatchObject({
       ok: false,
       error_code: "too_long_typed_data",
     });
+    const over = JSON.stringify({ ...JSON.parse(listing), pad: "x".repeat(TYPED_DATA_MAX) });
+    const r = await bulkRoute(over);
+    expect(r.http).toBe(400);
+    expect(r.body).toMatchObject({ ok: false, error_code: "too_long_typed_data" });
+    expect((await bulkRoute(bulk(listing, 11))).http).toBe(413);
   });
   it("a bulk tree deeper than 24 is not checkable (fails closed)", () => {
     const td = JSON.parse(listing);
