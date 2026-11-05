@@ -1043,7 +1043,7 @@ export const DEV_TOOLS: DevTool[] = [
         label: "Check",
         fn: "typed-data-verify",
         fields: [
-          { name: "typed_data", label: "Typed data (JSON)", kind: "block", max: 15000 },
+          { name: "typed_data", label: "Typed data (JSON)", kind: "block", max: 262_144 },
           { name: "signature", label: "Signature (hex)", placeholder: "0x…", optional: true },
           { name: "signer", label: "Expected signer", placeholder: "0x…", optional: true },
           {

@@ -16,9 +16,17 @@ import { socketAddressOf, trustedClientIp } from "./clientip.js";
  */
 export const MAX_BODY = 4096;
 /** Tools whose public input is naturally larger (contract bytecode, EIP-712 documents, ABIs). */
+/**
+ * typed_data cap for typed-data-verify. Measured: a Seaport 1.6 BulkOrder at tree height 7 (128 leaves) is
+ * ~49 KB compact with padding leaves and ~200 KB pretty-printed with every leaf a real order; height 8 padded is
+ * ~97 KB compact. Height 9+ (192 KB+ compact even when padded) is rejected as too_long_typed_data.
+ * Measured on Battleaxe: a padded height-7 tree takes ~15 ms for three checks in the tests; the 30/min rate limit still applies.
+ */
+export const TYPED_DATA_MAX = 262_144;
 export const BIG_BODY: Record<string, number> = {
   "bytecode-inspect": 60_000,
-  "typed-data-verify": 16_384,
+  // typed_data usually arrives as a JSON string inside the body, so quotes and newlines are escaped (~2x).
+  "typed-data-verify": TYPED_DATA_MAX * 2 + 8_192,
   "evm-abi": 16_384,
   "tx-combine": 60_000,
   "tx-plan-resolve": 32_768,
@@ -375,7 +383,12 @@ export const DEV_TOOLS: Record<string, (i: In) => unknown> = {
           })
         : null;
     return json(
-      w().evmTypedDataVerify(doc(i, "typed_data", 15_000), sig ?? null, signer ?? null, opts),
+      w().evmTypedDataVerify(
+        doc(i, "typed_data", TYPED_DATA_MAX),
+        sig ?? null,
+        signer ?? null,
+        opts,
+      ),
     );
   },
   "supported-chains": (i) => {
