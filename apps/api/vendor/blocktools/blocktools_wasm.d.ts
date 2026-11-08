@@ -5,23 +5,23 @@
  */
 export function base58Encode(hex: string): string;
 /**
- * The verifier's allowlists: standard sigs/owner slots, pinned contracts, MultiSend, deadline cap.
+ * verifySweepTx on a raw EVM tx hex; the sender is recovered from the signature (unsigned fails closed).
  */
-export function recoveryTables(): string;
+export function verifySweepRaw(raw_hex: string, owner: string, chain_id: number, token: string): string;
 /**
- * Solidity abi.encodePacked. Request JSON {types:"(t1,t2,..)", args:[..]}; returns {data, keccak256}.
+ * ABI-encode calldata or a bare type list. Request JSON {sig, args:[..]}.
  */
-export function evmAbiEncodePacked(request_json: string): string;
+export function evmAbiEncode(request_json: string): string;
 /**
  * Tron txID (hex) = sha256(raw_data). Input is raw_data hex (tronweb raw_data_hex).
  */
 export function tronTxId(raw_data_hex: string): string;
 /**
- * Message signature check, as `msg-verify`: EIP-191 personal_sign (0x address, 65-byte hex sig) or Bitcoin Core
- * signmessage (P2PKH address, base64 sig). `message_is_hex`: message is hex bytes. Returns
- * {status:"ok"|"signer_mismatch", chain, address, recovered, v?}; malformed input throws.
+ * Resolve a declarative Plan (RFC #15) against a Context to UNSIGNED bytes, as `tx-plan resolve` (same library
+ * path). Families evm and utxo; account throws family_not_built (its crate is not in the wasm). Returns
+ * {chain, family, type:"evm-1559", unsigned_tx} or {chain, family, type:"psbt", ...utxo fields}.
  */
-export function msgVerify(address: string, message: string, sig: string, message_is_hex: boolean): string;
+export function txPlanResolve(plan_json: string, context_json: string): string;
 /**
  * Chains this build knows: JSON array of names.
  */
@@ -64,36 +64,51 @@ export function solAssociatedTokenAddress(owner: string, mint: string, token_pro
  */
 export function ss58Encode(account_hex: string, prefix: number): string;
 /**
- * m-of-n P2WSH from compressed pubkeys, as `multisig M --pubkey ..`. `network`: bitcoin|testnet|signet|regtest
- * ("" = bitcoin). Returns {chain:"btc", witness_script, address, descriptor}. Pubkey ORDER is consensus-significant.
+ * EIP-712 typed data: encodeType, domain separator, message hash, digest; with a signature (65-byte or EIP-2098 64-byte) the recovered signer; with an expected signer a verdict.
+ * `options_json` (optional) `{expect_chain_id?: "decimal", expect_verifying_contract?: "0x.."}`: the
+ * typed-data-verify --expect-chain-id / --expect-verifying-contract checks (status chain_id_mismatch /
+ * verifying_contract_mismatch). Permit checks (typed-data-verify --expect-spender / --expect-amount /
+ * --expect-unlimited, shared permit::apply): `{expect_spender?: "0x..", expect_amount?: "decimal", expect_unlimited?: bool}`
+ * (expect_unlimited needs expect_spender). Recognised permits (EIP-2612, DAI, Permit2 PermitSingle / PermitBatch /
+ * PermitTransferFrom / PermitBatchTransferFrom; primaryType plus exact field set) add `permit {kind, primary_type,
+ * spender, entries:[{token, amount, unlimited, allowed?, expiration?}], deadline, owner?}`, `unlimited_approval`,
+ * `spender_unasserted` and `permit_findings`; other shapes add `unrecognised_spender_fields`. With an assertion the
+ * status becomes spender_not_expected / amount_not_expected / unlimited_approval (>= 2^128, uint160 max, DAI
+ * allowed=true) or, for typed data that is not a recognised permit, spender_not_checkable / amount_not_checkable;
+ * every batch entry must match. Without assertions the status is unchanged (advisory fields only). Wrong types
+ * throw `<key>_must_be_string` / `expect_unlimited_must_be_bool`.
+ * Seaport orders (typed-data-verify --expect-min-consideration, shared seaport::apply; OrderComponents / BulkOrder,
+ * Seaport 1.5 / 1.6 at their canonical addresses) add `seaport {kind, version, canonical_deployment, offerer, zone,
+ * conduit_key, order_type, start_time, end_time, offer[], consideration_to_offerer[], consideration_to_others[],
+ * received_by_currency[]}` (bulk: `orders[]`) and `seaport_findings`, and fail closed whatever the options:
+ * seaport_no_consideration / seaport_unknown_deployment / seaport_not_checkable, and with
+ * `{expect_min_consideration?: "N | native:N | 0xTOKEN:N, ..."}` (smallest units) seaport_dust_consideration.
+ * Option errors: expect_min_consideration_must_be_string / _empty / _bad_amount / _bad_token / _duplicate_token.
  */
-export function multisigAddress(threshold: number, pubkeys: string[], network: string): string;
+export function evmTypedDataVerify(typed_data_json: string, sig_hex?: string | null, signer?: string | null, options_json?: string | null): string;
 /**
- * Resolve a declarative Plan (RFC #15) against a Context to UNSIGNED bytes, as `tx-plan resolve` (same library
- * path). Families evm and utxo; account throws family_not_built (its crate is not in the wasm). Returns
- * {chain, family, type:"evm-1559", unsigned_tx} or {chain, family, type:"psbt", ...utxo fields}.
+ * Merge cosigners' partial-signature PSBTs (base64 or hex, as tx-combine reads them) and finalize at threshold.
+ * Returns {signed_tx: hex, psbt: base64}. Throws not_enough_signatures / psbts_do_not_combine / not_a_psbt / no_psbts.
  */
-export function txPlanResolve(plan_json: string, context_json: string): string;
+export function combinePsbts(psbts: string[]): string;
 /**
- * As `msg-verify` with options, for the chains whose verify needs them. Input JSON:
- * {"address", "message" | "message_hex", "signature", "format"? ("raw" | "offchain-v0", Solana, required there),
- * "pubkey"? (base64 33-byte compressed key, Cosmos ADR-036, required there), "chain"? ("eth"|"btc"|"tron"|"sol"|"cosmos",
- * required when the address is both valid Cosmos bech32 and a valid Solana key, else `ambiguous_address`)}. Unknown keys and options that do
- * not apply to the detected chain are refused. Returns the same JSON as `msgVerify`
- * ({"status":"ok"|"signer_mismatch","chain","address","recovered"?,"v"?,"format"?,"hrp"?}). No keys.
+ * Message signature check, as `msg-verify`: EIP-191 personal_sign (0x address, 65-byte hex sig) or Bitcoin Core
+ * signmessage (P2PKH address, base64 sig). `message_is_hex`: message is hex bytes. Returns
+ * {status:"ok"|"signer_mismatch", chain, address, recovered, v?}; malformed input throws.
  */
-export function msgVerifyOpts(input: string): string;
+export function msgVerify(address: string, message: string, sig: string, message_is_hex: boolean): string;
 /**
- * Strict check of EVM calldata or init code before signing, as tx-verify --call/--abi/--create-hash.
- * Request JSON {to: "0x.." | null, data, sigs?: [signature], abi?: JSON ABI (text or array), createHash?}.
+ * CREATE / CREATE2 contract address. Request JSON {deployer, nonce} or {deployer, salt, init_code_hash | init_code}; a tx (from, nonce) also works.
  */
-export function evmApproveCall(request_json: string): string;
+export function evmCreateAddress(request_json: string): string;
 /**
- * Re-encode a BOLT11 invoice byte-identically, as `bolt11 --reencode`: parse the 5-bit words, drop the
- * checksum, re-emit with a fresh one. Returns {reencoded, roundtrip} (roundtrip true when it equals the
- * lowercased input). Public input, no keys.
+ * Decode a BOLT11 Lightning invoice, as `bolt11`: bech32 (BIP173) + tagged fields + the payee pubkey
+ * RECOVERED from the signature. Returns the fields {network, currency, timestamp, recovered_payee,
+ * signature, recovery_id, routing_hints, amount_msat?, amount_raw?, payment_hash?, payment_secret?,
+ * description?, description_hash?, payee_pubkey?, features?, fallback?, expiry?, min_final_cltv_expiry?}.
+ * Public input, no keys, no channel protocol; malformed input throws a stable snake_case code.
  */
-export function bolt11Reencode(invoice: string): string;
+export function bolt11Decode(invoice: string): string;
 /**
  * `address::validate(chain, addr)`: address kind string; throws on invalid / unverified chain.
  */
@@ -125,13 +140,14 @@ export function blake2b(data_hex: string, out_len: number, personal: string): st
  */
 export function twox128(text: string): string;
 /**
+ * SwapChan verifyRecovery twin. `tx_json` = {"to","data","value"}; `now_s` = unix seconds (required; 0 = bad_now).
+ * Returns {"verified":true,"call"} or {"verified":false,"reason"}.
+ */
+export function verifyRecovery(tx_json_s: string, owner: string, now_s: number): string;
+/**
  * verifyRecovery on a raw (signed or unsigned) EVM tx hex. Adds "tx":{kind,chainId,signed,from,to,value,data,txid}.
  */
 export function verifyRecoveryRaw(raw_hex: string, owner: string, chain_id: number, now_s: number): string;
-/**
- * SwapChan verifySweepTx twin. `tx_json` = {from,to,value,data?,chainId}; `token` = "" for a native sweep.
- */
-export function verifySweepTx(tx_json_s: string, owner: string, chain_id: number, token: string): string;
 /**
  * As `buildUnsignedSweep` with tx timestamp `time` (unix seconds). For pos-ntime chains
  * (ppc/nvc/clam/rdd) returns {chain,tx_format:"pos-ntime",unsigned_tx,time,pos_prevouts,inputs,amount,fee}
@@ -147,9 +163,9 @@ export function tronDecodeTx(hex: string): string;
  */
 export function scriptToAddress(chain: string, script_hex: string): string;
 /**
- * verifySweepTx on a raw EVM tx hex; the sender is recovered from the signature (unsigned fails closed).
+ * SwapChan verifySweepTx twin. `tx_json` = {from,to,value,data?,chainId}; `token` = "" for a native sweep.
  */
-export function verifySweepRaw(raw_hex: string, owner: string, chain_id: number, token: string): string;
+export function verifySweepTx(tx_json_s: string, owner: string, chain_id: number, token: string): string;
 /**
  * Library version (semver string, same as the `blocktools` crate).
  */
@@ -163,21 +179,19 @@ export function validateAddress(chain: string, address: string): string;
  */
 export function legacyToCashAddr(addr: string, prefix: string): string;
 /**
- * Inspect an ABI (JSON or signature lines): items with selectors/topics, selector collisions, ERC-165/ERC-20 interfaces.
+ * Strict check of EVM calldata or init code before signing, as tx-verify --call/--abi/--create-hash.
+ * Request JSON {to: "0x.." | null, data, sigs?: [signature], abi?: JSON ABI (text or array), createHash?}.
  */
-export function evmAbiInspect(abi_text: string): string;
+export function evmApproveCall(request_json: string): string;
 /**
- * Decode calldata / returndata / revert data / one log. Request JSON {input, sig?, abi?, types?, output?}.
+ * Reverse lookup of a selector/topic among caller-supplied signatures (ABI JSON or one per line).
  */
-export function evmAbiDecode(request_json: string): string;
+export function evmSigLookup(hash_hex: string, sigs_text: string): string;
 /**
- * Decode a bech32 (segwit v0, `bc1q...`) / bech32m (v1 taproot, `bc1p...`) address into its witness
- * program. Keyless and pure. Returns {version, program_hex, words_hex}: `version` the witness version
- * int, `program_hex` the hex of the decoded witness program bytes (bech32 `fromWords` of the data
- * words after the version), `words_hex` the hex of the raw 5-bit data words themselves (one byte per
- * 5-bit word, each 0..=31).
+ * m-of-n P2WSH from compressed pubkeys, as `multisig M --pubkey ..`. `network`: bitcoin|testnet|signet|regtest
+ * ("" = bitcoin). Returns {chain:"btc", witness_script, address, descriptor}. Pubkey ORDER is consensus-significant.
  */
-export function bech32WitnessProgram(address: string): string;
+export function multisigAddress(threshold: number, pubkeys: string[], network: string): string;
 /**
  * Output script (hex) paying `addr` on UTXO `chain` (bch also takes CashAddr). Throws unknown_chain / bad_address.
  */
@@ -191,10 +205,13 @@ export function solIsOnCurve(addr: string): boolean;
  */
 export function chainParams(): string;
 /**
- * Taproot script-path m-of-n (CHECKSIGADD leaf under the BIP341 NUMS key), as `taproot-multisig`. x-only or
- * compressed pubkeys. Returns {chain:"btc", leaf_script, address, control_block, merkle_root, internal_key, descriptor}.
+ * Decode a bech32 (segwit v0, `bc1q...`) / bech32m (v1 taproot, `bc1p...`) address into its witness
+ * program. Keyless and pure. Returns {version, program_hex, words_hex}: `version` the witness version
+ * int, `program_hex` the hex of the decoded witness program bytes (bech32 `fromWords` of the data
+ * words after the version), `words_hex` the hex of the raw 5-bit data words themselves (one byte per
+ * 5-bit word, each 0..=31).
  */
-export function taprootMultisigAddress(threshold: number, pubkeys: string[], network: string): string;
+export function bech32WitnessProgram(address: string): string;
 /**
  * Decode a wire transaction (hex or base64; legacy or v0). JSON: see EXPORTS.md.
  */
@@ -218,9 +235,15 @@ export function solVerifyTx(raw: string, expect_json: string): string;
  */
 export function checkTx(input_json: string): string;
 /**
- * Selector / topic of one Solidity signature. JSON: see EXPORTS.md.
+ * Re-encode a BOLT11 invoice byte-identically, as `bolt11 --reencode`: parse the 5-bit words, drop the
+ * checksum, re-emit with a fresh one. Returns {reencoded, roundtrip} (roundtrip true when it equals the
+ * lowercased input). Public input, no keys.
  */
-export function evmSigHash(signature: string): string;
+export function bolt11Reencode(invoice: string): string;
+/**
+ * keccak256 of hex bytes -> "0x" + 64 hex.
+ */
+export function evmKeccak256(data_hex: string): string;
 /**
  * Unsigned sweep of all `utxos` (JSON lines {txid,vout,amount,address[,prev_tx]}) to `to`:
  * JSON {chain,tx_format,psbt,unsigned_tx,inputs,amount,fee}. Legacy, legacy-sha256 and forkid
@@ -228,45 +251,29 @@ export function evmSigHash(signature: string): string;
  */
 export function buildUnsignedSweep(chain: string, utxos: string, to: string, fee_rate: number): string;
 /**
- * EIP-712 typed data: encodeType, domain separator, message hash, digest; with a signature (65-byte or EIP-2098 64-byte) the recovered signer; with an expected signer a verdict.
- * `options_json` (optional) `{expect_chain_id?: "decimal", expect_verifying_contract?: "0x.."}`: the
- * typed-data-verify --expect-chain-id / --expect-verifying-contract checks (status chain_id_mismatch /
- * verifying_contract_mismatch). Permit checks (typed-data-verify --expect-spender / --expect-amount /
- * --expect-unlimited, shared permit::apply): `{expect_spender?: "0x..", expect_amount?: "decimal", expect_unlimited?: bool}`
- * (expect_unlimited needs expect_spender). Recognised permits (EIP-2612, DAI, Permit2 PermitSingle / PermitBatch /
- * PermitTransferFrom / PermitBatchTransferFrom; primaryType plus exact field set) add `permit {kind, primary_type,
- * spender, entries:[{token, amount, unlimited, allowed?, expiration?}], deadline, owner?}`, `unlimited_approval`,
- * `spender_unasserted` and `permit_findings`; other shapes add `unrecognised_spender_fields`. With an assertion the
- * status becomes spender_not_expected / amount_not_expected / unlimited_approval (>= 2^128, uint160 max, DAI
- * allowed=true) or, for typed data that is not a recognised permit, spender_not_checkable / amount_not_checkable;
- * every batch entry must match. Without assertions the status is unchanged (advisory fields only). Wrong types
- * throw `<key>_must_be_string` / `expect_unlimited_must_be_bool`.
- * Seaport orders (typed-data-verify --expect-min-consideration, shared seaport::apply; OrderComponents / BulkOrder,
- * Seaport 1.5 / 1.6 at their canonical addresses) add `seaport {kind, version, canonical_deployment, offerer, zone,
- * conduit_key, order_type, start_time, end_time, offer[], consideration_to_offerer[], consideration_to_others[],
- * received_by_currency[]}` (bulk: `orders[]`) and `seaport_findings`, and fail closed whatever the options:
- * seaport_no_consideration / seaport_unknown_deployment / seaport_not_checkable, and with
- * `{expect_min_consideration?: "N | native:N | 0xTOKEN:N, ..."}` (smallest units) seaport_dust_consideration.
- * Option errors: expect_min_consideration_must_be_string / _empty / _bad_amount / _bad_token / _duplicate_token.
+ * Classify runtime bytecode (EIP-1167 / EIP-7702 / EOF), EIP-170 size, Solidity metadata, opcode counts, selector candidates.
  */
-export function evmTypedDataVerify(typed_data_json: string, sig_hex?: string | null, signer?: string | null, options_json?: string | null): string;
+export function evmBytecodeInspect(code_hex: string): string;
+/**
+ * Unsigned EIP-155 transfer (ETH forks / extra EVM chains, native or ERC-20). Request JSON:
+ * {chainId, nonce, gas, gasPrice, to, value | balance, token?, maxPriorityFeePerGas?, from?}.
+ * Returns {unsigned, sighash, kind, chainId, nonce, gas, gasPrice, to, value, data, fee, ...}.
+ */
+export function buildEvmTransfer(req_json: string): string;
+/**
+ * Selector / topic of one Solidity signature. JSON: see EXPORTS.md.
+ */
+export function evmSigHash(signature: string): string;
+/**
+ * Verify a Tron raw_data or full Transaction hex against `expect_json`
+ * {owner?, to?, amount_sun?, contract?, amount?, max_fee_limit_sun?, now_ms?}.
+ * Same policy as `tron::verify_tx` / `sol-tron-tx verify --chain tron`. No keys.
+ */
+export function tronVerifyTx(hex: string, expect_json: string): string;
 /**
  * SwapChan coin selection: own script only, drop value < rate×148×20 (fee > 5%), largest first, max 200 inputs.
  */
 export function selectUtxos(utxos_json: string, script_hex: string, fee_rate: number): string;
-/**
- * Reverse lookup of a selector/topic among caller-supplied signatures (ABI JSON or one per line).
- */
-export function evmSigLookup(hash_hex: string, sigs_text: string): string;
-/**
- * SwapChan verifyRecovery twin. `tx_json` = {"to","data","value"}; `now_s` = unix seconds (required; 0 = bad_now).
- * Returns {"verified":true,"call"} or {"verified":false,"reason"}.
- */
-export function verifyRecovery(tx_json_s: string, owner: string, now_s: number): string;
-/**
- * keccak256 of hex bytes -> "0x" + 64 hex.
- */
-export function evmKeccak256(data_hex: string): string;
 /**
  * The chain registry as data: JSON array of {name,ticker,coin_type,curve,encoding,...,sign,verified,source}.
  */
@@ -304,9 +311,9 @@ export function convertAddress(addr: string, to: string): string;
  */
 export function cashAddrToLegacy(addr: string): string;
 /**
- * ABI-encode calldata or a bare type list. Request JSON {sig, args:[..]}.
+ * Decode calldata / returndata / revert data / one log. Request JSON {input, sig?, abi?, types?, output?}.
  */
-export function evmAbiEncode(request_json: string): string;
+export function evmAbiDecode(request_json: string): string;
 /**
  * Verified (supported) chains: JSON [{name,ticker,title,slip44,verified:true,sources:[{name,url,api,checked}]}].
  */
@@ -316,17 +323,18 @@ export function supportedChains(): string;
  */
 export function decodeAccountInfo(hex: string): string;
 /**
- * CREATE / CREATE2 contract address. Request JSON {deployer, nonce} or {deployer, salt, init_code_hash | init_code}; a tx (from, nonce) also works.
+ * Solidity abi.encodePacked. Request JSON {types:"(t1,t2,..)", args:[..]}; returns {data, keccak256}.
  */
-export function evmCreateAddress(request_json: string): string;
+export function evmAbiEncodePacked(request_json: string): string;
 /**
- * Decode a BOLT11 Lightning invoice, as `bolt11`: bech32 (BIP173) + tagged fields + the payee pubkey
- * RECOVERED from the signature. Returns the fields {network, currency, timestamp, recovered_payee,
- * signature, recovery_id, routing_hints, amount_msat?, amount_raw?, payment_hash?, payment_secret?,
- * description?, description_hash?, payee_pubkey?, features?, fallback?, expiry?, min_final_cltv_expiry?}.
- * Public input, no keys, no channel protocol; malformed input throws a stable snake_case code.
+ * As `msg-verify` with options, for the chains whose verify needs them. Input JSON:
+ * {"address", "message" | "message_hex", "signature", "format"? ("raw" | "offchain-v0", Solana, required there),
+ * "pubkey"? (base64 33-byte compressed key, Cosmos ADR-036, required there), "chain"? ("eth"|"btc"|"tron"|"sol"|"cosmos",
+ * required when the address is both valid Cosmos bech32 and a valid Solana key, else `ambiguous_address`)}. Unknown keys and options that do
+ * not apply to the detected chain are refused. Returns the same JSON as `msgVerify`
+ * ({"status":"ok"|"signer_mismatch","chain","address","recovered"?,"v"?,"format"?,"hrp"?}). No keys.
  */
-export function bolt11Decode(invoice: string): string;
+export function msgVerifyOpts(input: string): string;
 /**
  * Watch-only addresses from an account-level xpub: JSON [{chain,kind,path,address}].
  */
@@ -339,24 +347,22 @@ export function addressesFromXpub(xpub_str: string, chain: string, kinds: string
  */
 export function verifyThorSend(chain: string, tx_or_psbt: string, expected_vault: string, expected_memo: string, expected_amount: string, change_addr: string, taker_addrs: string, max_fee: string): string;
 /**
- * Unsigned EIP-155 transfer (ETH forks / extra EVM chains, native or ERC-20). Request JSON:
- * {chainId, nonce, gas, gasPrice, to, value | balance, token?, maxPriorityFeePerGas?, from?}.
- * Returns {unsigned, sighash, kind, chainId, nonce, gas, gasPrice, to, value, data, fee, ...}.
+ * The verifier's allowlists: standard sigs/owner slots, pinned contracts, MultiSend, deadline cap.
  */
-export function buildEvmTransfer(req_json: string): string;
+export function recoveryTables(): string;
 /**
- * Classify runtime bytecode (EIP-1167 / EIP-7702 / EOF), EIP-170 size, Solidity metadata, opcode counts, selector candidates.
+ * Inspect an ABI (JSON or signature lines): items with selectors/topics, selector collisions, ERC-165/ERC-20 interfaces.
  */
-export function evmBytecodeInspect(code_hex: string): string;
+export function evmAbiInspect(abi_text: string): string;
 /**
  * `derive --explain` for the given derive flags: JSON [{chain,kind,template,path,count}]. No keys.
  */
 export function explainPlan(args: string[]): string;
 /**
- * Merge cosigners' partial-signature PSBTs (base64 or hex, as tx-combine reads them) and finalize at threshold.
- * Returns {signed_tx: hex, psbt: base64}. Throws not_enough_signatures / psbts_do_not_combine / not_a_psbt / no_psbts.
+ * Taproot script-path m-of-n (CHECKSIGADD leaf under the BIP341 NUMS key), as `taproot-multisig`. x-only or
+ * compressed pubkeys. Returns {chain:"btc", leaf_script, address, control_block, merkle_root, internal_key, descriptor}.
  */
-export function combinePsbts(psbts: string[]): string;
+export function taprootMultisigAddress(threshold: number, pubkeys: string[], network: string): string;
 export function decodeTx(input: string, chain: string): string;
 /**
  * Known but unverified chains (NOT supported by the other calls): same shape, verified:false.

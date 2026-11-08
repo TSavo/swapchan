@@ -127,7 +127,7 @@
     "sign": "account_family",
     "buildable": false,
     "verified": true,
-    "source": "substrate subkey key (as dot), SS58 prefix 2 (paritytech ss58-registry kusama); encoding checked against Trust Wallet Core tests/chains/Kusama"
+    "source": "substrate subkey key (as dot), SS58 prefix 2 (paritytech ss58-registry kusama); encoding checked against Trust Wallet Core tests/chains/Kusama; TWC also derives ed25519 SLIP-10 at m/44'/434'/0'/0'/0' (registry commit adf80f8)"
   },
   {
     "name": "polyx",
@@ -140,7 +140,7 @@
     "sign": "account_family",
     "buildable": false,
     "verified": true,
-    "source": "substrate subkey key (as dot), SS58 prefix 12 (paritytech ss58-registry polymesh); encoding checked against Trust Wallet Core tests/chains/Polymesh"
+    "source": "substrate subkey key (as dot), SS58 prefix 12 (paritytech ss58-registry polymesh); encoding checked against Trust Wallet Core tests/chains/Polymesh; TWC also derives ed25519 SLIP-10 at m/44'/595'/0'/0'/0' (registry commit adf80f8)"
   },
   {
     "name": "ada",
