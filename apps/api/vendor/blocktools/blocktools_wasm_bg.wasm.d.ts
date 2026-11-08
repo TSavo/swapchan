@@ -66,6 +66,7 @@ export const taprootMultisigAddress: (a: number, b: number, c: number, d: number
 export const tronBuildTransfer: (a: number, b: number) => [number, number, number, number];
 export const tronDecodeTx: (a: number, b: number) => [number, number, number, number];
 export const tronTxId: (a: number, b: number) => [number, number, number, number];
+export const tronVerifyTx: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const twox128: (a: number, b: number) => [number, number];
 export const txPlanResolve: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const unverifiedChains: () => [number, number];

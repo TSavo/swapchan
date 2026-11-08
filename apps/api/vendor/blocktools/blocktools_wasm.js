@@ -124,34 +124,50 @@ module.exports.base58Encode = function(hex) {
 };
 
 /**
- * The verifier's allowlists: standard sigs/owner slots, pinned contracts, MultiSend, deadline cap.
+ * verifySweepTx on a raw EVM tx hex; the sender is recovered from the signature (unsigned fails closed).
+ * @param {string} raw_hex
+ * @param {string} owner
+ * @param {number} chain_id
+ * @param {string} token
  * @returns {string}
  */
-module.exports.recoveryTables = function() {
-    let deferred1_0;
-    let deferred1_1;
+module.exports.verifySweepRaw = function(raw_hex, owner, chain_id, token) {
+    let deferred5_0;
+    let deferred5_1;
     try {
-        const ret = wasm.recoveryTables();
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
+        const ptr0 = passStringToWasm0(raw_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(owner, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.verifySweepRaw(ptr0, len0, ptr1, len1, chain_id, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
     } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
     }
 };
 
 /**
- * Solidity abi.encodePacked. Request JSON {types:"(t1,t2,..)", args:[..]}; returns {data, keccak256}.
+ * ABI-encode calldata or a bare type list. Request JSON {sig, args:[..]}.
  * @param {string} request_json
  * @returns {string}
  */
-module.exports.evmAbiEncodePacked = function(request_json) {
+module.exports.evmAbiEncode = function(request_json) {
     let deferred3_0;
     let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmAbiEncodePacked(ptr0, len0);
+        const ret = wasm.evmAbiEncode(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -193,37 +209,33 @@ module.exports.tronTxId = function(raw_data_hex) {
 };
 
 /**
- * Message signature check, as `msg-verify`: EIP-191 personal_sign (0x address, 65-byte hex sig) or Bitcoin Core
- * signmessage (P2PKH address, base64 sig). `message_is_hex`: message is hex bytes. Returns
- * {status:"ok"|"signer_mismatch", chain, address, recovered, v?}; malformed input throws.
- * @param {string} address
- * @param {string} message
- * @param {string} sig
- * @param {boolean} message_is_hex
+ * Resolve a declarative Plan (RFC #15) against a Context to UNSIGNED bytes, as `tx-plan resolve` (same library
+ * path). Families evm and utxo; account throws family_not_built (its crate is not in the wasm). Returns
+ * {chain, family, type:"evm-1559", unsigned_tx} or {chain, family, type:"psbt", ...utxo fields}.
+ * @param {string} plan_json
+ * @param {string} context_json
  * @returns {string}
  */
-module.exports.msgVerify = function(address, message, sig, message_is_hex) {
-    let deferred5_0;
-    let deferred5_1;
+module.exports.txPlanResolve = function(plan_json, context_json) {
+    let deferred4_0;
+    let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(plan_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(message, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr1 = passStringToWasm0(context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(sig, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.msgVerify(ptr0, len0, ptr1, len1, ptr2, len2, message_is_hex);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
+        const ret = wasm.txPlanResolve(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
         if (ret[3]) {
-            ptr4 = 0; len4 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
     } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 };
 
@@ -514,84 +526,72 @@ module.exports.ss58Encode = function(account_hex, prefix) {
 };
 
 /**
- * m-of-n P2WSH from compressed pubkeys, as `multisig M --pubkey ..`. `network`: bitcoin|testnet|signet|regtest
- * ("" = bitcoin). Returns {chain:"btc", witness_script, address, descriptor}. Pubkey ORDER is consensus-significant.
- * @param {number} threshold
- * @param {string[]} pubkeys
- * @param {string} network
+ * EIP-712 typed data: encodeType, domain separator, message hash, digest; with a signature (65-byte or EIP-2098 64-byte) the recovered signer; with an expected signer a verdict.
+ * `options_json` (optional) `{expect_chain_id?: "decimal", expect_verifying_contract?: "0x.."}`: the
+ * typed-data-verify --expect-chain-id / --expect-verifying-contract checks (status chain_id_mismatch /
+ * verifying_contract_mismatch). Permit checks (typed-data-verify --expect-spender / --expect-amount /
+ * --expect-unlimited, shared permit::apply): `{expect_spender?: "0x..", expect_amount?: "decimal", expect_unlimited?: bool}`
+ * (expect_unlimited needs expect_spender). Recognised permits (EIP-2612, DAI, Permit2 PermitSingle / PermitBatch /
+ * PermitTransferFrom / PermitBatchTransferFrom; primaryType plus exact field set) add `permit {kind, primary_type,
+ * spender, entries:[{token, amount, unlimited, allowed?, expiration?}], deadline, owner?}`, `unlimited_approval`,
+ * `spender_unasserted` and `permit_findings`; other shapes add `unrecognised_spender_fields`. With an assertion the
+ * status becomes spender_not_expected / amount_not_expected / unlimited_approval (>= 2^128, uint160 max, DAI
+ * allowed=true) or, for typed data that is not a recognised permit, spender_not_checkable / amount_not_checkable;
+ * every batch entry must match. Without assertions the status is unchanged (advisory fields only). Wrong types
+ * throw `<key>_must_be_string` / `expect_unlimited_must_be_bool`.
+ * Seaport orders (typed-data-verify --expect-min-consideration, shared seaport::apply; OrderComponents / BulkOrder,
+ * Seaport 1.5 / 1.6 at their canonical addresses) add `seaport {kind, version, canonical_deployment, offerer, zone,
+ * conduit_key, order_type, start_time, end_time, offer[], consideration_to_offerer[], consideration_to_others[],
+ * received_by_currency[]}` (bulk: `orders[]`) and `seaport_findings`, and fail closed whatever the options:
+ * seaport_no_consideration / seaport_unknown_deployment / seaport_not_checkable, and with
+ * `{expect_min_consideration?: "N | native:N | 0xTOKEN:N, ..."}` (smallest units) seaport_dust_consideration.
+ * Option errors: expect_min_consideration_must_be_string / _empty / _bad_amount / _bad_token / _duplicate_token.
+ * @param {string} typed_data_json
+ * @param {string | null} [sig_hex]
+ * @param {string | null} [signer]
+ * @param {string | null} [options_json]
  * @returns {string}
  */
-module.exports.multisigAddress = function(threshold, pubkeys, network) {
-    let deferred4_0;
-    let deferred4_1;
+module.exports.evmTypedDataVerify = function(typed_data_json, sig_hex, signer, options_json) {
+    let deferred6_0;
+    let deferred6_1;
     try {
-        const ptr0 = passArrayJsValueToWasm0(pubkeys, wasm.__wbindgen_malloc);
+        const ptr0 = passStringToWasm0(typed_data_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.multisigAddress(threshold, ptr0, len0, ptr1, len1);
-        var ptr3 = ret[0];
-        var len3 = ret[1];
+        var ptr1 = isLikeNone(sig_hex) ? 0 : passStringToWasm0(sig_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(signer) ? 0 : passStringToWasm0(signer, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.evmTypedDataVerify(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
         if (ret[3]) {
-            ptr3 = 0; len3 = 0;
+            ptr5 = 0; len5 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
     } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
     }
 };
 
 /**
- * Resolve a declarative Plan (RFC #15) against a Context to UNSIGNED bytes, as `tx-plan resolve` (same library
- * path). Families evm and utxo; account throws family_not_built (its crate is not in the wasm). Returns
- * {chain, family, type:"evm-1559", unsigned_tx} or {chain, family, type:"psbt", ...utxo fields}.
- * @param {string} plan_json
- * @param {string} context_json
+ * Merge cosigners' partial-signature PSBTs (base64 or hex, as tx-combine reads them) and finalize at threshold.
+ * Returns {signed_tx: hex, psbt: base64}. Throws not_enough_signatures / psbts_do_not_combine / not_a_psbt / no_psbts.
+ * @param {string[]} psbts
  * @returns {string}
  */
-module.exports.txPlanResolve = function(plan_json, context_json) {
-    let deferred4_0;
-    let deferred4_1;
-    try {
-        const ptr0 = passStringToWasm0(plan_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.txPlanResolve(ptr0, len0, ptr1, len1);
-        var ptr3 = ret[0];
-        var len3 = ret[1];
-        if (ret[3]) {
-            ptr3 = 0; len3 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
-    } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
-    }
-};
-
-/**
- * As `msg-verify` with options, for the chains whose verify needs them. Input JSON:
- * {"address", "message" | "message_hex", "signature", "format"? ("raw" | "offchain-v0", Solana, required there),
- * "pubkey"? (base64 33-byte compressed key, Cosmos ADR-036, required there), "chain"? ("eth"|"btc"|"tron"|"sol"|"cosmos",
- * required when the address is both valid Cosmos bech32 and a valid Solana key, else `ambiguous_address`)}. Unknown keys and options that do
- * not apply to the detected chain are refused. Returns the same JSON as `msgVerify`
- * ({"status":"ok"|"signer_mismatch","chain","address","recovered"?,"v"?,"format"?,"hrp"?}). No keys.
- * @param {string} input
- * @returns {string}
- */
-module.exports.msgVerifyOpts = function(input) {
+module.exports.combinePsbts = function(psbts) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(input, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passArrayJsValueToWasm0(psbts, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.msgVerifyOpts(ptr0, len0);
+        const ret = wasm.combinePsbts(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -607,18 +607,52 @@ module.exports.msgVerifyOpts = function(input) {
 };
 
 /**
- * Strict check of EVM calldata or init code before signing, as tx-verify --call/--abi/--create-hash.
- * Request JSON {to: "0x.." | null, data, sigs?: [signature], abi?: JSON ABI (text or array), createHash?}.
+ * Message signature check, as `msg-verify`: EIP-191 personal_sign (0x address, 65-byte hex sig) or Bitcoin Core
+ * signmessage (P2PKH address, base64 sig). `message_is_hex`: message is hex bytes. Returns
+ * {status:"ok"|"signer_mismatch", chain, address, recovered, v?}; malformed input throws.
+ * @param {string} address
+ * @param {string} message
+ * @param {string} sig
+ * @param {boolean} message_is_hex
+ * @returns {string}
+ */
+module.exports.msgVerify = function(address, message, sig, message_is_hex) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(message, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(sig, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.msgVerify(ptr0, len0, ptr1, len1, ptr2, len2, message_is_hex);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+};
+
+/**
+ * CREATE / CREATE2 contract address. Request JSON {deployer, nonce} or {deployer, salt, init_code_hash | init_code}; a tx (from, nonce) also works.
  * @param {string} request_json
  * @returns {string}
  */
-module.exports.evmApproveCall = function(request_json) {
+module.exports.evmCreateAddress = function(request_json) {
     let deferred3_0;
     let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmApproveCall(ptr0, len0);
+        const ret = wasm.evmCreateAddress(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -634,19 +668,21 @@ module.exports.evmApproveCall = function(request_json) {
 };
 
 /**
- * Re-encode a BOLT11 invoice byte-identically, as `bolt11 --reencode`: parse the 5-bit words, drop the
- * checksum, re-emit with a fresh one. Returns {reencoded, roundtrip} (roundtrip true when it equals the
- * lowercased input). Public input, no keys.
+ * Decode a BOLT11 Lightning invoice, as `bolt11`: bech32 (BIP173) + tagged fields + the payee pubkey
+ * RECOVERED from the signature. Returns the fields {network, currency, timestamp, recovered_payee,
+ * signature, recovery_id, routing_hints, amount_msat?, amount_raw?, payment_hash?, payment_secret?,
+ * description?, description_hash?, payee_pubkey?, features?, fallback?, expiry?, min_final_cltv_expiry?}.
+ * Public input, no keys, no channel protocol; malformed input throws a stable snake_case code.
  * @param {string} invoice
  * @returns {string}
  */
-module.exports.bolt11Reencode = function(invoice) {
+module.exports.bolt11Decode = function(invoice) {
     let deferred3_0;
     let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(invoice, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.bolt11Reencode(ptr0, len0);
+        const ret = wasm.bolt11Decode(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -847,6 +883,37 @@ module.exports.twox128 = function(text) {
 };
 
 /**
+ * SwapChan verifyRecovery twin. `tx_json` = {"to","data","value"}; `now_s` = unix seconds (required; 0 = bad_now).
+ * Returns {"verified":true,"call"} or {"verified":false,"reason"}.
+ * @param {string} tx_json_s
+ * @param {string} owner
+ * @param {number} now_s
+ * @returns {string}
+ */
+module.exports.verifyRecovery = function(tx_json_s, owner, now_s) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(tx_json_s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(owner, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.verifyRecovery(ptr0, len0, ptr1, len1, now_s);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+};
+
+/**
  * verifyRecovery on a raw (signed or unsigned) EVM tx hex. Adds "tx":{kind,chainId,signed,from,to,value,data,txid}.
  * @param {string} raw_hex
  * @param {string} owner
@@ -874,39 +941,6 @@ module.exports.verifyRecoveryRaw = function(raw_hex, owner, chain_id, now_s) {
         return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
-    }
-};
-
-/**
- * SwapChan verifySweepTx twin. `tx_json` = {from,to,value,data?,chainId}; `token` = "" for a native sweep.
- * @param {string} tx_json_s
- * @param {string} owner
- * @param {number} chain_id
- * @param {string} token
- * @returns {string}
- */
-module.exports.verifySweepTx = function(tx_json_s, owner, chain_id, token) {
-    let deferred5_0;
-    let deferred5_1;
-    try {
-        const ptr0 = passStringToWasm0(tx_json_s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(owner, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.verifySweepTx(ptr0, len0, ptr1, len1, chain_id, ptr2, len2);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
-        if (ret[3]) {
-            ptr4 = 0; len4 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
-    } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
     }
 };
 
@@ -1002,24 +1036,24 @@ module.exports.scriptToAddress = function(chain, script_hex) {
 };
 
 /**
- * verifySweepTx on a raw EVM tx hex; the sender is recovered from the signature (unsigned fails closed).
- * @param {string} raw_hex
+ * SwapChan verifySweepTx twin. `tx_json` = {from,to,value,data?,chainId}; `token` = "" for a native sweep.
+ * @param {string} tx_json_s
  * @param {string} owner
  * @param {number} chain_id
  * @param {string} token
  * @returns {string}
  */
-module.exports.verifySweepRaw = function(raw_hex, owner, chain_id, token) {
+module.exports.verifySweepTx = function(tx_json_s, owner, chain_id, token) {
     let deferred5_0;
     let deferred5_1;
     try {
-        const ptr0 = passStringToWasm0(raw_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(tx_json_s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(owner, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.verifySweepRaw(ptr0, len0, ptr1, len1, chain_id, ptr2, len2);
+        const ret = wasm.verifySweepTx(ptr0, len0, ptr1, len1, chain_id, ptr2, len2);
         var ptr4 = ret[0];
         var len4 = ret[1];
         if (ret[3]) {
@@ -1110,43 +1144,18 @@ module.exports.legacyToCashAddr = function(addr, prefix) {
 };
 
 /**
- * Inspect an ABI (JSON or signature lines): items with selectors/topics, selector collisions, ERC-165/ERC-20 interfaces.
- * @param {string} abi_text
- * @returns {string}
- */
-module.exports.evmAbiInspect = function(abi_text) {
-    let deferred3_0;
-    let deferred3_1;
-    try {
-        const ptr0 = passStringToWasm0(abi_text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmAbiInspect(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
-    } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
-    }
-};
-
-/**
- * Decode calldata / returndata / revert data / one log. Request JSON {input, sig?, abi?, types?, output?}.
+ * Strict check of EVM calldata or init code before signing, as tx-verify --call/--abi/--create-hash.
+ * Request JSON {to: "0x.." | null, data, sigs?: [signature], abi?: JSON ABI (text or array), createHash?}.
  * @param {string} request_json
  * @returns {string}
  */
-module.exports.evmAbiDecode = function(request_json) {
+module.exports.evmApproveCall = function(request_json) {
     let deferred3_0;
     let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmAbiDecode(ptr0, len0);
+        const ret = wasm.evmApproveCall(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -1162,32 +1171,62 @@ module.exports.evmAbiDecode = function(request_json) {
 };
 
 /**
- * Decode a bech32 (segwit v0, `bc1q...`) / bech32m (v1 taproot, `bc1p...`) address into its witness
- * program. Keyless and pure. Returns {version, program_hex, words_hex}: `version` the witness version
- * int, `program_hex` the hex of the decoded witness program bytes (bech32 `fromWords` of the data
- * words after the version), `words_hex` the hex of the raw 5-bit data words themselves (one byte per
- * 5-bit word, each 0..=31).
- * @param {string} address
+ * Reverse lookup of a selector/topic among caller-supplied signatures (ABI JSON or one per line).
+ * @param {string} hash_hex
+ * @param {string} sigs_text
  * @returns {string}
  */
-module.exports.bech32WitnessProgram = function(address) {
-    let deferred3_0;
-    let deferred3_1;
+module.exports.evmSigLookup = function(hash_hex, sigs_text) {
+    let deferred4_0;
+    let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(hash_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.bech32WitnessProgram(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
+        const ptr1 = passStringToWasm0(sigs_text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.evmSigLookup(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
         if (ret[3]) {
-            ptr2 = 0; len2 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
     } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+};
+
+/**
+ * m-of-n P2WSH from compressed pubkeys, as `multisig M --pubkey ..`. `network`: bitcoin|testnet|signet|regtest
+ * ("" = bitcoin). Returns {chain:"btc", witness_script, address, descriptor}. Pubkey ORDER is consensus-significant.
+ * @param {number} threshold
+ * @param {string[]} pubkeys
+ * @param {string} network
+ * @returns {string}
+ */
+module.exports.multisigAddress = function(threshold, pubkeys, network) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArrayJsValueToWasm0(pubkeys, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.multisigAddress(threshold, ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 };
 
@@ -1253,33 +1292,32 @@ module.exports.chainParams = function() {
 };
 
 /**
- * Taproot script-path m-of-n (CHECKSIGADD leaf under the BIP341 NUMS key), as `taproot-multisig`. x-only or
- * compressed pubkeys. Returns {chain:"btc", leaf_script, address, control_block, merkle_root, internal_key, descriptor}.
- * @param {number} threshold
- * @param {string[]} pubkeys
- * @param {string} network
+ * Decode a bech32 (segwit v0, `bc1q...`) / bech32m (v1 taproot, `bc1p...`) address into its witness
+ * program. Keyless and pure. Returns {version, program_hex, words_hex}: `version` the witness version
+ * int, `program_hex` the hex of the decoded witness program bytes (bech32 `fromWords` of the data
+ * words after the version), `words_hex` the hex of the raw 5-bit data words themselves (one byte per
+ * 5-bit word, each 0..=31).
+ * @param {string} address
  * @returns {string}
  */
-module.exports.taprootMultisigAddress = function(threshold, pubkeys, network) {
-    let deferred4_0;
-    let deferred4_1;
+module.exports.bech32WitnessProgram = function(address) {
+    let deferred3_0;
+    let deferred3_1;
     try {
-        const ptr0 = passArrayJsValueToWasm0(pubkeys, wasm.__wbindgen_malloc);
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.taprootMultisigAddress(threshold, ptr0, len0, ptr1, len1);
-        var ptr3 = ret[0];
-        var len3 = ret[1];
+        const ret = wasm.bech32WitnessProgram(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
         if (ret[3]) {
-            ptr3 = 0; len3 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
     } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 };
 
@@ -1413,17 +1451,45 @@ module.exports.checkTx = function(input_json) {
 };
 
 /**
- * Selector / topic of one Solidity signature. JSON: see EXPORTS.md.
- * @param {string} signature
+ * Re-encode a BOLT11 invoice byte-identically, as `bolt11 --reencode`: parse the 5-bit words, drop the
+ * checksum, re-emit with a fresh one. Returns {reencoded, roundtrip} (roundtrip true when it equals the
+ * lowercased input). Public input, no keys.
+ * @param {string} invoice
  * @returns {string}
  */
-module.exports.evmSigHash = function(signature) {
+module.exports.bolt11Reencode = function(invoice) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(invoice, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmSigHash(ptr0, len0);
+        const ret = wasm.bolt11Reencode(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+};
+
+/**
+ * keccak256 of hex bytes -> "0x" + 64 hex.
+ * @param {string} data_hex
+ * @returns {string}
+ */
+module.exports.evmKeccak256 = function(data_hex) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(data_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.evmKeccak256(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -1474,56 +1540,113 @@ module.exports.buildUnsignedSweep = function(chain, utxos, to, fee_rate) {
 };
 
 /**
- * EIP-712 typed data: encodeType, domain separator, message hash, digest; with a signature (65-byte or EIP-2098 64-byte) the recovered signer; with an expected signer a verdict.
- * `options_json` (optional) `{expect_chain_id?: "decimal", expect_verifying_contract?: "0x.."}`: the
- * typed-data-verify --expect-chain-id / --expect-verifying-contract checks (status chain_id_mismatch /
- * verifying_contract_mismatch). Permit checks (typed-data-verify --expect-spender / --expect-amount /
- * --expect-unlimited, shared permit::apply): `{expect_spender?: "0x..", expect_amount?: "decimal", expect_unlimited?: bool}`
- * (expect_unlimited needs expect_spender). Recognised permits (EIP-2612, DAI, Permit2 PermitSingle / PermitBatch /
- * PermitTransferFrom / PermitBatchTransferFrom; primaryType plus exact field set) add `permit {kind, primary_type,
- * spender, entries:[{token, amount, unlimited, allowed?, expiration?}], deadline, owner?}`, `unlimited_approval`,
- * `spender_unasserted` and `permit_findings`; other shapes add `unrecognised_spender_fields`. With an assertion the
- * status becomes spender_not_expected / amount_not_expected / unlimited_approval (>= 2^128, uint160 max, DAI
- * allowed=true) or, for typed data that is not a recognised permit, spender_not_checkable / amount_not_checkable;
- * every batch entry must match. Without assertions the status is unchanged (advisory fields only). Wrong types
- * throw `<key>_must_be_string` / `expect_unlimited_must_be_bool`.
- * Seaport orders (typed-data-verify --expect-min-consideration, shared seaport::apply; OrderComponents / BulkOrder,
- * Seaport 1.5 / 1.6 at their canonical addresses) add `seaport {kind, version, canonical_deployment, offerer, zone,
- * conduit_key, order_type, start_time, end_time, offer[], consideration_to_offerer[], consideration_to_others[],
- * received_by_currency[]}` (bulk: `orders[]`) and `seaport_findings`, and fail closed whatever the options:
- * seaport_no_consideration / seaport_unknown_deployment / seaport_not_checkable, and with
- * `{expect_min_consideration?: "N | native:N | 0xTOKEN:N, ..."}` (smallest units) seaport_dust_consideration.
- * Option errors: expect_min_consideration_must_be_string / _empty / _bad_amount / _bad_token / _duplicate_token.
- * @param {string} typed_data_json
- * @param {string | null} [sig_hex]
- * @param {string | null} [signer]
- * @param {string | null} [options_json]
+ * Classify runtime bytecode (EIP-1167 / EIP-7702 / EOF), EIP-170 size, Solidity metadata, opcode counts, selector candidates.
+ * @param {string} code_hex
  * @returns {string}
  */
-module.exports.evmTypedDataVerify = function(typed_data_json, sig_hex, signer, options_json) {
-    let deferred6_0;
-    let deferred6_1;
+module.exports.evmBytecodeInspect = function(code_hex) {
+    let deferred3_0;
+    let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(typed_data_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(code_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(sig_hex) ? 0 : passStringToWasm0(sig_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(signer) ? 0 : passStringToWasm0(signer, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len2 = WASM_VECTOR_LEN;
-        var ptr3 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len3 = WASM_VECTOR_LEN;
-        const ret = wasm.evmTypedDataVerify(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
-        var ptr5 = ret[0];
-        var len5 = ret[1];
+        const ret = wasm.evmBytecodeInspect(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
         if (ret[3]) {
-            ptr5 = 0; len5 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred6_0 = ptr5;
-        deferred6_1 = len5;
-        return getStringFromWasm0(ptr5, len5);
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
     } finally {
-        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+};
+
+/**
+ * Unsigned EIP-155 transfer (ETH forks / extra EVM chains, native or ERC-20). Request JSON:
+ * {chainId, nonce, gas, gasPrice, to, value | balance, token?, maxPriorityFeePerGas?, from?}.
+ * Returns {unsigned, sighash, kind, chainId, nonce, gas, gasPrice, to, value, data, fee, ...}.
+ * @param {string} req_json
+ * @returns {string}
+ */
+module.exports.buildEvmTransfer = function(req_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(req_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.buildEvmTransfer(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+};
+
+/**
+ * Selector / topic of one Solidity signature. JSON: see EXPORTS.md.
+ * @param {string} signature
+ * @returns {string}
+ */
+module.exports.evmSigHash = function(signature) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.evmSigHash(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+};
+
+/**
+ * Verify a Tron raw_data or full Transaction hex against `expect_json`
+ * {owner?, to?, amount_sun?, contract?, amount?, max_fee_limit_sun?, now_ms?}.
+ * Same policy as `tron::verify_tx` / `sol-tron-tx verify --chain tron`. No keys.
+ * @param {string} hex
+ * @param {string} expect_json
+ * @returns {string}
+ */
+module.exports.tronVerifyTx = function(hex, expect_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(expect_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.tronVerifyTx(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 };
 
@@ -1554,92 +1677,6 @@ module.exports.selectUtxos = function(utxos_json, script_hex, fee_rate) {
         return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
-    }
-};
-
-/**
- * Reverse lookup of a selector/topic among caller-supplied signatures (ABI JSON or one per line).
- * @param {string} hash_hex
- * @param {string} sigs_text
- * @returns {string}
- */
-module.exports.evmSigLookup = function(hash_hex, sigs_text) {
-    let deferred4_0;
-    let deferred4_1;
-    try {
-        const ptr0 = passStringToWasm0(hash_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(sigs_text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.evmSigLookup(ptr0, len0, ptr1, len1);
-        var ptr3 = ret[0];
-        var len3 = ret[1];
-        if (ret[3]) {
-            ptr3 = 0; len3 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
-    } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
-    }
-};
-
-/**
- * SwapChan verifyRecovery twin. `tx_json` = {"to","data","value"}; `now_s` = unix seconds (required; 0 = bad_now).
- * Returns {"verified":true,"call"} or {"verified":false,"reason"}.
- * @param {string} tx_json_s
- * @param {string} owner
- * @param {number} now_s
- * @returns {string}
- */
-module.exports.verifyRecovery = function(tx_json_s, owner, now_s) {
-    let deferred4_0;
-    let deferred4_1;
-    try {
-        const ptr0 = passStringToWasm0(tx_json_s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(owner, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.verifyRecovery(ptr0, len0, ptr1, len1, now_s);
-        var ptr3 = ret[0];
-        var len3 = ret[1];
-        if (ret[3]) {
-            ptr3 = 0; len3 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
-    } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
-    }
-};
-
-/**
- * keccak256 of hex bytes -> "0x" + 64 hex.
- * @param {string} data_hex
- * @returns {string}
- */
-module.exports.evmKeccak256 = function(data_hex) {
-    let deferred3_0;
-    let deferred3_1;
-    try {
-        const ptr0 = passStringToWasm0(data_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmKeccak256(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
-    } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 };
 
@@ -1870,17 +1907,17 @@ module.exports.cashAddrToLegacy = function(addr) {
 };
 
 /**
- * ABI-encode calldata or a bare type list. Request JSON {sig, args:[..]}.
+ * Decode calldata / returndata / revert data / one log. Request JSON {input, sig?, abi?, types?, output?}.
  * @param {string} request_json
  * @returns {string}
  */
-module.exports.evmAbiEncode = function(request_json) {
+module.exports.evmAbiDecode = function(request_json) {
     let deferred3_0;
     let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmAbiEncode(ptr0, len0);
+        const ret = wasm.evmAbiDecode(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -1939,17 +1976,17 @@ module.exports.decodeAccountInfo = function(hex) {
 };
 
 /**
- * CREATE / CREATE2 contract address. Request JSON {deployer, nonce} or {deployer, salt, init_code_hash | init_code}; a tx (from, nonce) also works.
+ * Solidity abi.encodePacked. Request JSON {types:"(t1,t2,..)", args:[..]}; returns {data, keccak256}.
  * @param {string} request_json
  * @returns {string}
  */
-module.exports.evmCreateAddress = function(request_json) {
+module.exports.evmAbiEncodePacked = function(request_json) {
     let deferred3_0;
     let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmCreateAddress(ptr0, len0);
+        const ret = wasm.evmAbiEncodePacked(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -1965,21 +2002,22 @@ module.exports.evmCreateAddress = function(request_json) {
 };
 
 /**
- * Decode a BOLT11 Lightning invoice, as `bolt11`: bech32 (BIP173) + tagged fields + the payee pubkey
- * RECOVERED from the signature. Returns the fields {network, currency, timestamp, recovered_payee,
- * signature, recovery_id, routing_hints, amount_msat?, amount_raw?, payment_hash?, payment_secret?,
- * description?, description_hash?, payee_pubkey?, features?, fallback?, expiry?, min_final_cltv_expiry?}.
- * Public input, no keys, no channel protocol; malformed input throws a stable snake_case code.
- * @param {string} invoice
+ * As `msg-verify` with options, for the chains whose verify needs them. Input JSON:
+ * {"address", "message" | "message_hex", "signature", "format"? ("raw" | "offchain-v0", Solana, required there),
+ * "pubkey"? (base64 33-byte compressed key, Cosmos ADR-036, required there), "chain"? ("eth"|"btc"|"tron"|"sol"|"cosmos",
+ * required when the address is both valid Cosmos bech32 and a valid Solana key, else `ambiguous_address`)}. Unknown keys and options that do
+ * not apply to the detected chain are refused. Returns the same JSON as `msgVerify`
+ * ({"status":"ok"|"signer_mismatch","chain","address","recovered"?,"v"?,"format"?,"hrp"?}). No keys.
+ * @param {string} input
  * @returns {string}
  */
-module.exports.bolt11Decode = function(invoice) {
+module.exports.msgVerifyOpts = function(input) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(invoice, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(input, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.bolt11Decode(ptr0, len0);
+        const ret = wasm.msgVerifyOpts(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -2092,45 +2130,34 @@ module.exports.verifyThorSend = function(chain, tx_or_psbt, expected_vault, expe
 };
 
 /**
- * Unsigned EIP-155 transfer (ETH forks / extra EVM chains, native or ERC-20). Request JSON:
- * {chainId, nonce, gas, gasPrice, to, value | balance, token?, maxPriorityFeePerGas?, from?}.
- * Returns {unsigned, sighash, kind, chainId, nonce, gas, gasPrice, to, value, data, fee, ...}.
- * @param {string} req_json
+ * The verifier's allowlists: standard sigs/owner slots, pinned contracts, MultiSend, deadline cap.
  * @returns {string}
  */
-module.exports.buildEvmTransfer = function(req_json) {
-    let deferred3_0;
-    let deferred3_1;
+module.exports.recoveryTables = function() {
+    let deferred1_0;
+    let deferred1_1;
     try {
-        const ptr0 = passStringToWasm0(req_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.buildEvmTransfer(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
+        const ret = wasm.recoveryTables();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
     } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
     }
 };
 
 /**
- * Classify runtime bytecode (EIP-1167 / EIP-7702 / EOF), EIP-170 size, Solidity metadata, opcode counts, selector candidates.
- * @param {string} code_hex
+ * Inspect an ABI (JSON or signature lines): items with selectors/topics, selector collisions, ERC-165/ERC-20 interfaces.
+ * @param {string} abi_text
  * @returns {string}
  */
-module.exports.evmBytecodeInspect = function(code_hex) {
+module.exports.evmAbiInspect = function(abi_text) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(code_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(abi_text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.evmBytecodeInspect(ptr0, len0);
+        const ret = wasm.evmAbiInspect(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -2172,29 +2199,33 @@ module.exports.explainPlan = function(args) {
 };
 
 /**
- * Merge cosigners' partial-signature PSBTs (base64 or hex, as tx-combine reads them) and finalize at threshold.
- * Returns {signed_tx: hex, psbt: base64}. Throws not_enough_signatures / psbts_do_not_combine / not_a_psbt / no_psbts.
- * @param {string[]} psbts
+ * Taproot script-path m-of-n (CHECKSIGADD leaf under the BIP341 NUMS key), as `taproot-multisig`. x-only or
+ * compressed pubkeys. Returns {chain:"btc", leaf_script, address, control_block, merkle_root, internal_key, descriptor}.
+ * @param {number} threshold
+ * @param {string[]} pubkeys
+ * @param {string} network
  * @returns {string}
  */
-module.exports.combinePsbts = function(psbts) {
-    let deferred3_0;
-    let deferred3_1;
+module.exports.taprootMultisigAddress = function(threshold, pubkeys, network) {
+    let deferred4_0;
+    let deferred4_1;
     try {
-        const ptr0 = passArrayJsValueToWasm0(psbts, wasm.__wbindgen_malloc);
+        const ptr0 = passArrayJsValueToWasm0(pubkeys, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.combinePsbts(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
+        const ptr1 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.taprootMultisigAddress(threshold, ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
         if (ret[3]) {
-            ptr2 = 0; len2 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
     } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 };
 
