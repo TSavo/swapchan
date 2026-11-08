@@ -1,7 +1,20 @@
 #!/usr/bin/env bash
-# Deploy SwapChan to Battleaxe (docker context "battleaxe") behind the Cloudflare tunnel "swapchan". Idempotent.
-#   deploy/deploy.sh             build and (re)start api, web, mcp, cloudflared
-#   SERVICES="api web" deploy/deploy.sh   a subset
+# Deploy SwapChan behind the Cloudflare tunnel "swapchan". Idempotent.
+#   BUILT on Battleaxe   (docker context "battleaxe": the fast CPU, a LAN hop from this checkout)
+#   RUN on the droplet   (docker context "arb-nyc" = ssh://arb-nyc-root, DigitalOcean arb-engine-nyc)
+#   carried between them by ghcr.io/tsavo/swapchan-{api,web,mcp}:<git sha>
+# Why a registry: Battleaxe's uplink is ~1 MB/s, and a push sends only the layers that changed, where piping
+# `docker save` across would resend all ~2.5 GB on every deploy. Registry auth is the Mac's own
+# `docker login ghcr.io`; the docker CLI sends it with each push and pull, so neither box stores a token.
+#
+#   deploy/deploy.sh                                   build, push, pull, (re)start api web mcp cloudflared
+#   SERVICES="api web" deploy/deploy.sh                a subset
+#   SKIP_BUILD=1 SWAPCHAN_TAG=<sha> deploy/deploy.sh   redeploy or roll back to an image already in the registry
+#
+# One-time setup on the Mac:
+#   docker context create arb-nyc --docker host=ssh://arb-nyc-root
+#   gh auth token | docker login ghcr.io -u <github login> --password-stdin    (the token needs write:packages)
+#
 # Secrets come from Vault here and live only in this process's environment; compose hands them to the containers.
 #   secret/swapchan/cloudflare  tunnel_token, tunnel_id     (required: written when the tunnel was created)
 #   secret/swapchan/fees        recipient, bps, lifi_enabled              (integrator fee; unset = no fee)
@@ -15,7 +28,19 @@
 #   secret/swapchan/recover     link_secret                 (SWAPCHAN_RECOVER_LINK_SECRET, shared by api+web; unset = /recover to=/data= links fail closed)
 set -euo pipefail
 cd "$(dirname "$0")"
-[ "$(docker context show)" = battleaxe ] || { echo "docker context is not battleaxe"; exit 1; }
+BUILD_CTX=${BUILD_CTX:-battleaxe}
+RUN_CTX=${RUN_CTX:-arb-nyc}
+for ctx in "$BUILD_CTX" "$RUN_CTX"; do
+  docker context inspect "$ctx" >/dev/null 2>&1 \
+    || { echo "docker context $ctx does not exist (one-time setup is at the top of $0)" >&2; exit 1; }
+done
+export SWAPCHAN_REGISTRY=${SWAPCHAN_REGISTRY:-ghcr.io/tsavo}
+if [ -z "${SWAPCHAN_TAG:-}" ]; then
+  SWAPCHAN_TAG=$(git rev-parse --short=7 HEAD)
+  # A tag names the commit its image was built from; an uncommitted tree must never overwrite that image.
+  git diff --quiet HEAD || SWAPCHAN_TAG="$SWAPCHAN_TAG-dirty-$(date +%Y%m%d%H%M%S)"
+fi
+export SWAPCHAN_TAG
 
 # The Mac's Vault is plain http on loopback; default it so reads don't silently come back empty.
 export VAULT_ADDR=${VAULT_ADDR:-http://127.0.0.1:8200}
@@ -67,5 +92,35 @@ export SWAPCHAN_AGENT_MODEL=${SWAPCHAN_AGENT_MODEL:-claude-sonnet-5-5}
 if [ -z "$MCP_API_KEYS" ]; then export MCP_ALLOW_ANONYMOUS=1; else export MCP_ALLOW_ANONYMOUS=0; fi
 
 SERVICES=${SERVICES:-api web mcp cloudflared}
-docker compose up -d --build $SERVICES
-docker compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
+BUILT=""; for s in $SERVICES; do case $s in api|web|mcp) BUILT="$BUILT $s" ;; esac; done
+echo "deploying $SWAPCHAN_REGISTRY/swapchan-*:$SWAPCHAN_TAG ($SERVICES): build on $BUILD_CTX, run on $RUN_CTX"
+if [ -n "$BUILT" ]; then
+  if [ -z "${SKIP_BUILD:-}" ]; then
+    docker --context "$BUILD_CTX" compose build $BUILT
+    docker --context "$BUILD_CTX" compose push $BUILT
+  fi
+  docker --context "$RUN_CTX" compose pull $BUILT
+fi
+
+# ONE TUNNEL CONNECTOR. Cloudflare spreads a tunnel's requests over every connector running its token, so a
+# cloudflared still up on the other box would serve part of the traffic from a second copy of api-data (short
+# links, sessions, partners) and the two would silently diverge. Checked here, after the slow build/push/pull,
+# so that work can run while the other box is still live; only starting containers waits for it to be stopped.
+for ctx in battleaxe arb-nyc; do
+  [ "$ctx" = "$RUN_CTX" ] && continue
+  if docker --context "$ctx" ps -q --filter label=com.docker.compose.project=swapchan \
+       --filter label=com.docker.compose.service=cloudflared 2>/dev/null | grep -q .; then
+    echo "a SwapChan tunnel connector is still RUNNING on $ctx: stop that stack before starting it on $RUN_CTX" >&2
+    exit 1
+  fi
+done
+
+docker --context "$RUN_CTX" compose up -d --no-build $SERVICES
+docker --context "$RUN_CTX" compose ps --format 'table {{.Service}}\t{{.Image}}\t{{.State}}\t{{.Status}}'
+
+# The droplet's disk is shared with other services: keep the three newest builds of each image there. Older ones
+# stay in the registry (roll back with SKIP_BUILD=1 SWAPCHAN_TAG=<sha>). docker refuses to remove an image in use.
+for s in $BUILT; do
+  docker --context "$RUN_CTX" images "$SWAPCHAN_REGISTRY/swapchan-$s" --format '{{.Repository}}:{{.Tag}}' \
+    | sed -n '4,$p' | while read -r img; do docker --context "$RUN_CTX" rmi "$img" >/dev/null 2>&1 || true; done
+done

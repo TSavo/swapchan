@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Off-box backup of SwapChan's permanent data (links.db = short URLs, "URLs are forever"; partners.db; watches.db = price watches + the pre-6539e94 stray short links; batches.db = find_money_batch jobs, 6h).
 # Runs nightly at 03:17 from the Mac via launchd (~/Library/LaunchAgents/com.swapchan.backup-links.plist).
-#   1. VACUUM INTO a consistent snapshot inside the api container (Battleaxe, volume api-data)
+#   1. VACUUM INTO a consistent snapshot inside the api container (the droplet, docker context arb-nyc, volume api-data)
 #   2. copy it to the Mac: ~/Backups/swapchan/<db>-YYYY-MM-DD.db (keep 90 days)
 #   3. upload it to Cloudflare R2: swapchan-backups/<db>/<date>.db and <db>/latest.db (token: secret/shared/cloudflare r2_edit)
 set -euo pipefail
 export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH
 export VAULT_ADDR=${VAULT_ADDR:-http://127.0.0.1:8200}
-CTX=battleaxe; C=swapchan-api-1; OUT=$HOME/Backups/swapchan; D=$(date +%F)
+CTX=${SWAPCHAN_CTX:-arb-nyc}; C=swapchan-api-1; OUT=$HOME/Backups/swapchan; D=$(date +%F)
 mkdir -p "$OUT"
 T=$(vault kv get -field=r2_edit secret/shared/cloudflare 2>/dev/null || true)
 A=$(vault kv get -field=account_id secret/swapchan/cloudflare 2>/dev/null || true)

@@ -1,13 +1,15 @@
-# SwapChan on Battleaxe. Deployed from the Mac with deploy/deploy.sh (docker context: battleaxe).
+# SwapChan runs on the DigitalOcean droplet arb-engine-nyc (docker context: arb-nyc). Deployed from the Mac with
+# deploy/deploy.sh, which builds on Battleaxe and carries the images over ghcr.io (see the top of deploy.sh).
 # Public only through the Cloudflare tunnel "swapchan" (remotely managed; ingress lives in Cloudflare):
 #   swapchan.com, www -> web:3000   api.swapchan.com -> api:8787   mcp.swapchan.com -> mcp:8788
-# Nothing is published on Battleaxe except the 127.0.0.1 ports below.
+# Nothing is published except the 127.0.0.1 ports below. KEEP THEM ON LOOPBACK: Docker writes its own iptables
+# rules, so a port published on 0.0.0.0 is reachable from the internet whatever the droplet's firewall says.
 name: swapchan
 
 services:
   api:
     build: { context: .., dockerfile: apps/api/Dockerfile }
-    image: swapchan-api:latest
+    image: ${SWAPCHAN_REGISTRY:-ghcr.io/tsavo}/swapchan-api:${SWAPCHAN_TAG:-latest} # tag = git sha, set by deploy.sh
     restart: unless-stopped
     environment: # unset keys = that provider/feature self-disables
       TZ: America/Los_Angeles
@@ -76,7 +78,7 @@ services:
         NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
         NEXT_PUBLIC_CROSSMINT_CLIENT_KEY: ${NEXT_PUBLIC_CROSSMINT_CLIENT_KEY:-}
         NEXT_PUBLIC_MOONPAY_PUBLISHABLE_KEY: ${NEXT_PUBLIC_MOONPAY_PUBLISHABLE_KEY:-}
-    image: swapchan-web:latest
+    image: ${SWAPCHAN_REGISTRY:-ghcr.io/tsavo}/swapchan-web:${SWAPCHAN_TAG:-latest}
     restart: unless-stopped
     environment:
       TZ: America/Los_Angeles
@@ -86,7 +88,7 @@ services:
     depends_on: [api]
   mcp:
     build: { context: .., dockerfile: apps/mcp/Dockerfile }
-    image: swapchan-mcp:latest
+    image: ${SWAPCHAN_REGISTRY:-ghcr.io/tsavo}/swapchan-mcp:${SWAPCHAN_TAG:-latest}
     restart: unless-stopped
     environment:
       TZ: America/Los_Angeles
