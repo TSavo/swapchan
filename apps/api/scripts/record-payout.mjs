@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Record a manual partner payout in the widget partner DB.
-// On Battleaxe:  cd deploy && docker compose exec api node scripts/record-payout.mjs <partnerId> <amountUsd> <txHash> [note]
+// On the droplet, from the Mac:  cd deploy && docker --context arb-nyc compose exec api node scripts/record-payout.mjs <partnerId> <amountUsd> <txHash> [note]
 import { DatabaseSync } from "node:sqlite";
 
 const [id, amount, tx, ...note] = process.argv.slice(2);
