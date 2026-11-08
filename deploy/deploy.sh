@@ -97,7 +97,17 @@ echo "deploying $SWAPCHAN_REGISTRY/swapchan-*:$SWAPCHAN_TAG ($SERVICES): build o
 if [ -n "$BUILT" ]; then
   if [ -z "${SKIP_BUILD:-}" ]; then
     docker --context "$BUILD_CTX" compose build $BUILT
-    docker --context "$BUILD_CTX" compose push $BUILT
+    # ONE IMAGE AT A TIME, RETRIED. `compose push` sends all three at once, which saturates Battleaxe's ~1 MB/s
+    # uplink until a registry request times out: the first push of 11cbbe7 (2026-11-08) died on a 449-byte layer
+    # commit, "timeout awaiting response headers". Pushed one at a time, all three then went through on the
+    # first attempt in 101 s, because finished layers stay in the registry and a retry only sends what is missing.
+    for s in $BUILT; do
+      for attempt in 1 2 3 4 5; do
+        docker --context "$BUILD_CTX" push -q "$SWAPCHAN_REGISTRY/swapchan-$s:$SWAPCHAN_TAG" && break
+        [ "$attempt" = 5 ] && { echo "push of swapchan-$s failed 5 times: not deploying" >&2; exit 1; }
+        echo "push of swapchan-$s failed (attempt $attempt of 5), retrying" >&2
+      done
+    done
   fi
   docker --context "$RUN_CTX" compose pull $BUILT
 fi
