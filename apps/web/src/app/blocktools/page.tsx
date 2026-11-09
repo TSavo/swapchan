@@ -286,10 +286,7 @@ export default async function BlocktoolsHome() {
         </p>
         <ul className="grid gap-x-8 gap-y-4 text-sm md:grid-cols-2">
           {[
-            [
-              "wasm tronVerifyTx",
-              "New wasm export tronVerifyTx, plus 77 exports (was 76).",
-            ],
+            ["wasm tronVerifyTx", "New wasm export tronVerifyTx, plus 77 exports (was 76)."],
             [
               "ksm and polyx Trust Wallet Core rows",
               "Kusama (ksm) and Polymesh (polyx) emit a Trust Wallet Core ed25519 row alongside the existing substrate sr25519 row; dot stays sr25519-only.",
