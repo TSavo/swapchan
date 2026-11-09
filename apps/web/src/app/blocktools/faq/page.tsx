@@ -19,7 +19,7 @@ const QA: [string, string][] = [
   ],
   [
     "Which platforms?",
-    "Release binaries: Linux x86_64 only, glibc 2.39+ for the full set (54 of 56 binaries need 2.34; sealed-run and tx-decode need 2.39; objdump -T on the published tarball, not CI-stamped). The tarball is not signed; SHA256SUMS is its integrity check. Sealed runs (./blocktools build) need a v0.4.0 source checkout and Docker, not just the tarball. No macOS, Windows or ARM binaries yet.",
+    "Release binaries: Linux x86_64 only, glibc 2.39+ for the full set (54 of 56 binaries need 2.34; sealed-run and tx-decode need 2.39; objdump -T on the published tarball, not CI-stamped). The tarball is not signed; SHA256SUMS is its integrity check. Sealed runs (./blocktools build) need a v0.5.0 source checkout and Docker, not just the tarball. No macOS, Windows or ARM binaries yet.",
   ],
   [
     "Does SwapChan see my keys?",

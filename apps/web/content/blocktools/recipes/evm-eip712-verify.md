@@ -19,6 +19,13 @@ A different expected signer is a mismatch (exit 1):
 <!-- e2e: expect=signer_mismatch ; rc=1 -->
     typed-data-verify --signer 0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB recipes/fixtures/evm/eip712-mail-signed.json
 
+The output also shows the domain's `chain_id` and `verifying_contract`. Assert them with `--expect-chain-id N` and
+`--expect-verifying-contract ADDR`; a missing or different value sets status `chain_id_mismatch` or
+`verifying_contract_mismatch` (exit 1), whatever the signature says:
+
+<!-- e2e: expect="status":"verifying_contract_mismatch" ; expect="expected_verifying_contract":"0x1111111111111111111111111111111111111111" ; rc=1 -->
+    typed-data-verify --expect-chain-id 1 --expect-verifying-contract 0x1111111111111111111111111111111111111111 recipes/fixtures/evm/eip712-mail-signed.json
+
 An `eth_signTypedData_v4` request (`{"params": [address, typedData]}`) can be piped in as-is with `--sig`; its address
 becomes the expected signer. Live (UNTESTED here): capture the request a dApp sends and the signature the wallet returns,
 then `typed-data-verify --sig 0x… request.json`.

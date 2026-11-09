@@ -5,9 +5,9 @@ import { BT_ITEMS, type BtItem } from "@/lib/blocktoolsManifest";
 
 /** Vendored from https://github.com/TSavo/blocktools (see content/blocktools/SOURCE). */
 export const BT_REPO = "https://github.com/TSavo/blocktools";
-export const BT_COMMIT = "d98cb51";
+export const BT_COMMIT = "400384d4";
 /** The release this site reviewed and links. Newer releases stay listed on /blocktools/releases. */
-export const BT_TAG = "v0.4.0";
+export const BT_TAG = "v0.5.0";
 export const pinnedRelease = <T extends { tag: string }>(rs: T[]): T | undefined =>
   rs.find((r) => r.tag === BT_TAG);
 const ROOT = path.join(process.cwd(), "content", "blocktools");
@@ -104,8 +104,23 @@ export type Release = {
   assets: Asset[];
 };
 
-/** Measured 2026-10-30 (v0.4.0 entry 2026-11-02) from api.github.com/repos/TSavo/blocktools/releases (fallback if the API is unreachable). */
+/** Measured 2026-10-30 (v0.4.0 entry 2026-11-02; v0.5.0 entry 2026-11-08) from api.github.com/repos/TSavo/blocktools/releases (fallback if the API is unreachable). */
 const FALLBACK: Release[] = [
+  {
+    tag: "v0.5.0",
+    name: "v0.5.0",
+    date: "2026-11-09T02:37:23Z",
+    body: "Linux x86_64 binaries. Verify with: sha256sum -c SHA256SUMS",
+    url: `${BT_REPO}/releases/tag/v0.5.0`,
+    assets: [
+      {
+        name: "blocktools-v0.5.0-linux-x86_64.tar.gz",
+        size: 47215603,
+        url: `${BT_REPO}/releases/download/v0.5.0/blocktools-v0.5.0-linux-x86_64.tar.gz`,
+      },
+      { name: "SHA256SUMS", size: 104, url: `${BT_REPO}/releases/download/v0.5.0/SHA256SUMS` },
+    ],
+  },
   {
     tag: "v0.4.0",
     name: "v0.4.0",

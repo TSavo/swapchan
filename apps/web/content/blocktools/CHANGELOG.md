@@ -7,9 +7,71 @@ Numbers and security statements here are only those registered as measured in do
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-08
+
+Minor release. Highlights:
+- wasm `tronVerifyTx` and 77 exports (was 76) [wasm-export-count], measured at 1572c714.
+- Kusama (`ksm`) and Polymesh (`polyx`) emit a Trust Wallet Core ed25519 row alongside the existing substrate sr25519 row; `dot` stays sr25519-only.
+- `tx-build`, `tx-sign`, and `tx-verify` take `--chain` and exec the existing backends (fail closed where signing or verify is unavailable).
+- Permit spender checks and Seaport order checks on `typed-data-verify` and the wasm `evmTypedDataVerify`.
+- **Behaviour change:** `rpc --allow-wallet-sign` refuses unasserted permits and Seaport orders.
+- BitConnect (`bcc`) archival evidence is preserved; `verified` stays false and signing is not enabled.
+
+### Added
+- Kusama (`ksm`) and Polymesh (`polyx`) emit a Trust Wallet Core ed25519 row (kind `ed25519`) alongside the existing substrate sr25519 row. `key-to-addresses` treats a 32-byte seed as TWC does (tests/chains/{Kusama,Polymesh} FromPrivateKey and CoinAddressDerivationTests.cpp dummy key 0x46×32 at adf80f8). `derive --chain ksm|polyx` (presets `common`, `exhaustive`, `recovery`) walks registry paths `m/44'/434'/0'/0'/0'` and `m/44'/595'/0'/0'/0'` via SLIP-10. Existing sr25519 / subkey addresses are unchanged; `dot` is still sr25519-only.
+- wasm `tronVerifyTx(hex, expectJson)` — the existing `tron::verify_tx` policy (`sol-tron-tx verify --chain tron`). `decodeTx`/`verifyTx` with chain `tron` now route to `tronDecodeTx` / refuse with `tron_use_tronVerifyTx` (same pattern as Solana). 77 exports [wasm-export-count], measured at 1572c714.
+- BitConnect (`bcc`) archival verification of the existing unverified Bitcoin-style fork row (7355ff22, docs/BITCONNECT-VERIFICATION.md). Public mainnet evidence is checked in; `verified` stays false; auto-detect still excludes BCC; `tx-build --chain bcc` still exits 2 (`unverified chain parameters: not supported`). The tests do not add `bcc` to the decoder layout table, POS_SWEEP allowlist, or signer. Signing is not enabled.
+
+### Fixed
+- `key-to-addresses` treated an all-digit 64-hex key as a JSON number and silently skipped it (no `unsupported` line). Only JSON objects are read as `{key|wif|private_key}` now, matching `keys::parse_key_line`.
+- `tx-build`, `tx-sign`, and `tx-verify` take `--chain sol|tron|xrp|xlm|algo|atom|ton|ada|dot|rune` and exec the existing backend (`sol-tron-tx`, `xrp-tx`, `acct-tx`) from the same directory (`blocktools_io::sibling_exit`). `tx-sign --chain sol|tron` fails closed (`signing_not_available`; those backends take no keys). `--chain xmr` fails closed (`xmr_requires_wallet_rpc`; signing stays on host `xmr-wallet`, never pulled into the sealed image). `--chain zec` is unchanged (transparent v5); `zec-sapling` is address derivation, not a tx backend. `tx-verify --chain sol|tron` execs `sol-tron-tx verify`; other delegated chains without a verify backend fail `verify_not_available`. `tx-broadcast` refuses those chains (`broadcast_not_available`). Coverage is listed in `docs/VERB-CHAIN.md` and checked by `scripts/verb-chain-check.py` and `scripts/e2e.d/verb-chain.sh`. No wasm export added.
+- Spender checks for signed permits (EIP-712 typed data), shared by `typed-data-verify` and the wasm
+  `evmTypedDataVerify` (`permit::apply`): EIP-2612, DAI and Permit2 `PermitSingle`, `PermitBatch`,
+  `PermitTransferFrom`, `PermitBatchTransferFrom`, recognised by primaryType and exact field set. New output
+  `permit`, `unlimited_approval`, `spender_unasserted`, `permit_findings`, and `unrecognised_spender_fields` for other
+  shapes. New opt-in `--expect-spender`, `--expect-amount`, `--expect-unlimited` / options `expect_spender`,
+  `expect_amount`, `expect_unlimited`: status `spender_not_expected`, `amount_not_expected`, `unlimited_approval`,
+  `spender_not_checkable`, `amount_not_checkable` (exit 1). An exact-balance drainer permit (below 2^128) is caught
+  by the spender. Without assertions the status is unchanged (advisory fields only). No wasm export added.
+- Seaport order check (`seaport::apply`, shared by `typed-data-verify` and the wasm `evmTypedDataVerify`):
+  `OrderComponents` and `BulkOrder` for Seaport 1.5 and 1.6 at their canonical addresses (ProjectOpenSea/seaport
+  README). New output `seaport` (offer, consideration to the offerer, consideration to others, received per currency,
+  with the smaller of start/end amounts) and advisory `seaport_findings` (zone, zoneHash, conduitKey, restricted or
+  contract order type, criteria items, NFT consideration, far-future endTime, consideration to others). Statuses
+  `seaport_no_consideration`, `seaport_unknown_deployment`, `seaport_not_checkable` and, with the new
+  `--expect-min-consideration SPEC` / option `expect_min_consideration` (`N`, `native:N`, `0xTOKEN:N`),
+  `seaport_dust_consideration` (exit 1). NFT-for-NFT swaps pass and are listed (`nft_consideration`). No wasm export
+  added (seaport-order-check). `BulkOrder` is recognised at every official tree height 1..24 (seaport-js
+  bulk-orders.ts, seaport-core Verifiers.sol), each by its exact `OrderComponents[2]…` type string; every leaf is
+  checked, empty padding leaves are skipped, one drainer leaf fails the whole signature; other shapes stay
+  `seaport_not_checkable`.
+
+### Changed
+- Restamped the claims parked after PR #90 (tronVerifyTx / TWC ksm-polyx ed25519) at green main 1572c714 (CI 42518495268): wasm-export-count, fee-cap-utxo-default, redact-512, msg-ambiguous-address, twc-cosmos-addresses, bch-cashaddr-destinations, twc-ed25519-aptos-sui-near, wasm-verifytx-approval-checks, wasm-typed-data-expect, permit-expect-spender, and seaport-order-check. CI logs and independent local test runs matched; no runtime or signing changes.
+- docs/CHAINS.md: Solana wasm already has unsigned `solBuildTransfer`; removed the stale "No Solana builder yet" line.
+- Restamped sealed image size [image-size-readme], Linux sealed-run [sealed-run-linux], and live Alpine 0.4.0-r0 install [alpine-apk-install-0.4.0] from Battleaxe measurements at 55d8cad1. Restamped evm-devnet-create-call and tx-sign-presign-checks from main CI run 42504158970.
+- **Behaviour change:** `rpc --allow-wallet-sign` now refuses an `eth_signTypedData_v4` permit (EIP-2612, DAI, Permit2)
+  unless `--expect-spender` matches (`wallet_sign_permit_unasserted`, `spender_not_expected`, `amount_not_expected`,
+  `unlimited_approval` unless `--expect-unlimited`), and refuses typed data with spender-like address fields that is
+  not a recognised permit (`wallet_sign_spender_unrecognised`). Nothing is sent when refused. `rpc` now depends on
+  `blocktools-evm` (deps/rpc.allow: blocktools-evm, sha2, cpufeatures).
+- **Behaviour change:** `rpc --allow-wallet-sign` now refuses an `eth_signTypedData_v4` Seaport order
+  (`wallet_sign_seaport_unasserted`) unless `--allow-seaport-order` or `--expect-min-consideration SPEC` is given, and
+  then still refuses `seaport_no_consideration`, `seaport_dust_consideration`, `seaport_unknown_deployment`,
+  `seaport_not_checkable`. Nothing is sent when refused.
+- `docs/COVERAGE.md` lists the `tx-build --chain` overlaps with `sol-tron-tx`, `xrp-tx`, and `acct-tx`.
+- The sealed image Dockerfile copies `fixtures/evm-mainnet`, which `crates/tx/tests/evm_decode.rs` reads.
+- The sealed image Dockerfile copies the `fixtures/` and `recipes/fixtures/` trees (`tools/rpc/tests/cli.rs` permit/seaport tests read `recipes/fixtures/evm`; copying subdirs one at a time kept breaking the image build).
+- docs: the Mac-to-Battleaxe `/in` hand check is no longer described as empty (1572c714). With `BLOCKTOOLS_ALLOW_REMOTE=ssh`, `./in` is streamed via tar-over-`docker exec` (hand check 2026-11-08, not re-run in CI). The macos-remote-context-empty-in claim stays untested (cannot satisfy K-macos).
+
+### Known limitations
+- BitConnect (`bcc`) remains unverified: not a supported chain, auto-detect excludes it, and `tx-build --chain bcc` exits 2 (`unverified chain parameters: not supported`). Signing is not enabled.
+- macos-sealed, recovery-real-lost-wallet, macos-remote-context-empty-in, and chains-fee-figures (still quoting the October sample) remain untested.
+- image-size-readme, sealed-run-linux, and wrapper-remote-refusal are untested on this tree: the wrapper `BLOCKTOOLS_VERSION` bump to 0.5.0 changed a file they depend on. Last measurements were at 55d8cad1 (image-size and sealed-run) and f7b3937 (remote-refusal).
+
 ## [0.4.0] - 2026-11-02
 
-Minor release, not tagged yet. Highlights:
+Minor release, tagged v0.4.0 on 2026-11-03. Highlights:
 - **Behaviour change:** `tx-sign` and the wasm `verifyTx` now refuse unlimited approvals, unasserted batch inner calls
   and Safe delegatecalls by default (see Changed).
 - `msg-verify` and `msg-sign` support Tron signMessageV2, Solana (raw / offchain-v0) and Cosmos ADR-036.

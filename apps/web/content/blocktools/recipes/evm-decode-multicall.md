@@ -45,3 +45,10 @@ calls (no fixture); each inner call is decoded against the signatures you supply
     abi-encode --raw 'multicall(bytes[])' "[\"$(abi-encode --raw 'approve(address,uint256)' 0x000000000022d473030f116ddee9f6b43ac78ba3 1000)\",\"$(abi-encode --raw 'transfer(address,uint256)' 0x264bd8291fae1d75db2c5f573b07faa6715997b5 5050510000)\"]" | abi-decode --sig 'multicall(bytes[])' | jq -r '.args[0].value[]' | while read -r c; do abi-decode --sig 'approve(address,uint256)' --sig 'transfer(address,uint256)' "$c" | jq -c '{signature, args: [.args[].value]}'; done
 
 An inner call with an unknown selector prints `no_match`; look it up with [evm-unknown-selector.md](evm-unknown-selector.md).
+
+To have the batch checked rather than just decoded, `tx-verify` lists every inner call under `inner_calls` and refuses
+the batch until you name each one with `--allow-inner-call TO:SELECTOR` (see "Batches and delegatecall" in
+[evm-check-approval.md](evm-check-approval.md)):
+
+<!-- e2e: expect="inner_calls_not_asserted" ; expect="via":"universal_router" ; expect="selector":"0x0a" ; rc=1 -->
+    tx-build --chain eth --chain-id 1 --nonce 0 --max-fee-per-gas 1000000000 --gas 200000 --to 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af --data $(jq -r .result.input recipes/fixtures/evm-mainnet/02a-swap-tx.json) | tx-verify --chain-id 1 --call 'execute(bytes,bytes[],uint256)'

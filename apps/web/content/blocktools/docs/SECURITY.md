@@ -29,7 +29,21 @@
 * Docker image verification on real hardware is done per release step only.
 * Terminal confirmation is NOT proof of a human: any process that can spawn a pty can type the
   code (see "Terminal confirmation: residual risk" below). Terminal pinning narrows it; it doesn't close it.
-* Signing / broadcasting tools are tested only against fixtures and a mock server.
+* Signing / broadcasting evidence is chain-specific; see [CHAINS.md](CHAINS.md) for real-node runs
+  and untested limits, and [CLAIMS.md](CLAIMS.md) for measured claims. Do not generalize a run to other chains.
+* A hostile endpoint can force the unknown-fee path. `rpc sendraw` looks up previous transactions at the
+  endpoint it is about to broadcast to; each answer must hash to the txid the input names, so the endpoint
+  can't fake an input value, but it can answer "not found". The summary then shows the FEE UNKNOWN banner
+  and wants `ACK FEE-UNKNOWN`. Don't type it for an endpoint you don't trust: pass `--prevtxs FILE` built
+  elsewhere, or broadcast the tx-sign JSON with `tx-broadcast`, which carries the input values.
+  `tx-broadcast` given bare signed UTXO hex (no input values) shows the same banner and wants the same ACK.
+* The macOS sealed path is unverified. The macos CI job runs the tools natively, not sealed (README).
+* Release assets are Linux x86_64 only; other platforms build from source. Each measurement
+  in [CLAIMS.md](CLAIMS.md) names its platform; a native run does not validate a sealed run.
+* CI runners hold the host Docker socket (docs/CI.md). A job that runs on them can control the host's Docker,
+  so a workflow change is trusted like host access. Fork pull requests run on GitHub-hosted runners instead.
+* `utxo-set` / `wallet-finder` answer "funded" only against the dump you give them. The dump's age and
+  origin are yours to trust: they don't check a dump against a node, and funds moved after it was taken are not seen.
 * Old git history (commit 360a78e) contains throwaway test wallet files (public
   phrases, no value); history is deliberately not rewritten.
 
@@ -108,7 +122,7 @@ dictionary oracle for a low-entropy password. Tests: `rejects_xrp_seed_minikey_s
 
 GitHub Actions are pinned by commit SHA; release publishing is a separate job in the `release` environment
 (the `release` environment must allow deployments only from `v*` tags; `scripts/release-env-check.sh` refuses to publish otherwise, no manual approval since 2026-10-26). `check-deps.sh`
-runs with `LC_ALL=C` and reads members from `cargo metadata --locked`. The 28 Python wheels (23.8 MB) once (unmeasured)
+runs with `LC_ALL=C` and reads members from `cargo metadata --locked`. The Python wheels once (unmeasured)
 committed at the repo root are removed going forward and `*.whl` is ignored; they remain in git history
 (no rewrite). `scripts/hygiene-check.sh` (gate and CI) fails on unpinned actions or tracked build artifacts.
 
@@ -117,7 +131,7 @@ committed at the repo root are removed going forward and `*.whl` is ignored; the
 `scripts/docs-check.sh` (gate and CI) fails if a tool under `tools/` is undocumented, a built tool is called
 "planned", a hand-written test count appears in README/DESIGN/SECURITY, a host-side network tool
 (rpc, utxo-fetch, tx-broadcast, xmr-wallet) is in crates/io/sealed-tools.txt (the sealed-run allowlist and the image ship list), or in-tree scrypt
-reappears undisclosed. `scripts/e2e-local.sh` is part of the Linux gate; macOS (untested) is run by the macos CI job: `scripts/e2e-only/portable.sh`
+reappears undisclosed. `scripts/e2e-local.sh` is part of the Linux gate; macOS is run by the blocking macos CI job (docs/CI.md, Platforms): `scripts/e2e-only/portable.sh`
 replaces `setsid` (Python `os.setsid` fallback) and `stat -c` (BSD `stat -f`); checks whose fixtures need
 the Python `cryptography` module (dat-read, recover, bitcoinj) print `skip ... pip install cryptography`
 instead of failing. Each e2e.d script now runs in its own subshell, so one script's skip no longer ends the suite.

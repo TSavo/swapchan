@@ -93,7 +93,7 @@ export const BT_ITEMS: BtItem[] = [
     file: "docs/getting-started.md",
     title: "Getting started",
     description:
-      "Getting started with blocktools: install from the v0.4.0 release or from source, then your first sealed run on public test data.",
+      "Getting started with blocktools: install from the v0.5.0 release or from source, then your first sealed run on public test data.",
   },
   {
     kind: "docs",
@@ -142,7 +142,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "bolt11",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/bolt11.md",
     title: "Inspect a BOLT11 Lightning invoice",
     description:
@@ -151,7 +151,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-algorand",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-algorand.md",
     title: "Algorand",
     description:
@@ -160,7 +160,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-bitcoin",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-bitcoin.md",
     title: "Bitcoin",
     description:
@@ -169,7 +169,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-bitconnect",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-bitconnect.md",
     title: "BitConnect (BCC), an old coin as a worked example",
     description:
@@ -178,7 +178,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-cardano",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-cardano.md",
     title: "Cardano",
     description:
@@ -187,7 +187,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-cosmos",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-cosmos.md",
     title: "Cosmos Hub",
     description:
@@ -196,7 +196,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-ethereum",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-ethereum.md",
     title: "Ethereum (and EVM chains via --chain-id)",
     description:
@@ -205,7 +205,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-groestlcoin",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-groestlcoin.md",
     title: "Groestlcoin",
     description:
@@ -214,7 +214,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-litecoin-dogecoin",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-litecoin-dogecoin.md",
     title: "Litecoin and Dogecoin",
     description:
@@ -223,7 +223,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-old-coins",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-old-coins.md",
     title: "Old coins (Peercoin, Namecoin, Feathercoin, Novacoin, Clams, BlackCoin, ReddCoin, ...)",
     description:
@@ -232,7 +232,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-polkadot",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-polkadot.md",
     title: "Polkadot",
     description:
@@ -241,7 +241,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-qtum",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-qtum.md",
     title: "Qtum",
     description:
@@ -250,7 +250,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-solana",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-solana.md",
     title: "Solana",
     description:
@@ -259,7 +259,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-stellar",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-stellar.md",
     title: "Stellar",
     description:
@@ -268,7 +268,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-thorchain",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-thorchain.md",
     title: "THORChain (RUNE)",
     description:
@@ -277,7 +277,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-ton",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-ton.md",
     title: "TON",
     description:
@@ -286,7 +286,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-tron",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-tron.md",
     title: "Tron",
     description:
@@ -295,7 +295,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "chain-zcash-transparent",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/chain-zcash-transparent.md",
     title: "Zcash transparent (t1…)",
     description:
@@ -304,7 +304,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "decode-a-transaction",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/decode-a-transaction.md",
     title: "Decode a transaction before you sign or broadcast it",
     description:
@@ -313,7 +313,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "derive",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/derive.md",
     title: "Find which derivation path a wallet used",
     description:
@@ -322,7 +322,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-check-approval",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-check-approval.md",
     title: "EVM: check an ERC-20 approve or permit before signing",
     description:
@@ -331,7 +331,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-check-proxy-delegation",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-check-proxy-delegation.md",
     title: "EVM: check an EIP-1167 proxy or EIP-7702 delegation before interacting",
     description:
@@ -340,7 +340,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-contract-address",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-contract-address.md",
     title: "EVM: compute a CREATE or CREATE2 address",
     description:
@@ -349,7 +349,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-contract-data",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-contract-data.md",
     title: "EVM contract recipes: index",
     description:
@@ -358,7 +358,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-contract-tx",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-contract-tx.md",
     title: "EVM contract calls and contract creation: build, verify, sign, broadcast",
     description:
@@ -367,7 +367,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-decode-calldata",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-decode-calldata.md",
     title: "EVM: decode a transaction's calldata (and encode it back)",
     description:
@@ -376,7 +376,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-decode-logs",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-decode-logs.md",
     title: "EVM: decode event logs",
     description:
@@ -385,7 +385,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-decode-multicall",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-decode-multicall.md",
     title: "EVM: decode a multicall or a Universal Router execute",
     description:
@@ -394,7 +394,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-decode-revert",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-decode-revert.md",
     title: "EVM: decode a revert",
     description:
@@ -403,7 +403,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-eip712-verify",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-eip712-verify.md",
     title: "EVM: check an EIP-712 signature and digest",
     description:
@@ -412,7 +412,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-eth-call",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-eth-call.md",
     title: "EVM: run an eth_call and decode the return",
     description:
@@ -421,7 +421,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-inspect-contract",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-inspect-contract.md",
     title: "EVM: inspect a deployed contract (code, ABI, selectors, sources)",
     description:
@@ -430,7 +430,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-permit2-signing-request",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-permit2-signing-request.md",
     title: "EVM: what a Permit2 signing request commits to, verified offline",
     description:
@@ -439,7 +439,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-tx-end-to-end",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-tx-end-to-end.md",
     title: "EVM: from a tx hash to the decoded call, logs and revert",
     description:
@@ -448,7 +448,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "evm-unknown-selector",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/evm-unknown-selector.md",
     title: "EVM: look up an unknown selector",
     description:
@@ -457,7 +457,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "goal-check-balance",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/goal-check-balance.md",
     title: "Check whether anything is left (balance only, nothing signed)",
     description:
@@ -466,7 +466,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "goal-find-funded-phrase",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/goal-find-funded-phrase.md",
     title: "Find which of your phrases still holds coins (offline UTXO set)",
     description:
@@ -475,7 +475,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "goal-make-a-wallet",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/goal-make-a-wallet.md",
     title: "Make a new wallet",
     description:
@@ -484,7 +484,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "goal-sweep",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/goal-sweep.md",
     title: "Move everything to a new address (sweep)",
     description:
@@ -493,7 +493,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "goal-verify-and-offline",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/goal-verify-and-offline.md",
     title: "Verify before signing, and sign on an offline machine",
     description: "The online machine has addresses only. The offline machine has the keys.",
@@ -501,7 +501,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-armory",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-armory.md",
     title: "Armory .wallet",
     description:
@@ -510,7 +510,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-brainwallet",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-brainwallet.md",
     title: 'A brainwallet phrase (pre-BIP39 "passphrase -> key")',
     description:
@@ -519,7 +519,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-electrum",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-electrum.md",
     title: "Electrum (seed phrase or wallet file)",
     description:
@@ -528,7 +528,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-keystore",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-keystore.md",
     title: "Ethereum keystore JSON (UTC--... file, MyEtherWallet, Geth)",
     description:
@@ -537,7 +537,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-multibit",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-multibit.md",
     title: "MultiBit Classic .key export",
     description: "Password in secrets/multibit.pw. Test file: the btcrecover MultiBit fixture.",
@@ -545,7 +545,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-raw-key",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-raw-key.md",
     title: "A raw private key (hex, WIF, base58, base64)",
     description:
@@ -554,7 +554,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-seed-phrase",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-seed-phrase.md",
     title: "A BIP39 seed phrase (12–24 words), possibly with typos",
     description:
@@ -563,7 +563,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-unknown",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-unknown.md",
     title: '"I don\'t know what this is"',
     description:
@@ -572,7 +572,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-wallet-dat",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-wallet-dat.md",
     title: "Bitcoin Core wallet.dat (and old-coin clients built on Bitcoin Core)",
     description:
@@ -581,7 +581,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-xprv",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-xprv.md",
     title: "A BIP32 master private key (xprv)",
     description:
@@ -590,7 +590,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "input-xpub-address",
-    group: "input",
+    group: "swapchan",
     file: "recipes/input-xpub-address.md",
     title: "An xpub/ypub/zpub or a bare address (watch-only)",
     description:
@@ -599,7 +599,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "monero",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/monero.md",
     title: "Monero",
     description:
@@ -607,8 +607,17 @@ export const BT_ITEMS: BtItem[] = [
   },
   {
     kind: "recipes",
+    slug: "msg-verify",
+    group: "swapchan",
+    file: "recipes/msg-verify.md",
+    title: "Check a signed message (proof of control) on Ethereum, Bitcoin, Tron, Solana or Cosmos",
+    description:
+      "msg-verify checks that a signature over a text message was made by the key behind an address. It reads no keys. The chain comes from the address;…",
+  },
+  {
+    kind: "recipes",
     slug: "multisig",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/multisig.md",
     title: "M-of-n multisig: build, carry into a Plan, each cosigner partial-signs, combine",
     description:
@@ -617,7 +626,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "offline-recovery-guide",
-    group: "goal",
+    group: "swapchan",
     file: "recipes/offline-recovery-guide.md",
     title: "Offline recovery guide (seed phrase or private key → addresses)",
     description:
@@ -626,7 +635,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "rpc-decode",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/rpc-decode.md",
     title: "Fetch a transaction from your node and decode it (rpc | tx-decode)",
     description:
@@ -634,8 +643,16 @@ export const BT_ITEMS: BtItem[] = [
   },
   {
     kind: "recipes",
+    slug: "siwe",
+    group: "swapchan",
+    file: "recipes/siwe.md",
+    title: "Build or check a Sign-In with Ethereum (EIP-4361) message",
+    description: "siwe is a stdin/stdout filter. It reads no keys and makes no signatures.",
+  },
+  {
+    kind: "recipes",
     slug: "thorchain-swap-evm",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/thorchain-swap-evm.md",
     title: "Cross-chain swap: send an EVM token into THORChain (router depositWithExpiry)",
     description:
@@ -644,7 +661,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "thorchain-swap-utxo",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/thorchain-swap-utxo.md",
     title: "Cross-chain swap: send a UTXO coin into THORChain (OP_RETURN memo)",
     description:
@@ -653,7 +670,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "thorchain-thorname",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/thorchain-thorname.md",
     title: "THORName: register and manage an affiliate name on THORChain",
     description:
@@ -662,7 +679,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "xrp",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/xrp.md",
     title: "XRP Ledger: family seed / key -> address -> sweep Payment",
     description:
@@ -671,7 +688,7 @@ export const BT_ITEMS: BtItem[] = [
   {
     kind: "recipes",
     slug: "zcash-shielded",
-    group: "chain",
+    group: "swapchan",
     file: "recipes/zcash-shielded.md",
     title: "Zcash shielded (Sapling) from a BIP39 mnemonic",
     description:
@@ -709,6 +726,10 @@ export const BT_TOOLS: { name: string; desc: string }[] = [
   },
   { name: "blocktools", desc: "host wrapper that runs a pipeline in the sealed container" },
   {
+    name: "bolt11",
+    desc: "decode a BOLT11 Lightning invoice and (via the library) re-encode it byte-identically",
+  },
+  {
     name: "bytecode-inspect",
     desc: "classify runtime bytecode (EIP-1167 proxy, EIP-7702 delegation, EOF, plain code),",
   },
@@ -716,7 +737,19 @@ export const BT_TOOLS: { name: string; desc: string }[] = [
     name: "chain-table",
     desc: "print the chain registry (crates/core chains.rs) as data, one JSON object per",
   },
+  {
+    name: "chainstate-dump",
+    desc: "stream the UTXO set straight out of a Core-family node's `chainstate/` LevelDB",
+  },
   { name: "classify", desc: "unknown wallet material -> public JSON lines, one per item:" },
+  {
+    name: "contract-call",
+    desc: "read EVM contract state with eth_call and decode the return data (HOST-SIDE, network)",
+  },
+  {
+    name: "contract-trace",
+    desc: "simulate an EVM call with state overrides, or trace it with debug_traceCall (HOST-SIDE, network)",
+  },
   {
     name: "create-address",
     desc: "contract address from CREATE (deployer, nonce) or CREATE2 (EIP-1014: deployer, salt, init code), offline",
@@ -734,7 +767,14 @@ export const BT_TOOLS: { name: string; desc: string }[] = [
     name: "key-to-addresses",
     desc: "one raw 32-byte private key per line -> addresses on every chain in the",
   },
-  { name: "keystore-open", desc: "Ethereum Web3 Secret Storage v3 JSON + password -> address" },
+  {
+    name: "keystore-open",
+    desc: "Ethereum Web3 Secret Storage v3 or presale (pyethsaletool) JSON + password -> address",
+  },
+  {
+    name: "log-decode",
+    desc: "decode EVM event logs (topics + data) against event signatures you bring, offline",
+  },
   {
     name: "msg-sign",
     desc: "sign ONE text message after a human reads it and types a code on /dev/tty",
@@ -744,6 +784,11 @@ export const BT_TOOLS: { name: string; desc: string }[] = [
     name: "multibit-read",
     desc: "MultiBit Classic .key export, bitcoinj/MultiBit Classic `.wallet` protobuf, or",
   },
+  {
+    name: "multisig",
+    desc: "build an m-of-n P2WSH witness script + address from compressed pubkeys. Offline, no keys",
+  },
+  { name: "new-seed", desc: "generate a fresh BIP39 mnemonic (keygen). No stdin" },
   {
     name: "phrase-to-key",
     desc: "pre-BIP39 brainwallet phrase -> raw 32-byte private key, one line per scheme",
@@ -769,9 +814,18 @@ export const BT_TOOLS: { name: string; desc: string }[] = [
     name: "sig-hash",
     desc: "Solidity function/event/error selector and topic hash, plus reverse lookup against a file you supply",
   },
+  { name: "signum-account", desc: "signum-account < passphrase" },
+  {
+    name: "siwe",
+    desc: "EIP-4361 Sign-In with Ethereum messages, as a stdin/stdout filter. No keys, no signatures (CLI only, no wasm export)",
+  },
   {
     name: "sol-tron-tx",
     desc: "build unsigned, decode and verify Solana and Tron transfers. The chain is detected",
+  },
+  {
+    name: "taproot-multisig",
+    desc: "build a script-path m-of-n (BIP341/342 tapscript CHECKSIGADD) committed under the",
   },
   {
     name: "tx-broadcast",
@@ -782,12 +836,20 @@ export const BT_TOOLS: { name: string; desc: string }[] = [
     desc: "build an UNSIGNED transaction offline from files and flags. Never touches the network",
   },
   {
+    name: "tx-combine",
+    desc: "merge the partial-signature PSBTs of an m-of-n multisig (each produced by",
+  },
+  {
     name: "tx-decode",
     desc: "one transaction on stdin (hex/base64 raw tx, PSBT, EVM RLP, or a JSON line with",
   },
   {
     name: "tx-envelope",
     desc: "common signing envelope (public half). Reads one JSON object from stdin",
+  },
+  {
+    name: "tx-plan",
+    desc: "build a declarative transaction Plan (RFC #15) step by step and resolve it to unsigned bytes",
   },
   {
     name: "tx-sign",
@@ -806,6 +868,14 @@ export const BT_TOOLS: { name: string; desc: string }[] = [
     desc: "utxo-fetch (HOST-SIDE, network): public chain data for addresses -> files tx-build reads",
   },
   {
+    name: "utxo-set",
+    desc: "load a Bitcoin Core `dumptxoutset` file into RAM (exact set of funded output scripts,",
+  },
+  {
+    name: "wallet-finder",
+    desc: "turn text you own (old notes, a diary, a password list) into brainwallet candidates,",
+  },
+  {
     name: "xmr-keys",
     desc: "xmr-keys [--net main|stage|test] [--scan-out FILE [--restore-height N]] < seed",
   },
@@ -819,7 +889,7 @@ export const BT_TOOLS: { name: string; desc: string }[] = [
   },
   {
     name: "xrp-tx",
-    desc: 'xrp-tx keys < family-seed -> {"chain":"xrp","algo","address","x_address","public"} (public only)',
+    desc: 'xrp-tx keys   < family-seed                       -> {"chain":"xrp","algo","address","x_address","public"} (public only)',
   },
   {
     name: "zec-sapling",
