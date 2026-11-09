@@ -46,6 +46,11 @@ only candidates that pass. A phrase with no passing candidate ends with `done` a
 `seed-repair` and the address planner: no candidate fits the input. Check the words or the address
 for typos. Allowing more changed words widens the search. Not run here.
 
+### `not_found`
+`wallet-finder`: no candidate from your text derives a funded address in the UTXO set you gave it
+(exit 1, like `grep`). Try `--rules`, a wider `--window`, or the other `--scheme`. Run in the man page
+example and in scripts/e2e.d/utxo-real.sh.
+
 ### `too_many_candidates`
 The search space is larger than the cap. Narrow it down: fix the words you are sure of, give the
 known address, or reduce the number of edits allowed. Not run here.
@@ -158,9 +163,117 @@ tx-sign --tx "$FX/evm-legacy-no-chain-id.hex" --chain-id 1 --expect-to "$EVM_TO"
 The calldata calls a known token function that is not `transfer` (here, an unlimited `approve`).
 Approvals let someone else spend your tokens. Do not sign unless you set it up yourself.
 
-<!-- run rc=1 expect=token_call_not_transfer,unlimited_approve -->
+<!-- run rc=1 expect=token_call_not_transfer,unlimited_approve,unlimited_approval -->
 ```sh
 tx-verify --chain-id 1 --expect-to "$EVM_TO" < "$FX/evm-approve.hex"
+```
+
+### `unlimited_approval`
+The calldata approves 2^128 or more tokens, or all of them (`setApprovalForAll(true)`, DAI `permit` with
+`allowed=true`). Do not sign unless you meant it; to accept it, assert both `--expect-spender ADDR --expect-unlimited`.
+
+<!-- run rc=1 expect=unlimited_approval,token_call_not_transfer -->
+```sh
+tx-verify --chain-id 1 --expect-to "$EVM_TO" < "$FX/evm-approve.hex"
+```
+
+`tx-sign` runs the same check before it reads a key (nothing is signed):
+
+<!-- run rc=1 expect=unlimited_approval,refused -->
+```sh
+tx-sign --tx "$FX/evm-approve.hex" --chain-id 1 --expect-to "$EVM_TO" < "$FX/key2"
+```
+
+### `spender_not_expected`
+A decoded approval names a different spender than `--expect-spender`.
+`typed-data-verify --expect-spender` (and the wasm `evmTypedDataVerify` option `expect_spender`) gives the same status
+for a signed permit (EIP-2612, DAI, Permit2): a permit for exactly your balance is below 2^128, so only the spender
+catches a drainer. Typed data that is not a recognised permit gives `spender_not_checkable` / `amount_not_checkable`.
+
+<!-- run rc=1 expect=spender_not_expected -->
+```sh
+tx-verify --chain-id 1 --expect-to "$EVM_TO" --expect-spender 0x1111111111111111111111111111111111111111 --expect-unlimited < "$FX/evm-approve.hex"
+```
+
+### `amount_not_expected`
+A decoded approval or transfer amount differs from `--expect-amount` (or is not unlimited under `--expect-unlimited`).
+
+<!-- run rc=1 expect=amount_not_expected -->
+```sh
+tx-verify --chain-id 1 --expect-to "$EVM_TO" --expect-spender "$EVM_TO" --expect-amount 1 < "$FX/evm-approve.hex"
+```
+
+### `recipient_not_expected`
+A decoded `transfer`/`transferFrom` sends to a different address than `--expect-recipient`.
+
+<!-- run rc=1 expect=recipient_not_expected -->
+```sh
+tx-build --chain eth --chain-id 1 --nonce 0 --max-fee-per-gas 1000000000 --gas 200000 --to 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --data $(abi-encode --raw 'transfer(address,uint256)' 0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF 5) | tx-verify --chain-id 1 --expect-recipient 0x1111111111111111111111111111111111111111
+```
+
+### `value_not_expected`
+The native value (wei) differs from `--expect-value`.
+
+<!-- run rc=1 expect=value_not_expected -->
+```sh
+tx-verify --chain-id 1 --expect-to "$EVM_TO" --expect-value 1 < "$FX/evm-transfer.hex"
+```
+
+### `spender_not_checkable`
+`--expect-spender` was given but the transaction has no approval to compare it with.
+
+<!-- run rc=1 expect=spender_not_checkable -->
+```sh
+tx-verify --chain-id 1 --expect-to "$EVM_TO" --expect-spender 0x1111111111111111111111111111111111111111 < "$FX/evm-transfer.hex"
+```
+
+### `amount_not_checkable`
+`--expect-amount` was given but the transaction has no approval or token transfer to compare it with.
+
+<!-- run rc=1 expect=amount_not_checkable -->
+```sh
+tx-verify --chain-id 1 --expect-to "$EVM_TO" --expect-amount 1 < "$FX/evm-transfer.hex"
+```
+
+### `recipient_not_checkable`
+`--expect-recipient` was given but the transaction has no token transfer to compare it with.
+
+<!-- run rc=1 expect=recipient_not_checkable -->
+```sh
+tx-verify --chain-id 1 --expect-to "$EVM_TO" --expect-recipient 0x1111111111111111111111111111111111111111 < "$FX/evm-transfer.hex"
+```
+
+### `inner_calls_not_asserted`
+A batch (multicall, Multicall3, Universal Router, Safe, multiSend) has an inner call you did not name with
+`--allow-inner-call TO:SELECTOR`. Read `inner_calls` in the output before you name anything.
+
+<!-- run rc=1 expect=inner_calls_not_asserted -->
+```sh
+tx-build --chain eth --chain-id 1 --nonce 0 --max-fee-per-gas 1000000000 --gas 200000 --to 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --data $(abi-encode --raw 'multicall(bytes[])' '["0xa9059cbb00"]') | tx-verify --chain-id 1 --call 'multicall(bytes[])'
+```
+
+`tx-sign` refuses the same batch before it reads a key:
+
+<!-- run rc=1 expect=inner_calls_not_asserted,refused -->
+```sh
+tx-build --chain eth --chain-id 1 --nonce 0 --max-fee-per-gas 1000000000 --gas 200000 --to 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --data $(abi-encode --raw 'multicall(bytes[])' '["0xa9059cbb00"]') > mc.json; tx-sign --tx mc.json --chain-id 1 --expect-to 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --call 'multicall(bytes[])' < "$FX/key2"
+```
+
+### `delegatecall`
+A Safe call with `operation = 1` runs another contract's code with the Safe's storage and funds. Refused unless
+`--allow-delegatecall TO` names that target.
+
+<!-- run rc=1 expect=delegatecall -->
+```sh
+tx-build --chain eth --chain-id 1 --nonce 0 --max-fee-per-gas 1000000000 --gas 200000 --to 0x5555555555555555555555555555555555555555 --data $(abi-encode --raw 'execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)' 0x40A2aCCbd92BCA938b02010E17A5b8929b49130D 0 0x8d80ff0a 1 0 0 0 0x0000000000000000000000000000000000000000 0x0000000000000000000000000000000000000000 0x) | tx-verify --chain-id 1
+```
+
+### `bad_inner_calldata`
+A batch's inner calls do not decode strictly (here a truncated Safe `multiSend` payload). Do not sign it.
+
+<!-- run rc=1 expect=bad_inner_calldata -->
+```sh
+tx-build --chain eth --chain-id 1 --nonce 0 --max-fee-per-gas 1000000000 --gas 200000 --to 0x40A2aCCbd92BCA938b02010E17A5b8929b49130D --data $(abi-encode --raw 'multiSend(bytes)' 0x00aaaa) | tx-verify --chain-id 1
 ```
 
 ### `unknown_contract_call`
@@ -169,6 +282,17 @@ The calldata is not a recognised call. blocktools cannot tell what it does. Do n
 <!-- run rc=1 expect=unknown_contract_call,unknown_calldata -->
 ```sh
 tx-verify --chain-id 1 --expect-to "$EVM_TO" < "$FX/evm-unknown-call.hex"
+```
+
+Calldata with bytes appended after the call (an ERC-2771 sender, a referral tag, an extra word) is refused the
+same way, even with a matching `--call`: the strict decoder rejects trailing bytes (`call.status` is `bad_calldata`),
+so the transfer is not recognised and its recipient is not checked. tx-verify has no flag to accept a suffix. To
+proceed, inspect the bytes yourself with `abi-decode --allow-trailing` (see [ABI-STRICT.md](ABI-STRICT.md)), then
+sign only calldata without the suffix, or decide outside blocktools.
+
+<!-- run rc=1 expect=bad_calldata,unknown_contract_call,destination_not_expected -->
+```sh
+tx-build --chain eth --chain-id 1 --nonce 0 --max-fee-per-gas 1000000000 --gas 200000 --to 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --data $(abi-encode --raw 'transfer(address,uint256)' "$EVM_TO" 1000)2222222222222222222222222222222222222222 | tx-verify --chain-id 1 --expect-to "$EVM_TO" --call 'transfer(address,uint256)'
 ```
 
 ### `eth_value_with_token_call`
@@ -282,6 +406,16 @@ printf '%064x\n' 1 | msg-sign --address bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3
 printf '%064x\n' 1 | msg-sign --address 19cAJn4Ms8jodBBGtroBNNpCZiHAWGAq7X --message hi
 ```
 
+<!-- run rc=1 expect=solana_format_required -->
+```sh
+printf '%064x\n' 1 | msg-sign --address H3imdwa5VQMB5V6yBNyrWwPdSKs4k9Pcpsu4diogoAcg --message hi
+```
+
+<!-- run rc=1 expect=blind_hash_message -->
+```sh
+printf '%064x\n' 1 | msg-sign --address TWWb9EjUWai17YEVB7FR8hreupYJKG9sMR --message c0a96273d5c3fbe4d4000491f08daef9c17f88df846c1d6f57eb5f33c1fbd035
+```
+
 <!-- run rc=2 expect=address_not_p2pkh -->
 ```sh
 msg-verify --address bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4 --message hi --sig AA==
@@ -295,4 +429,14 @@ printf '%064x' 1 | acct-tx keys --chain atom --hrp canto
 <!-- run rc=1 expect=cosmos_hrp_without_vector -->
 ```sh
 acct-tx build --chain atom --from canto1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqgfwgkv --pubkey 0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798 --to canto1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqgfwgkv --amount 1 --fee 1 --gas 1 --sequence 0 --account-number 1
+```
+
+<!-- run rc=1 expect=bad_header -->
+```sh
+printf 'hello' | siwe parse
+```
+
+<!-- run rc=2 expect=missing chainId -->
+```sh
+printf '{"domain":"a"}' | siwe build
 ```

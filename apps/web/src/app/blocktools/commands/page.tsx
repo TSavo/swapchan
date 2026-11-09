@@ -7,7 +7,7 @@ import { BT_TOOLS } from "@/lib/blocktoolsManifest";
 export const metadata = btMeta(
   "/blocktools/commands",
   "blocktools commands reference",
-  "blocktools man(1) pages (58 in v0.4.0, including the blocktools wrapper and recover.sh) with their man page summaries: wallet readers, address derivation, transaction build, verify, sign and broadcast, contract tools and pipeline plumbing.",
+  "blocktools man(1) pages (58 in v0.5.0, including the blocktools wrapper and recover.sh) with their man page summaries: wallet readers, address derivation, transaction build, verify, sign and broadcast, contract tools and pipeline plumbing.",
 );
 
 export default function Commands() {
@@ -18,7 +18,7 @@ export default function Commands() {
       title="Commands"
       lead={
         <p>
-          {BT_GROUPS.reduce((n, g) => n + g.tools.length, 0)} of the 58 man(1) pages in v0.4.0,
+          {BT_GROUPS.reduce((n, g) => n + g.tools.length, 0)} of the 58 man(1) pages in v0.5.0,
           grouped by job (<code>man blocktools</code> lists them all). Summaries are the man
           pages&apos; NAME lines.
         </p>

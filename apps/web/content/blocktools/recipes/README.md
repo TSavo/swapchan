@@ -80,7 +80,7 @@ and see addresses and signed transactions only.
 | Tx hash → decoded call, logs and revert, end to end | [evm-tx-end-to-end.md](evm-tx-end-to-end.md) | run in CI against a mock RPC; live node untested; tracing a mined tx NOT BUILT |
 | What a Permit2 signing request commits to, verified offline | [evm-permit2-signing-request.md](evm-permit2-signing-request.md) | run in CI on a real mainnet permit |
 | Check an EIP-1167 proxy or EIP-7702 delegation before interacting (`bytecode-inspect`) | [evm-check-proxy-delegation.md](evm-check-proxy-delegation.md) | run in CI; storage-slot proxies NOT BUILT |
-| Build, verify, sign and broadcast a contract call or a deployment (`tx-build --data/--create` → `tx-verify` → `tx-sign`) | [evm-contract-tx.md](evm-contract-tx.md) | build, verify, sign and broadcast covered by e2e against a mock that does not execute the EVM; the real-geth devnet script is untested |
+| Build, verify, sign and broadcast a contract call or a deployment (`tx-build --data/--create` → `tx-verify` → `tx-sign`) | [evm-contract-tx.md](evm-contract-tx.md) | build, verify, sign and broadcast covered by mock e2e and the measured real-geth devnet (`scripts/e2e.d/evm-devnet.sh`; claim `evm-devnet-create-call`), not a mainnet hand-off test |
 
 ## Cross-chain swaps (THORChain)
 
@@ -100,6 +100,8 @@ and see addresses and signed transactions only.
 | Fetch a tx from your bitcoind and decode it, fee included (`rpc \| tx-decode`) | [rpc-decode.md](rpc-decode.md) |
 | m-of-n multisig: build, carry into a Plan, each cosigner partial-signs, combine (P2WSH and Taproot script-path) | [multisig.md](multisig.md) |
 | Inspect a BOLT11 Lightning invoice (decode fields + recovered payee, re-encode) | [bolt11.md](bolt11.md) |
+| Check a signed message (proof of control) on Ethereum, Bitcoin, Tron, Solana or Cosmos | [msg-verify.md](msg-verify.md) |
+| Build or check a Sign-In with Ethereum (EIP-4361) message | [siwe.md](siwe.md) |
 
 Fee warnings (`high_fee`, `high_fee_rate`) use per-coin limits from measured mainnet fee rates (docs/CHAINS.md "Fee-warning limits").
 | Verify, and sign on an offline machine | [goal-verify-and-offline.md](goal-verify-and-offline.md) |
@@ -133,6 +135,12 @@ Worldcoin (wdc) txs decode as Bitcoin-legacy (mainnet-checked) but wdc remains u
 
 Sweep is automated for btc/ltc/doge/eth. For any other `--chain`, recover.sh prints the addresses, exits 3 and names
 the builder (acct-tx, xrp-tx, or tx-build from a UTXO list) and the recipe.
+
+The direct backend commands in these recipes remain valid. `tx-build --chain C` and
+`tx-sign --chain C` also hand off to the account/XRP backends; Solana/Tron support
+`tx-build --chain sol|tron` and `tx-verify --chain sol|tron`, but not signing or broadcast.
+Do not assume the Bitcoin/EVM build → verify → sign → broadcast pipeline works for every chain:
+see [VERB-CHAIN.md](../docs/VERB-CHAIN.md) for the supported steps and backend-specific flags.
 
 
 Legacy (non-segwit) inputs: UTXO lists need `prev_tx` (utxo-fetch adds it; recipe fixtures are synthetic). See docs/SECURITY.md.

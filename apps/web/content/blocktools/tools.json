@@ -32,6 +32,10 @@
   "desc": "host wrapper that runs a pipeline in the sealed container"
  },
  {
+  "name": "bolt11",
+  "desc": "decode a BOLT11 Lightning invoice and (via the library) re-encode it byte-identically"
+ },
+ {
   "name": "bytecode-inspect",
   "desc": "classify runtime bytecode (EIP-1167 proxy, EIP-7702 delegation, EOF, plain code),"
  },
@@ -40,8 +44,20 @@
   "desc": "print the chain registry (crates/core chains.rs) as data, one JSON object per"
  },
  {
+  "name": "chainstate-dump",
+  "desc": "stream the UTXO set straight out of a Core-family node's `chainstate/` LevelDB"
+ },
+ {
   "name": "classify",
   "desc": "unknown wallet material -> public JSON lines, one per item:"
+ },
+ {
+  "name": "contract-call",
+  "desc": "read EVM contract state with eth_call and decode the return data (HOST-SIDE, network)"
+ },
+ {
+  "name": "contract-trace",
+  "desc": "simulate an EVM call with state overrides, or trace it with debug_traceCall (HOST-SIDE, network)"
  },
  {
   "name": "create-address",
@@ -65,7 +81,11 @@
  },
  {
   "name": "keystore-open",
-  "desc": "Ethereum Web3 Secret Storage v3 JSON + password -> address"
+  "desc": "Ethereum Web3 Secret Storage v3 or presale (pyethsaletool) JSON + password -> address"
+ },
+ {
+  "name": "log-decode",
+  "desc": "decode EVM event logs (topics + data) against event signatures you bring, offline"
  },
  {
   "name": "msg-sign",
@@ -78,6 +98,14 @@
  {
   "name": "multibit-read",
   "desc": "MultiBit Classic .key export, bitcoinj/MultiBit Classic `.wallet` protobuf, or"
+ },
+ {
+  "name": "multisig",
+  "desc": "build an m-of-n P2WSH witness script + address from compressed pubkeys. Offline, no keys"
+ },
+ {
+  "name": "new-seed",
+  "desc": "generate a fresh BIP39 mnemonic (keygen). No stdin"
  },
  {
   "name": "phrase-to-key",
@@ -120,12 +148,20 @@
   "desc": "Solidity function/event/error selector and topic hash, plus reverse lookup against a file you supply"
  },
  {
+  "name": "signum-account",
+  "desc": "signum-account < passphrase"
+ },
+ {
   "name": "siwe",
   "desc": "EIP-4361 Sign-In with Ethereum messages, as a stdin/stdout filter. No keys, no signatures (CLI only, no wasm export)"
  },
  {
   "name": "sol-tron-tx",
   "desc": "build unsigned, decode and verify Solana and Tron transfers. The chain is detected"
+ },
+ {
+  "name": "taproot-multisig",
+  "desc": "build a script-path m-of-n (BIP341/342 tapscript CHECKSIGADD) committed under the"
  },
  {
   "name": "tx-broadcast",
@@ -136,12 +172,20 @@
   "desc": "build an UNSIGNED transaction offline from files and flags. Never touches the network"
  },
  {
+  "name": "tx-combine",
+  "desc": "merge the partial-signature PSBTs of an m-of-n multisig (each produced by"
+ },
+ {
   "name": "tx-decode",
   "desc": "one transaction on stdin (hex/base64 raw tx, PSBT, EVM RLP, or a JSON line with"
  },
  {
   "name": "tx-envelope",
   "desc": "common signing envelope (public half). Reads one JSON object from stdin"
+ },
+ {
+  "name": "tx-plan",
+  "desc": "build a declarative transaction Plan (RFC #15) step by step and resolve it to unsigned bytes"
  },
  {
   "name": "tx-sign",
@@ -160,6 +204,14 @@
   "desc": "utxo-fetch (HOST-SIDE, network): public chain data for addresses -> files tx-build reads"
  },
  {
+  "name": "utxo-set",
+  "desc": "load a Bitcoin Core `dumptxoutset` file into RAM (exact set of funded output scripts,"
+ },
+ {
+  "name": "wallet-finder",
+  "desc": "turn text you own (old notes, a diary, a password list) into brainwallet candidates,"
+ },
+ {
   "name": "xmr-keys",
   "desc": "xmr-keys [--net main|stage|test] [--scan-out FILE [--restore-height N]] < seed"
  },
@@ -173,7 +225,7 @@
  },
  {
   "name": "xrp-tx",
-  "desc": "xrp-tx keys < family-seed -> {\"chain\":\"xrp\",\"algo\",\"address\",\"x_address\",\"public\"} (public only)"
+  "desc": "xrp-tx keys   < family-seed                       -> {\"chain\":\"xrp\",\"algo\",\"address\",\"x_address\",\"public\"} (public only)"
  },
  {
   "name": "zec-sapling",

@@ -54,7 +54,7 @@ host (agent)                         sealed container (--network none)
 | Hostile KDF params (CPU/memory DoS) | scrypt bounded by memory (128·N·r ≤ 256 MiB) and work (N·r·p ≤ 2^24), not per-knob, so geth standard, geth --lightkdf (N=4096 p=6) and the Web3 spec vector (N=2^18 r=1 p=8) open; PBKDF2 ≤ 10M iterations; container memory/pids/CPU limits |
 | Exfiltration over the network | `--network none`; no network tools in the image; no network code in tools |
 | Container escape / privilege | non-root uid 10001, `--cap-drop ALL`, `no-new-privileges`, read-only rootfs, noexec tmpfs |
-| Persistence of secrets on disk | Only tmpfs is writable; inputs mounted read-only; `--log-driver none` |
+| Persistence of secrets on disk | `/in` and `/secrets` are tmpfs filled over stdin (no bind mount, no volume); the rest of the writable space is tmpfs; inputs are root-owned 0444 in 0555 dirs, so uid 10001 (no capabilities) cannot change them; `--log-driver none` |
 | Blind signing / tampered unsigned tx | `tx-verify` decodes inside the container; human confirms on the TTY (§6) |
 | Password in agent context, argv or env | Passwords come only from a read-only file in `/secrets` or a `/dev/tty` prompt |
 | Agent runs `reveal` | `reveal` needs a controlling terminal and a random typed code. **Residual risk:** an agent that can spawn a pty can satisfy this (scripts/e2e-only/tty-drive.py does). Optional terminal pinning (`sealed-run pin-tty`) refuses other sessions but is defeated by a same-user agent that rewrites the pin; see SECURITY.md |
@@ -64,7 +64,7 @@ pastes keys into chat.
 
 ## 3. Agent-facing schema (enforced by `redact`)
 
-One JSON object per line, at most 512 bytes. Allowlisted fields: (unmeasured)
+One JSON object per line, at most 512 bytes (boundary test, docs/CLAIMS.md redact-512). Allowlisted fields:
 
 | field | validator |
 |---|---|
@@ -89,8 +89,10 @@ BIP39 words. Txids (64 hex) are blocked on purpose until phase 2 adds a typed
 `pw-candidates` expands a token list into a bounded set of password guesses (case/swap/digit/typo) for piping into the existing openers; see docs/ROADMAP-PARITY.md.
 | `seed-to-master` | stdin JSON lines: optional `{passphrase}`, then `{mnemonic, candidate}` | `{candidate, scheme, xprv, seed}`; old Electrum 1.x seed: `{scheme:electrum-old, seed}` (no xprv) | ✅ |
 | `phrase-to-key` | stdin phrase lines or `{phrase, salt}` | `{line, scheme, private_key}`: sha256 brainwallet (brainwallet.org, bitaddress.org) and WarpWallet (scrypt+PBKDF2); pipe into `key-to-addresses` | ✅ |
+| `utxo-set` | `--dump` a Core `dumptxoutset` file; stdin addresses or scriptPubKeys | `{query, chain, script, status: funded/empty, value_sat, outputs, bloom}`; crate `blocktools-utxo` (dump parser for Core 25-27 and 28+, exact sorted set, bloom filter in front) |
+| `wallet-finder` | `--dump` as utxo-set; stdin free text | per funded address `{status, scheme, passphrase, kind, address, value_sat, outputs}`: lines, sentences and word windows (plus pw-candidates rules) as brainwallet candidates, five shapes each; never a key, never signs |
 | `derive` | stdin JSON lines `{xprv, seed?, candidate}`; public flags (see `--help`) | `{chain, kind, path, address, wif / private_key}`; `--explain` plan only | ✅ |
-| `read-file` | file names in argv (public paths) | file bytes (like `cat`, 64 MiB cap) | ✅ (unmeasured) |
+| `read-file` | file names in argv (public paths) | file bytes (like `cat`, 64 MiB cap, boundary test) | ✅ |
 | `sealed-run` | `agent`/`human` + pipeline | redacted lines / raw to `/dev/tty` | ✅ |
 | `keystore-open` | stdin: line 1 = password, rest = keystore JSON (or `--password-tty`) | `{kind:eth, address, private_key}` | 1 ✅ |
 | `redact` | raw lines | public lines only | 1 ✅ |
@@ -152,8 +154,10 @@ Old Electrum 1.x seeds (12/24 words from the 1626-word list in `blocktools-core:
 Interactive alternative: `--passphrase-prompt` / `--password-tty` read from `/dev/tty` with echo off (blocktools-tty); never argv or env.
 
 Passwords and passphrases arrive on **stdin**, as data in the stream. The human
-puts them in `$BLOCKTOOLS_SECRETS` (mounted read-only at `/secrets`, host dir chmod 700,
-git-ignored), and the pipeline feeds them in, e.g.
+puts them in `$BLOCKTOOLS_SECRETS` (read-only at `/secrets`, host dir chmod 700,
+git-ignored; `./blocktools` streams the directory as tar on stdin into a tmpfs `/secrets` inside the sealed
+container: no bind mount, no volume, nothing on the engine's disk; the tmpfs goes with the container on exit.
+tmpfs is RAM of the engine's VM/host and could be swapped out by it; that is the remaining exposure), and the pipeline feeds them in, e.g.
 `read-file /secrets/ks-password /in/ks.json | keystore-open`. The tool itself never
 opens a named file. The only other source is `keystore-open --password-tty`, a
 prompt to the human on `/dev/tty`. Nothing is ever read from argv or env.
@@ -269,7 +273,7 @@ HTTP crate chosen by measured `cargo tree -e normal` (unique crates, 2026-10):
 `minreq` is the smallest and is what BDK's esplora-client uses (rust-bitcoin maintains a
 fork, `bitreq`). Caveat: it pins the older rustls 0.21 line; `ureq` 3 (rustls 0.23) is the
 next-smallest and swapping is confined to `blocktools-net`. blocktools-net: https only (plain http only for
-localhost test servers), 30 s timeout, no redirects, 8 MiB body cap, server data re-validated. (unmeasured)
+localhost test servers), 30 s timeout, no redirects, 8 MiB body cap (net-8mib), server data re-validated. The 30 s default timeout is measured against a slow mock (rpc-timeout-30s).
 Tests use `scripts/mock-chain.py` on 127.0.0.1; nothing real is ever contacted or broadcast.
 
 ## 6. Transactions: build → decode → confirm → sign → decode → broadcast
@@ -305,7 +309,7 @@ produces an invalid signature; the PSBT check still applies to them.
 
 **Interchange format.** Bitcoin-family transactions use PSBT (BIP-174). A watch-only host
 builds; an offline machine signs. EVM uses the unsigned RLP (EIP-155 legacy with a chain id,
-or EIP-1559 type 2). Tron txs are decoded (wasm `tronDecodeTx`); a Tron builder is not built yet. Multisig is not built.
+or EIP-1559 type 2). Tron txs are decoded (wasm `tronDecodeTx`); a Tron builder is not built yet. Bitcoin multisig is built: P2WSH m-of-n (`multisig`) and a taproot CHECKSIGADD leaf (`taproot-multisig`); cosigners partial-sign offline (`tx-sign --partial`, `secrets` feature only) and `tx-combine` finalizes. The address builders, `combinePsbts` and Plan resolve are also wasm exports; the partial signers are not (wasm-check W-nokey, W-nokeyapi).
 
 **tx-decode** (`crates/tx` library plus the thin `tools/tx-decode`, **built**). The input
 format is auto-detected: hex or base64, a raw Bitcoin tx, a PSBT, EVM RLP, or a JSON line
@@ -326,7 +330,7 @@ with `psbt`/`tx`/`unsigned_tx`/`signed_tx`. The output is:
 
 Bitcoin and PSBT parsing is rust-bitcoin's consensus code. RLP is a small bounded codec
 (depth 4, 4096 items, canonical lengths). Keccak comes from `sha3` and recovery from
-`secp256k1`. Input is limited to 4 MiB. In agent mode the line passes `redact`: (unmeasured)
+`secp256k1`. Input is limited to 4 MiB (boundary test, tx-input-4mib). In agent mode the line passes `redact`:
 amounts, addresses, counts and warnings cross, **txids do not** (a 64-hex value is
 indistinguishable from a key, so the boundary drops it). On the host, run tx-decode
 directly to see txids.
@@ -340,7 +344,7 @@ then the token `transfer`.
 **tx-verify** reuses `blocktools-tx` and checks the decoded tx against expectations:
 outputs equal the expected addresses, change goes to a derived address, the chain id is
 right, the fee and fee percentage are under caps, and no unknown outputs exist. Any failure
-gives a non-zero exit. EVM: the default total-fee cap is tx-sign's (0.01 ETH) and ETH value next to
+gives a non-zero exit. EVM: the default total-fee cap is tx-sign's 0.01 ETH. ETH value next to
 ERC-20 transfer calldata fails (`eth_value_with_token_call`) unless `--allow-value-with-token`.
 
 **tx-sign** reads keys on stdin and the tx on a second stdin line or `--tx FILE`.
@@ -374,7 +378,7 @@ as files in `in/` and lines from `redact`.
 ### Verified status (2026-10-24, Battleaxe, Docker 29.8.2, linux/amd64)
 
 Measured: the image builds (dependency allowlist check + `cargo test` in the build stage), and the
-runtime image is 18.2 MB. Under the full sealing flags: (unmeasured)
+runtime image built (its size then was not kept; README carries the measured size). Under the full sealing flags: (unmeasured)
 * `seed-repair | derive` on the public "abandon … about" vector with typos, through `sealed-run agent`:
   7 lines, only addresses, paths and statuses, with the expected BIP44/49/84/86/ETH addresses.
 * `keystore-open` on the Web3 spec vector: only `0x008AeEda4D805471dF9b2A5B0f38A0C3bCBA786b`.
@@ -392,7 +396,7 @@ newest verified-status section.)
 ### Re-verified (2026-10-24, Battleaxe via the Mac docker context, linux/amd64, 32 CPUs, commit 38b386d)
 
 Measured: `docker --context battleaxe build` of 38b386d succeeds in about 2 min (build stage runs the dependency
-allowlist check and `cargo test`); the runtime image is 33.3 MB (was 18.2 MB, then 40.4 MB, before later chains/tools; re-measured from sealed musl bins / scratch image). (unmeasured)
+allowlist check and `cargo test`); the runtime image built (sizes from that period were not kept; README carries the measured size). (unmeasured)
 Under the same sealing flags as `./blocktools` (no binds; mnemonic on stdin), through `sealed-run agent`, on the public
 "abandon … about" vector:
 * `zec-sapling --count 2`: 2 rows, first address = local KAT zs188wzu…f0nta; no mnemonic or zxviews in output.
@@ -403,6 +407,15 @@ Under the same sealing flags as `./blocktools` (no binds; mnemonic on stdin), th
 * `sealed-run human` with no TTY refuses (exit 2).
 Not re-run this time: the network/rootfs/caps probes (same flags as the earlier run), `reveal` with a TTY, bind-mount
 inputs on the remote host.
+
+### Remote engines (BLOCKTOOLS_ALLOW_REMOTE)
+
+Deny by default: an `ssh://`, `tcp://` or `http(s)://` engine (`DOCKER_HOST`, else the current context) is refused
+with exit 4 before any container exists. `BLOCKTOOLS_ALLOW_REMOTE=ssh` permits only `ssh://` engines: the inputs
+cross the wire inside ssh and land in the container's tmpfs (stdin/tar only, no bind mounts, no volumes), which
+is the Mac -> Battleaxe (Docker Desktop on Windows) setup. `BLOCKTOOLS_ALLOW_REMOTE=1` permits any remote engine,
+including unencrypted `tcp://`. Any other value permits nothing. Sealing flags are the same in every case.
+Covered by `scripts/e2e.d/wrapper-remote.sh` (fake docker); a real ssh engine is not in CI (untested).
 
 ## 9. Out of scope
 
@@ -526,8 +539,8 @@ already-present secp256k1, which shrinks libsecp256k1's tables). `scripts/wasm-c
 it, runs wasm-bindgen (`pkg/node`, `pkg/web`), and fails if the dep tree has any secrets/net/seed
 crate, if the name section contains secret APIs (blocktools_secrets, tx::sign, WIF/xprv/seed
 code, libsecp256k1 signing/keygen), or if exports differ from the public list, then runs
-`bindings/wasm/test.mjs` (public vectors) under Node. Measured: 721,735 bytes (253,350 gzip) (unmeasured)
-with names; 610,229 bytes (228,524 gzip) stripped; 41 crates in the wasm tree. The module also (unmeasured)
+`bindings/wasm/test.mjs` (public vectors) under Node. It is a single self-contained wasm file (run
+`scripts/wasm-size.sh` for its current size, gzipped size, and wasm32 crate count). The module also
 exports four libsecp256k1 context hooks (`rustsecp256k1_v0_10_0_context_*`, error callbacks)
 that secp256k1-sys marks `#[no_mangle]`; they are not secret-bearing. Build needs clang
 (secp256k1-sys C code) and the wasm32-unknown-unknown target. Not published to npm.

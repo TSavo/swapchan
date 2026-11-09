@@ -17,8 +17,25 @@ rpc URL METHOD [PARAMS-JSON]      one JSON-RPC call (EVM, bitcoind and forks, So
 ... | rpc URL                     JSON-RPC request(s) on stdin: one object or a batch array, sent byte-for-byte
 rpc URL /PATH [BODY-JSON]         REST: GET, or POST when BODY is given (Tron, Cosmos LCD, Esplora, Blockbook)
 rpc URL SHORTCUT [ARG]            height | chainid | balance ADDR | nonce ADDR | account ADDR | utxos ADDR | tx ID | receipt ID | fee | blockhash
+rpc URL rawtx TXID [BLOCKHASH]    bitcoind: {"protocol","txid","tx":HEX[,"blockhash"]}, hash-checked; pipes into tx-decode
+rpc URL block [HEIGHT|HASH]       bitcoind: {"protocol","height","hash","time","n_tx","previous","txids"} (default: tip)
+rpc URL blockinfo                 bitcoind: {"protocol","chain","blocks","headers","best","progress","pruned"}
+... | rpc URL prevtxs             bitcoind: tx on stdin -> one rawtx line per input txid, for tx-decode --prevtxs
 ... | rpc URL sendraw             broadcast ONE signed tx; decoded summary + typed code on the terminal
+                                 (UTXO: input values and fee shown; unknown fee needs ACK FEE-UNKNOWN too)
 ```
+
+Two output shapes: shortcuts print one tidy JSON object per line. Passthrough (`METHOD` or stdin) prints the node's
+raw envelope `{"result":...,"error":...,"id":...}`, so read `.result`. `PARAMS-JSON` is ONE argument holding a JSON
+array (or object): `rpc URL getblockhash '[2]'`. `rpc URL getblockhash 2` and two separate params are `bad_input`
+(exit 2) and nothing is sent.
+
+Refusal or node answer? Read `status` in the stderr JSON line. `refused` means rpc sent nothing. `rpc_error` or
+`http_error` means the node answered. All three exit 1. `bad_input` (exit 2, e.g. `auth_empty` for an empty
+`--auth-file`) is decided before any connection. In a pipeline (`rpc ... | tx-decode`), the exit status is the last
+command's: `rpc URL dumpprivkey '["x"]' | cat` exits 0 in bash with `PIPESTATUS` `1 0`. Use `set -o pipefail` or
+branch on `status`. These rules are tested in `tools/rpc/tests/cli.rs` and `scripts/e2e.d/rpc-decode.sh`. Worked
+pipeline: [recipes/rpc-decode.md](../recipes/rpc-decode.md).
 
 `URL` can also be a chain name from the shared table (`btc`, `ltc`, `eth`, `ada`, `dot`, `ton`, `atom`, `xlm`, `algo`) or the
 EVM chain id `1`. For any other EVM chain, pass its RPC URL and pin the chain id as a plain argument: `--chain-id 137`.
@@ -117,6 +134,15 @@ rpc --chain ltc --auth-file ~/.litecoin/.cookie http://127.0.0.1:9332 balance lt
   `29000000`.
 - For legacy inputs, `utxos` adds `prev_tx` using `getblockhash` + `getrawtransaction`, using the same rule as utxo-fetch.
 - `fee` uses `estimatesmartfee 6` and reports sat/vB.
+- `rawtx TXID [BLOCKHASH]` calls `getrawtransaction TXID false [BLOCKHASH]` and checks that the hex hashes to TXID
+  (`node_tx_hash_differs` otherwise). A pruned node without `-txindex` returns error -5 unless you give the block
+  hash; rpc passes the error on (`rpc_error`, exit 1) and adds a `hint`.
+- `block [HEIGHT|HASH]` calls `getblockhash` (when given a height) and then `getblock HASH 1`, so it returns txids only
+  and stays under the response cap. `blockinfo` is `getblockchaininfo`.
+- `prevtxs` reads a tx (hex or rawtx JSON) on stdin and runs `rawtx` once per distinct input txid, with no block
+  hash, so it needs `-txindex`. Its output is the `--prevtxs FILE` for `tx-decode`, which then reports input
+  values and the fee. tx-decode itself never opens a socket.
+- All four use allowlisted read methods and work without `--allow-unlisted`.
 
 ### Solana JSON-RPC
 
@@ -190,6 +216,27 @@ order:
 These are SwapChan's field observations from `/workspace/handoff/rpc-knife-requirements.md`. `rpc` did not measure them
 (unmeasured).
 
+## Slow methods and timeouts
+
+Every rpc request has one wall-clock timeout covering the whole request. It is 30 s by default.
+These methods get 3600 s instead: `dumptxoutset`, `loadtxoutset`, `scantxoutset` (also behind the `utxos`
+shortcut), `gettxoutsetinfo`, `rescanblockchain`, `verifychain`, `importmulti` and `rescanwallet`.
+`importdescriptors` is on the slow list too, but the deny-list refuses it first (it carries secrets), so it is
+never sent. `--timeout SECS` (1..86400) overrides both.
+
+When the timeout passes, rpc writes stderr status `"timeout"`, not `http_error`. The status includes
+`timeout_secs` and `timeout_source` (`--timeout`, `slow_method_default` or `default`), and rpc exits 1.
+A timeout only stops rpc from waiting. The node may still be running the call.
+
+`dumptxoutset` is not on the read allowlist, because it writes a file. It needs `--allow-unlisted`:
+
+    rpc --allow-unlisted --auth-file ~/.bitcoin/.cookie http://127.0.0.1:8332 dumptxoutset '["/path/utxo.dat"]'
+
+The file is written **on the node host**, at a path the node chooses, not where rpc runs. If you
+time out, the node keeps writing the file. Wait for it to finish rather than starting a second dump.
+`contract-call` and `contract-trace` take `--timeout` 1..300 and report the same `"timeout"` status.
+`tx-broadcast` keeps a fixed 30 s, and a timeout there reads `timeout: no complete response within 30 s`.
+
 ## Credentials (wallet RPC)
 
 - `--auth-file FILE` or `--auth-env NAME` accepts these forms:
@@ -202,6 +249,23 @@ These are SwapChan's field observations from `/workspace/handoff/rpc-knife-requi
   covers the case where a server echoes them back.
 - Values shorter than 4 characters are not redacted, because that would mangle unrelated output. Do not use a password that
   short.
+
+## sendraw shows the fee
+
+A signed UTXO transaction does not carry its input amounts, so on its own the confirmation could only say
+"fee: UNKNOWN". `sendraw` now fills them in before it prompts: from `--prevtxs FILE` (the output of
+`rpc URL prevtxs`, or one hex tx per line), or else by asking the endpoint it is about to broadcast to
+(bitcoind `getrawtransaction`, Esplora `GET tx/ID/hex`), through the same allowlist as every other call. Each
+previous tx must hash to the txid the input names. With them the summary shows each input's address and value and
+`fee : … (~N sat/vB)`. If any are missing (pruned node without `-txindex`, Blockbook, a 404), the summary starts with a
+`FEE UNKNOWN` banner saying which txids were not found, and you must type `ACK FEE-UNKNOWN` before the usual code;
+anything else aborts and nothing is sent. On a pruned node, run `rpc URL rawtx TXID BLOCKHASH` for each input, then
+pass the lines to `--prevtxs`. Tested against scripts/mock-bitcoind.py (a fake regtest node, not bitcoind) by
+`scripts/e2e.d/sendraw-fee.sh`: the fee 0.00001000 is in the confirmation text, and refusing the ACK sends nothing.
+`tx-broadcast` given bare signed UTXO hex (no input values, so no fee) shows the same banner and wants the same
+`ACK FEE-UNKNOWN`; the tx-sign JSON output carries the input values and needs only the code. Tested in
+`scripts/e2e.d/net.sh` against scripts/mock-chain.py: refusing the ACK posts nothing, the ACK plus the code posts once.
+A hostile endpoint can force the banner by answering "not found" (docs/SECURITY.md, known limits).
 
 ## Safety: what is refused
 
@@ -218,6 +282,11 @@ The agent must never see keys, seeds or passwords. Every refusal exits 1 (status
 | `wallet_sign_undecodable` | the flagged request cannot be decoded completely into a summary |
 | `wallet_sign_chain_mismatch` | the flagged request's chain id differs from the endpoint's `eth_chainId` (or from `--chain-id`) |
 | `wallet_sign_chain_unknown` | the flagged request has no chain id and none was given with `--chain-id` |
+| `wallet_sign_permit_unasserted` | `eth_signTypedData_v4` is a recognised permit (EIP-2612, DAI, Permit2) and `--expect-spender` was not given |
+| `wallet_sign_seaport_unasserted` | `eth_signTypedData_v4` is a Seaport order (OrderComponents / BulkOrder, or domain name Seaport) and neither `--allow-seaport-order` nor `--expect-min-consideration` was given |
+| `seaport_no_consideration` / `seaport_dust_consideration` / `seaport_unknown_deployment` / `seaport_not_checkable` | the Seaport order returns nothing nonzero to the offerer, less than every `--expect-min-consideration` floor, is not Seaport 1.5 / 1.6 at its canonical address, or cannot be read |
+| `wallet_sign_spender_unrecognised` | `eth_signTypedData_v4` is not a recognised permit but has address fields named like a spender (spender, operator, delegate, approved, allowed) |
+| `spender_not_expected` / `amount_not_expected` / `unlimited_approval` | the permit's spender or an amount differs from `--expect-spender` / `--expect-amount`, or an amount is unlimited (>= 2^128, uint160 max, DAI `allowed=true`) without `--expect-unlimited` |
 | `method_not_allowlisted` | the method or REST path is not in the protocol's read allowlist (below) and `--allow-unlisted` was not given |
 | `method_denied_by_policy` | the method is in the `--policy` file's `rpc.deny` list |
 | `request_contains_secret_field` | the params contain a field named privateKey, password, mnemonic, seed, wif, xprv, ... |
@@ -349,6 +418,18 @@ UI is the human confirmation. Before anything is sent, `rpc`:
      refused. Quantities must be hex, and `data` and `input` must agree.
    - For typed data, `types`, `primaryType`, `domain` and `message` are required, and the message fields must equal the primary
      type's fields exactly. No hidden or extra fields are allowed.
+   - For typed data, a recognised permit (EIP-2612, DAI, Permit2 PermitSingle / PermitBatch / PermitTransferFrom /
+     PermitBatchTransferFrom) is refused unless `--expect-spender ADDR` matches its spender (and every batch entry
+     matches `--expect-amount N`, if given); an unlimited amount also needs `--expect-unlimited`. A permit for exactly
+     your balance is below 2^128, so only the spender catches a drainer. Typed data with spender-like address fields
+     that is not a recognised permit is refused (`wallet_sign_spender_unrecognised`); there is no blanket allow. The
+     same check is `typed-data-verify --expect-spender` (shared `permit::apply`).
+   - A Seaport order (1.5 / 1.6 `OrderComponents` or `BulkOrder`) is refused (`wallet_sign_seaport_unasserted`) unless
+     `--allow-seaport-order` or `--expect-min-consideration SPEC` is given (SPEC: `N` or `native:N` for the native
+     currency, `0xTOKEN:N` for an ERC20, smallest units, comma-separated; at least one floor must be met). Even then an
+     order that returns nothing to the signer (`seaport_no_consideration`), one below every floor
+     (`seaport_dust_consideration`), another version or address (`seaport_unknown_deployment`) or an unreadable one
+     (`seaport_not_checkable`) is refused. Same check: `typed-data-verify --expect-min-consideration`.
 2. Fetches the endpoint's `eth_chainId`. The call is refused if it differs from the request's chain id (or from `--chain-id`),
    or if neither one gives a chain id.
 3. Prints this summary on stderr, then sends the exact stdin or argument bytes:
@@ -392,6 +473,36 @@ scope.
 - Only https URLs are accepted, except plain http to localhost/127.0.0.1.
 - Shortcuts re-check what the server returns: txid hex, amounts, and the prev_tx hex.
 
+## contract-call: eth_call with decoding, and one-shot state reads
+
+`contract-call URL ADDRESS 'balanceOf(address) returns (uint256)' 0x...` builds the calldata from the signature and
+arguments (same encoder as `abi-encode`), asks the endpoint for `eth_chainId` (printed on every line; `--chain-id N`
+refuses any other chain before `eth_call` is sent), sends `eth_call` at `--block` (tag, number, or block hash as an
+EIP-1898 `{"blockHash"}` object) and decodes the return data with the `returns (...)` types. `--abi FILE --read`
+calls every view/pure function without inputs. JSON lines `{"to","sig","args","block","from"}` on stdin batch calls
+(up to 1000). Both requests go through the same `check_call_in` as `rpc` (read allowlist, deny-list, `--policy`,
+secret fields), responses carrying key material are withheld, and `--auth-file`/`--auth-env` values are redacted.
+
+Results that are not a decoded value are never printed as one: a revert is `reverted` on stderr with the revert data
+decoded (`Error(string)`, `Panic(uint256)`, custom errors from `--abi`/`--error`, exit 1); `0x` for a function that
+declares returns is `empty_return` (no code at the address on that chain/block, or no such function); return data that
+does not decode cleanly under the declared types (for example a `uint8` above 255) is `bad_return`. Tested against a
+127.0.0.1 mock in `tools/contract-call/tests/cli.rs` and in `recipes/evm-eth-call.md`; not measured against a
+live node. Decode the logs a node returns (`eth_getLogs`, receipts) with the offline `log-decode`.
+
+## contract-trace: state overrides and debug_traceCall
+
+`contract-trace URL ADDRESS SIGNATURE [ARG...]` (or `--data HEX|@FILE`) simulates the call. `--call-only` sends
+`eth_call` with the `--state FILE` overrides as the third parameter (read allowlist). Without it the call goes to
+`debug_traceCall` with `{"tracer","tracerConfig","stateOverrides"}`; that method is not in the read allowlist, so it
+is refused (exit 1, nothing sent) unless `--allow-unlisted` is given. `callTracer` (default) output is one JSON line
+per call frame, depth first, with the node's fields passed through and `--abi` selectors decoded into `"call"`; any
+other `--tracer` name (or `struct` for no tracer) prints the raw result on one line. A reverted top frame still
+prints its frames, then `reverted` on stderr and exit 1. The state file is validated locally (addresses, quantities,
+32-byte slots, `state` and `stateDiff` exclusive). Same `check_call_in`, response secret check, credential
+redaction and transport bounds as `contract-call`. Tested against a 127.0.0.1 mock in
+`tools/contract-trace/tests/cli.rs` and in `recipes/evm-eth-call.md`; not measured against a live node.
+
 ## Cookbook (mock round trips, run by `scripts/e2e.d/rpc.sh`)
 
 ```
@@ -415,6 +526,10 @@ Per-chain recipes live in the docs index, which the docs worker owns.
 Run on Linux (x86_64) on 2026-10-25:
 - `cargo test -p rpc`: the lib tests, plus CLI tests against an in-process mock that records the raw request bytes.
 - `scripts/e2e.d/rpc.sh`.
+- `scripts/e2e.d/rpc-timeout.sh`: the mock holds the response open. It measured the 30 s default timeout
+  (status `timeout` at 30.0 s), plus `--timeout 2`, the slow-method default and the dumptxoutset allowlist refusal.
+- `scripts/e2e.d/rpc-decode.sh`: the recipes/rpc-decode.md pipeline against `scripts/mock-bitcoind.py`, a deterministic
+  fake pruned regtest bitcoind (pruned and `-txindex` modes). It is a mock, not bitcoind.
 - The single public read shown above.
 
 Untested:

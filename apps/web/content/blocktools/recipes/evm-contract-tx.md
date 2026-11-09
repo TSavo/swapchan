@@ -55,12 +55,12 @@ version of this recipe used `--gas 100000`. On Sepolia that ran out of gas: tx
     rpc URL eth_estimateGas '[{"from":"0xYOUR_SENDER","to":"0xCONTRACT","data":"0x<abi-encode calldata>"}]'
 
 Read `.result` (hex) as `--gas`. The setValue example's 132358 is geth `--dev`'s estimate for a fresh storage
-write to the handwritten store contract in `scripts/e2e.d/evm-devnet.sh` (untested); your contract will differ.
+write to the handwritten store contract in `scripts/e2e.d/evm-devnet.sh`; your contract will differ.
 
 ## Tests
 
 `scripts/e2e.d/contract-tx.sh` covers the build, verify, sign (pty) and broadcast path against a local mock that
-accepts bytes but does not execute the EVM. `scripts/e2e.d/evm-devnet.sh` (untested) runs the same path against a real geth
+accepts bytes but does not execute the EVM. `scripts/e2e.d/evm-devnet.sh` runs the same path against a real geth
 `--dev` node (version and sha256 pinned in `scripts/evm-pins/geth`), under both the default dev schedule and
 Amsterdam. With gas from `eth_estimateGas` it checks that each creation gets receipt status `0x1`, that `eth_getCode`
 equals the runtime, and that `contract-call` reads 42. A `setValue(7)` call on a store contract gets status `0x1`

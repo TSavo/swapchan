@@ -31,9 +31,9 @@ Debian slim images often `path-exclude` `/usr/share/man`. Remove that dpkg confi
 
 The v0.3.3 tarball binaries are glibc-linked (53 of its 55 binaries need glibc 2.34 or newer, `sealed-run`
 and `tx-decode` need 2.39 or newer; measured with `objdump -T` per binary, see the README) and do not run on musl
-(Alpine) or on an older glibc. There is no musl release asset; build from source
-(`cargo build --locked --release --target x86_64-unknown-linux-musl`) or use the APK dry-run
-packaging (scripts/package-native.sh).
+(Alpine) or on an older glibc. There is no musl tarball release asset; use the
+[published musl APK repository](APK-SIGNING.md), or build from source
+(`cargo build --locked --release --target x86_64-unknown-linux-musl`).
 
 ## Wasm: "cannot sign" / missing export
 

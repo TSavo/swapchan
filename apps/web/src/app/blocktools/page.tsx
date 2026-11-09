@@ -276,48 +276,39 @@ export default async function BlocktoolsHome() {
         </ul>
       </section>
 
-      {/* v0.4.0 */}
+      {/* v0.5.0 */}
       <section className="mt-20">
-        <H2 id="v040" kicker="New in v0.4.0">
+        <H2 id="v050" kicker="New in v0.5.0">
           What changed
         </H2>
         <p className="mb-4 text-sm text-violet-300">
-          From the blocktools CHANGELOG at main 12b4d8e0. v0.4.0 is not tagged yet.
+          From the blocktools CHANGELOG at tag v0.5.0 (400384d4).
         </p>
         <ul className="grid gap-x-8 gap-y-4 text-sm md:grid-cols-2">
           {[
             [
-              "tx-sign refuses by default",
-              "tx-sign runs the same checks as tx-verify before it reads a key and again on the signed bytes. Unlimited approvals (2^128 or more, or all tokens), batch inner calls that were not asserted, and Safe delegatecalls are refused unless asserted with --expect-spender ADDR --expect-unlimited, --allow-inner-call TO:SELECTOR or --allow-delegatecall TO. --expect-amount, --expect-recipient and --expect-value also work, including with --plan. There is no blanket allow.",
+              "wasm tronVerifyTx",
+              "New wasm export tronVerifyTx, plus 77 exports (was 76).",
             ],
             [
-              "Pre-sign checks in wasm",
-              "The wasm verifyTx runs the same approval, transfer and batch checks as tx-verify, deny by default, and returns approvals, transfers and inner_calls. Opt-ins are call_json keys expect_spender, expect_amount, expect_recipient, expect_value (strings), expect_unlimited (bool), allow_inner_call and allow_delegatecall (arrays).",
+              "ksm and polyx Trust Wallet Core rows",
+              "Kusama (ksm) and Polymesh (polyx) emit a Trust Wallet Core ed25519 row alongside the existing substrate sr25519 row; dot stays sr25519-only.",
             ],
             [
-              "msg-verify: Tron, Solana, Cosmos",
-              "msg-verify checks Tron signMessageV2, Solana (--format raw|offchain-v0, required) and Cosmos ADR-036 (--pubkey, required) signatures; the chain is detected from the address. In wasm, msgVerify covers Tron, and the new msgVerifyOpts takes format, pubkey and chain for Solana and Cosmos.",
+              "tx-build, tx-sign and tx-verify --chain",
+              "tx-build, tx-sign, and tx-verify take --chain and exec the existing backends (fail closed where signing or verify is unavailable).",
             ],
             [
-              "msg-sign (CLI only)",
-              "msg-sign signs Tron, Solana and Cosmos messages with the same gate as Ethereum and Bitcoin: blind hashes, hex and transaction-looking text are refused before any key is read, the signature is re-verified, then the message is shown and a code typed on /dev/tty. There is no wasm signing.",
+              "Permit and Seaport checks",
+              "Permit spender checks and Seaport order checks on typed-data-verify and the wasm evmTypedDataVerify.",
             ],
             [
-              "siwe (CLI only)",
-              "siwe build makes an EIP-4361 Sign-In with Ethereum message from JSON fields; siwe parse accepts only valid, canonical text, with opt-in --domain, --nonce and --now/--check-time checks. It uses no keys and does not check the signature (use msg-verify). No wasm export.",
+              "rpc --allow-wallet-sign",
+              "Behaviour change: rpc --allow-wallet-sign refuses unasserted permits and Seaport orders.",
             ],
             [
-              "Ambiguous addresses",
-              'Some strings are valid both as a Cosmos bech32 address and as a Solana key. They are now refused with ambiguous_address unless the chain is named: --chain cosmos|sol on the CLI, or the msgVerifyOpts key "chain" in wasm. A named chain that does not match gives chain_does_not_match_address.',
-            ],
-            [
-              "Partial ABI decodes",
-              "abi-decode --allow-gaps (wasm evmAbiDecode allow_gaps, a bool) is opt-in: a dynamic tail may start after its canonical position and the skipped bytes are reported as gap_bytes. Backwards or overlapping offsets, bounds, dirty padding and trailing_data are still refused by default; SwapChan also passes allow_trailing at its own decode sites.",
-            ],
-            ["76 wasm exports", "Measured in a green main run (msgVerifyOpts is the 76th)."],
-            [
-              "Not tested",
-              "Cosmos ADR-036 and Solana offchain-v0 are self round-trip only, with no published or real-wallet vector. siwe is tested only on spruceid's published vectors. The tx-verify checks have not been tested on transactions from a live wallet, and Universal Router commands are surfaced but not decoded.",
+              "BitConnect archival only",
+              "BitConnect (bcc) archival evidence is preserved; verified stays false and signing is not enabled.",
             ],
           ].map(([h, t]) => (
             <li key={h} className="flex gap-3">
