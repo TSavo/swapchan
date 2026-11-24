@@ -92,6 +92,7 @@ export async function runTurn(
   address: string,
   respond: Respond,
   guard?: Guard,
+  testPayments = process.env.SWAPCHAN_TESTNET_PAYMENTS === "1",
 ): Promise<void> {
   let raw: unknown;
   try {
@@ -180,10 +181,7 @@ export async function runTurn(
     };
   }
 
-  if (
-    outAction.type === "review_payment" &&
-    (process.env.SWAPCHAN_TESTNET_PAYMENTS !== "1" || outAction.chainId === 10)
-  ) {
+  if (outAction.type === "review_payment" && (!testPayments || outAction.chainId === 10)) {
     outAction = { type: "none" };
     shownMessage = "The experimental payment flow is available only on enabled test networks.";
   }
@@ -211,6 +209,7 @@ export class AgentOrchestrator {
     private bus: SessionBus,
     private respond: Respond,
     private guard?: Guard,
+    private testPayments = process.env.SWAPCHAN_TESTNET_PAYMENTS === "1",
   ) {}
 
   start(): this {
@@ -245,7 +244,7 @@ export class AgentOrchestrator {
     try {
       do {
         this.pending.delete(addr);
-        await runTurn(this.store, this.bus, addr, this.respond, this.guard);
+        await runTurn(this.store, this.bus, addr, this.respond, this.guard, this.testPayments);
       } while (this.pending.has(addr));
     } finally {
       this.running.delete(addr);

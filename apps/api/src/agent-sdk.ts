@@ -43,7 +43,9 @@ import { ModelAction } from "./wallet-action.js";
  * settingSources is empty, and canUseTool denies everything else).
  */
 
-const PREFACE = `You are the agent inside a connected self-custody crypto wallet on swapchan.com/smartwallet.
+const walletPrompt = (
+  testPayments: boolean,
+) => `You are the agent inside a connected self-custody crypto wallet on swapchan.com/smartwallet.
 You are THIS WALLET'S agent, not a general assistant. The connected wallet address is given to you
 in the conversation; it is the only subject you work on.
 
@@ -125,7 +127,7 @@ text (progress goes through status_update; the answer goes through wallet_respon
     • sign_and_send — the goal. { type:"sign_and_send", chainId:<number>,
         tx:{ to, data?, value?, chainId?, gas? },               // EIP-1193, ready for the wallet
         verify:{ recipient:<connected address>, minOut?, verdict:"ok"|"warn"|"danger", note? } }
-    ${process.env.SWAPCHAN_TESTNET_PAYMENTS === "1" ? "• review_payment — Offer exact USDC payment review on Base Sepolia (84532) or Optimism Sepolia (11155420) only. Supply chainId, recipient and integer amountMicroUsdc. The wallet compares eligible funding and asks for a signature. A bridge requires a separate destination fill." : ""}
+    ${testPayments ? "• review_payment — For exact USDC payments on Base Sepolia (84532) or Optimism Sepolia (11155420), first call SwapChan pay with chainId and intent {sender: connected wallet, recipient, amountMicroUsdc}. One USDC equals 1000000 microUSDC. Explain the returned source spend and gas cap, or the funding gap. Use review_payment with the same chainId, recipient and amountMicroUsdc from the quote. SmartWallet handles the build, simulation, verification and local signature. A bridge requires a separate destination fill." : ""}
     • switch_chain  — { type:"switch_chain", chainId:<number> }
     • none          — { type:"none" }             // a reply/redirect with nothing for the wallet to do
 
@@ -183,6 +185,7 @@ export interface SdkRespondConfig {
   store: SessionStore;
   model?: string;
   maxTurns?: number;
+  testPayments?: boolean;
 }
 
 // The agent gets the WHOLE SwapChan MCP (it only ever builds unsigned txs — every tool is safe and
@@ -338,7 +341,36 @@ export function extractPartialField(partial: string, field: string): string | nu
   return out; // still streaming
 }
 
+const paymentQuoteRow = z.object({
+  quoteId: z.uuid(),
+  chainId: z.number(),
+  sender: z.string(),
+  recipient: z.string(),
+  amountMicroUsdc: z.string(),
+  expiresAt: z.number().int(),
+});
+export function matchesPaymentQuote(
+  raw: unknown,
+  sender: string,
+  action: Extract<z.infer<typeof ModelAction>, { type: "review_payment" }>,
+) {
+  const result = z
+    .union([paymentQuoteRow, z.object({ routes: z.array(paymentQuoteRow).min(1) })])
+    .safeParse(raw);
+  if (!result.success) return false;
+  const rows = "routes" in result.data ? result.data.routes : [result.data];
+  return rows.every(
+    (row) =>
+      row.chainId === action.chainId &&
+      row.sender.toLowerCase() === sender.toLowerCase() &&
+      row.recipient.toLowerCase() === action.recipient.toLowerCase() &&
+      row.amountMicroUsdc === action.amountMicroUsdc &&
+      row.expiresAt > Date.now() / 1000,
+  );
+}
+
 export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
+  const testPayments = cfg.testPayments ?? process.env.SWAPCHAN_TESTNET_PAYMENTS === "1";
   return async (
     ctx: AgentContext,
     onDelta?: (text: string) => void,
@@ -346,6 +378,7 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
     onActivity?: (text: string) => void,
   ): Promise<unknown> => {
     let captured: unknown = null;
+    let paymentQuote: unknown;
     const hooks = makeThirdPartyHooks();
     // No DB row → first turn, no session id supplied (the SDK mints one). Row → resume it and send
     // only the events the model hasn't seen; the whole log is replayed only on the first turn.
@@ -370,6 +403,21 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
           "End your turn: deliver a message to the user and optionally propose one wallet action.",
           { message: z.string(), action: ModelAction },
           async (args) => {
+            if (
+              args.action.type === "review_payment" &&
+              (!testPayments || !matchesPaymentQuote(paymentQuote, ctx.address, args.action))
+            ) {
+              captured = null;
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: "text",
+                    text: "Call pay with the connected sender and exact requested payment to obtain a current quote before opening review.",
+                  },
+                ],
+              };
+            }
             captured = args;
             return { content: [{ type: "text", text: "delivered to the wallet" }] };
           },
@@ -383,7 +431,7 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
         prompt: renderConversation({ address: ctx.address, events }),
         options: {
           ...(resume ? { resume } : {}),
-          systemPrompt: PREFACE,
+          systemPrompt: walletPrompt(testPayments),
           mcpServers: {
             swapchan: { type: "http", url: cfg.mcpUrl },
             walletbridge,
@@ -396,7 +444,26 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
           // Defense in depth: deny anything off the whitelist (no Bash/Read/Write, no unlisted tool).
           canUseTool: canUseToolForAgent,
           hooks: {
-            PostToolUse: [{ hooks: [hooks.postToolUse], timeout: 10 }],
+            PostToolUse: [
+              {
+                hooks: [
+                  async (input, id, options) => {
+                    if (
+                      input.hook_event_name === "PostToolUse" &&
+                      input.tool_name === "mcp__swapchan__pay"
+                    ) {
+                      try {
+                        paymentQuote = JSON.parse(responseText(input.tool_response));
+                      } catch {
+                        paymentQuote = undefined;
+                      }
+                    }
+                    return hooks.postToolUse(input, id, options);
+                  },
+                ],
+                timeout: 10,
+              },
+            ],
             PostToolUseFailure: [{ hooks: [hooks.postToolUseFailure], timeout: 5 }],
           },
           maxTurns: cfg.maxTurns ?? 60, // a real step (balances/find-money/quote/build/verify) is many tool calls
@@ -465,6 +532,7 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
       // fresh session from the full log, once.
       if (prev) {
         captured = null;
+        paymentQuote = undefined;
         sessionId = undefined;
         await drive(makeRun(undefined));
       } else {
