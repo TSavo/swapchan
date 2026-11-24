@@ -1,5 +1,5 @@
 import { EvmAddress } from "@swapchan/shared";
-import { decodeFunctionData, encodeFunctionData, type Hex, pad, parseAbi } from "viem";
+import { decodeFunctionData, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
 import { z } from "zod";
 import { getJson } from "./providers/types.js";
 
@@ -39,6 +39,7 @@ const response = z.object({
 export async function quoteCrossPayment(
   f: typeof fetch,
   intent: z.infer<typeof crossPaymentInput>,
+  sourceRpc: (method: string, params: unknown[]) => Promise<unknown>,
 ) {
   const params = new URLSearchParams({
     tradeType: "exactOutput",
@@ -85,6 +86,26 @@ export async function quoteCrossPayment(
     q.quoteExpiryTimestamp <= now
   )
     throw Error("Cross-chain deposit differs from payment intent or has expired");
+  const quantity = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]*)$/i);
+  const block = quantity.parse(await sourceRpc("eth_blockNumber", []));
+  const readUsdc = async (data: Hex) =>
+    BigInt(
+      z
+        .string()
+        .regex(/^0x[0-9a-f]{64}$/i)
+        .parse(await sourceRpc("eth_call", [{ to: sourceToken, data }, block])),
+    );
+  const [balance, allowance, native] = await Promise.all([
+    readUsdc(
+      encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [intent.sender] }),
+    ),
+    readUsdc(
+      encodeFunctionData({ abi: erc20Abi, functionName: "allowance", args: [intent.sender, pool] }),
+    ),
+    sourceRpc("eth_getBalance", [intent.sender, block]).then((v) => BigInt(quantity.parse(v))),
+  ]);
+  if (Math.min(q.quoteExpiryTimestamp, args[9]) <= Date.now() / 1000)
+    throw Error("Expired cross-chain payment quote");
   return {
     ...intent,
     provider: "across",
@@ -94,6 +115,15 @@ export async function quoteCrossPayment(
     outputToken: destinationToken,
     inputMicroUsdc: q.inputAmount,
     maxInputMicroUsdc: q.maxInputAmount,
+    sourceWallet: {
+      blockNumber: block,
+      balanceMicroUsdc: balance.toString(),
+      nativeBalanceWei: native.toString(),
+      depositShortfallMicroUsdc: (balance < amountIn ? amountIn - balance : 0n).toString(),
+      spender: pool,
+      allowanceMicroUsdc: allowance.toString(),
+      requiredApprovalMicroUsdc: allowance < amountIn ? amountIn.toString() : "0",
+    },
     originGas: { token: "ETH", includedInMaxInput: false },
     expectedFillSeconds: q.expectedFillTime,
     expiresAt: Math.min(q.quoteExpiryTimestamp, args[9]),

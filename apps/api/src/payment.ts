@@ -135,7 +135,11 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
       const cross = crossPaymentInput.safeParse(raw);
       if (!cross.success) return c.json({ error: "unsupported_cross_chain_payment" }, 400);
       try {
-        return c.json(await quoteCrossPayment(f, cross.data));
+        return c.json(
+          await quoteCrossPayment(f, cross.data, (method, params) =>
+            rpc("https://mainnet.base.org", method, params),
+          ),
+        );
       } catch {
         return c.json({ error: "verified_cross_chain_quote_unavailable" }, 503);
       }

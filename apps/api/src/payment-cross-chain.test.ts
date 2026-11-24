@@ -9,9 +9,26 @@ const intent = {
   recipient: "0xa11F5DA00D9a0E9b809E94c4cAe1efa36E8ff50b",
   amountMicroUsdc: "1000000",
 };
-function quote(result: typeof sample) {
+function quote(result: typeof sample, balance = 0n, allowance = 0n) {
   vi.spyOn(Date, "now").mockReturnValue((sample.quoteExpiryTimestamp - 100) * 1000);
-  return paymentRoutes(async (url) => {
+  return paymentRoutes(async (url, init) => {
+    if (String(url) === "https://mainnet.base.org") {
+      const { method, params } = JSON.parse(String(init?.body));
+      if (method === "eth_blockNumber") return Response.json({ result: "0xabc" });
+      expect(params.at(-1)).toBe("0xabc");
+      if (method === "eth_getBalance") return Response.json({ result: "0x0" });
+      expect(method).toBe("eth_call");
+      expect(params[0].to.toLowerCase()).toBe("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913");
+      const calldata = String(params[0].data).toLowerCase();
+      const arg = intent.sender.slice(2).toLowerCase().padStart(64, "0");
+      const spender = "09aea4b2242abc8bb4bb78d537a67a245a7bec64".padStart(64, "0");
+      expect(["0x70a08231" + arg, "0xdd62ed3e" + arg + spender]).toContain(calldata);
+      return Response.json({
+        result:
+          "0x" +
+          (calldata.startsWith("0x70a08231") ? balance : allowance).toString(16).padStart(64, "0"),
+      });
+    }
     const p = new URL(String(url)).searchParams;
     expect(p.get("tradeType")).toBe("exactOutput");
     expect(p.get("recipient")).toBe(intent.recipient);
@@ -31,7 +48,23 @@ it("decodes the exact USDC deposit on a live Base to Optimism quote", async () =
     atomic: false,
     amountMicroUsdc: "1000000",
     maxInputMicroUsdc: sample.maxInputAmount,
+    sourceWallet: {
+      blockNumber: "0xabc",
+      depositShortfallMicroUsdc: sample.inputAmount,
+      requiredApprovalMicroUsdc: sample.inputAmount,
+    },
   });
+});
+it("requires the full approval amount only when the existing allowance is insufficient", async () => {
+  const amount = BigInt(sample.inputAmount);
+  for (const [existing, required] of [
+    [amount, "0"],
+    [amount - 1n, sample.inputAmount],
+  ] as const) {
+    expect(await (await quote(sample, amount, existing)).json()).toMatchObject({
+      sourceWallet: { depositShortfallMicroUsdc: "0", requiredApprovalMicroUsdc: required },
+    });
+  }
 });
 it.each(["recipient", "payout", "cap", "pool", "expiry", "calldata suffix"])(
   "rejects a mismatched %s",
