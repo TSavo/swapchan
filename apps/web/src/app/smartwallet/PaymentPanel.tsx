@@ -1,5 +1,5 @@
 "use client";
-import { type PaymentQuote, paymentContracts } from "@swapchan/shared";
+import { type PaymentQuote, paymentContracts, paymentSignatureRequest } from "@swapchan/shared";
 import { useEffect, useRef, useState } from "react";
 import {
   type Address,
@@ -11,7 +11,6 @@ import {
 } from "viem";
 import { useSignTypedData, useSwitchChain } from "wagmi";
 import { PaymentRequestError, paymentRequest as request } from "@/lib/paymentRequest";
-import { paymentSignatureRequest } from "@/lib/paymentSigning";
 
 type Review = PaymentQuote & { quoteId: string; authorizationNonce?: string };
 function readAuthorization(raw: string, q: Review): SignedAuthorization {
@@ -167,6 +166,18 @@ export function PaymentPanel({
         built.userOpHash,
         authorization,
       );
+      const verification = await request<{ status: string; userOpHash: Hex }>("verify", {
+        quoteId: q.quoteId,
+        userOpHash: built.userOpHash,
+        userOperation: built.userOperation,
+        authorization,
+      });
+      if (
+        verification.status !== "verified" ||
+        verification.userOpHash !== built.userOpHash ||
+        q.expiresAt <= Date.now() / 1000
+      )
+        throw Error("Payment verification failed. Request a fresh quote.");
       const signature = await signTypedDataAsync({ ...typed, account: sender });
       try {
         localStorage.setItem(trackingKey, built.userOpHash);

@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   EvmAddress,
   type PaymentQuote,
   paymentBatch,
   paymentContracts,
   paymentGasLimits,
+  paymentSignatureRequest,
 } from "@swapchan/shared";
 import { Hono } from "hono";
 import {
@@ -325,6 +327,28 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
       s: sigWord,
     })
     .strict();
+  class GasLimitExceeded extends Error {
+    constructor(readonly field: string) {
+      super("Gas estimate exceeds the reviewed limit");
+    }
+  }
+  async function simulateOperation(op: RpcOp) {
+    const estimate = z
+      .object({
+        callGasLimit: hex,
+        verificationGasLimit: hex,
+        preVerificationGas: hex,
+        paymasterVerificationGasLimit: hex,
+        paymasterPostOpGasLimit: hex,
+      })
+      .parse(await pm("eth_estimateUserOperationGas", [op, entry]));
+    for (const [key, value] of Object.entries(estimate)) {
+      if (BigInt(value) > BigInt(String(op[key]))) throw new GasLimitExceeded(key);
+    }
+    return estimate;
+  }
+  const simulationSignature =
+    "0x302f9159d5987680933b56019340d483d5ad02ac7f20d74021d3b587a0077b0b2388e782c5690c9c391c5877f4edadabdf7751dfee5c2dd90e4cded0f6e091181c";
   app.post("/build", async (c) => {
     const parsed = z
       .object({ quoteId: z.uuid(), authorization: authorization.optional() })
@@ -361,8 +385,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
             "0x" + value.toString(16),
           ]),
         ),
-        signature:
-          "0x302f9159d5987680933b56019340d483d5ad02ac7f20d74021d3b587a0077b0b2388e782c5690c9c391c5877f4edadabdf7751dfee5c2dd90e4cded0f6e091181c",
+        signature: simulationSignature,
       };
       if (q.requiresDelegation) {
         if (checked.accountType !== "undelegated")
@@ -406,19 +429,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
           return c.json({ error: "unexpected_paymaster" }, 422);
         Object.assign(op, offer);
       }
-      const estimate = z
-        .object({
-          callGasLimit: hex,
-          verificationGasLimit: hex,
-          preVerificationGas: hex,
-          paymasterVerificationGasLimit: hex,
-          paymasterPostOpGasLimit: hex,
-        })
-        .parse(await pm("eth_estimateUserOperationGas", [op, entry]));
-      for (const [key, value] of Object.entries(estimate)) {
-        if (BigInt(value) > BigInt(String(op[key])))
-          return c.json({ error: "gas_limit_exceeded", field: key }, 422);
-      }
+      const estimate = await simulateOperation(op);
       if (q.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
       delete op.signature;
       const typed = getUserOperationTypedData({
@@ -457,8 +468,68 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
         typedData: { ...typed, message: packed },
         simulation: { gas: estimate },
       });
-    } catch {
+    } catch (e) {
+      if (e instanceof GasLimitExceeded)
+        return c.json({ error: "gas_limit_exceeded", field: e.field }, 422);
       return c.json({ error: "payment_build_or_simulation_failed" }, 422);
+    }
+  });
+  app.post("/verify", async (c) => {
+    const parsed = z
+      .object({
+        quoteId: z.uuid(),
+        userOpHash: sigWord,
+        userOperation: z.record(z.string(), z.unknown()),
+        authorization: authorization.optional(),
+      })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_verification_request" }, 400);
+    const { quoteId, userOperation, userOpHash, authorization: auth } = parsed.data;
+    const built = builds.get(quoteId);
+    if (!built || built.quote.expiresAt <= Date.now() / 1000)
+      return c.json({ error: "build_missing_or_expired" }, 410);
+    const q = built.quote;
+    if (userOpHash !== built.digest || !isDeepStrictEqual(userOperation, built.op))
+      return c.json({ error: "operation_differs_from_build" }, 422);
+    try {
+      paymentSignatureRequest(q, userOperation, userOpHash, auth);
+      const delegation = await inspectDelegation(chain, q.sender, delegate);
+      if (
+        !delegation.proposed ||
+        !("known" in delegation.proposed) ||
+        !delegation.proposed.known ||
+        (q.requiresDelegation
+          ? delegation.accountType !== "undelegated"
+          : !delegation.existing?.known)
+      )
+        throw Error("Delegation changed");
+      if (
+        auth &&
+        (BigInt(auth.nonce) !==
+          BigInt(hex.parse(await chain("eth_getTransactionCount", [q.sender, "pending"]))) ||
+          (await recoverAuthorizationAddress({ authorization: auth })).toLowerCase() !==
+            q.sender.toLowerCase())
+      )
+        throw Error("Invalid authorization");
+      const gas = await simulateOperation({ ...built.op, signature: simulationSignature });
+      if (q.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
+      return c.json({
+        status: "verified",
+        userOpHash,
+        entryPoint: entry,
+        delegate,
+        paymaster,
+        sender: q.sender,
+        recipient: q.recipient,
+        amountMicroUsdc: q.amountMicroUsdc,
+        maxWethWei: q.maxWethWei,
+        maxGasMicroUsdc: q.maxGasMicroUsdc,
+        expiresAt: q.expiresAt,
+        simulation: { gas },
+      });
+    } catch {
+      return c.json({ error: "bundle_verification_failed" }, 422);
     }
   });
   app.post("/submit", async (c) => {

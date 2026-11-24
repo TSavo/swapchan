@@ -341,10 +341,10 @@ export const toBaseUnits = (amount: string, decimals: number): bigint =>
 export const fromBaseUnits = (amount: bigint | string, decimals: number): string =>
   formatUnits(BigInt(amount), decimals);
 
+export * from "./across-payment.js";
 export * from "./broadcast.js";
 export * from "./chains.js";
 export * from "./cow.js";
 export * from "./payment-batch.js";
+export * from "./payment-signing.js";
 export * from "./playbook.js";
-
-export * from "./across-payment.js";

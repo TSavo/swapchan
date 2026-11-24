@@ -84,6 +84,24 @@ function setup(failure: "relay" | "simulation" | "none" | "delegate", freshWeth?
   return { app, account, post, quote, sendCount: () => sendCount };
 }
 describe("payment build and relay", () => {
+  it("independently verifies a built operation and rejects changed bytes before signing", async () => {
+    const h = setup("none");
+    const { quoteId } = await h.quote();
+    const { userOperation, userOpHash } = await (await h.post("/build", { quoteId })).json();
+    expect(
+      await (await h.post("/verify", { quoteId, userOperation, userOpHash })).json(),
+    ).toMatchObject({ status: "verified", userOpHash, amountMicroUsdc: "1" });
+    expect(
+      (
+        await h.post("/verify", {
+          quoteId,
+          userOpHash,
+          userOperation: { ...userOperation, callData: "0x" },
+        })
+      ).status,
+    ).toBe(422);
+    expect(h.sendCount()).toBe(0);
+  });
   it("selects the quoted token gas cap for each payment mode", async () => {
     for (const [balance, mode] of [
       [undefined, "delegatedUsdc"],

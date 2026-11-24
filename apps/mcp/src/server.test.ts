@@ -105,6 +105,7 @@ describe("swapchan mcp over streamable http", () => {
         "quote_payment",
         "quote_gas_in_token",
         "build_7702_bundle",
+        "verify_bundle",
         "submit_payment",
         "payment_status",
         "build_limit_order",

@@ -924,6 +924,24 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     safe(async (a: { quoteId: string; authorization?: unknown }) => api.paymentBuild(a)),
   );
   server.registerTool(
+    "verify_bundle",
+    {
+      title: "Verify a Base Sepolia payment before signing",
+      description:
+        "Recheck an unsigned payment against its reviewed quote. Verifies the operation hash, exact batch, approval and fee limits, current delegation and fresh bundler simulation. Supply the same authorization used at build for a first payment.",
+      inputSchema: z
+        .object({
+          quoteId: z.uuid(),
+          userOpHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+          userOperation: z.record(z.string(), z.unknown()),
+          authorization: z.record(z.string(), z.unknown()).optional(),
+        })
+        .strict(),
+      annotations: ro,
+    },
+    safe(async (a) => api.verifyBundle(a)),
+  );
+  server.registerTool(
     "pay",
     {
       title: "Prepare an exact USDC payment for wallet review",

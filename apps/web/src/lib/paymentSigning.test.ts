@@ -1,7 +1,11 @@
-import { type PaymentQuote, paymentBatch, paymentContracts } from "@swapchan/shared";
+import {
+  type PaymentQuote,
+  paymentBatch,
+  paymentContracts,
+  paymentSignatureRequest,
+} from "@swapchan/shared";
 import { hashTypedData } from "viem";
 import { describe, expect, it } from "vitest";
-import { paymentSignatureRequest } from "./paymentSigning";
 
 // Public fields from the settled Base Sepolia repeat payment.
 const hash = "0xd95146b6e3d1539be4e4e385d77db365aced558b8d065a74c8eb02414b1f7b54";

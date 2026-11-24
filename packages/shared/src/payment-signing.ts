@@ -1,12 +1,12 @@
+import { type Hex, hashTypedData, type SignedAuthorization } from "viem";
+import { getUserOperationTypedData } from "viem/account-abstraction";
+import { z } from "zod";
 import {
   paymentContracts as c,
   type PaymentQuote,
   paymentBatch,
   paymentGasLimits,
-} from "@swapchan/shared";
-import { type Hex, hashTypedData, type SignedAuthorization } from "viem";
-import { getUserOperationTypedData } from "viem/account-abstraction";
-import { z } from "zod";
+} from "./payment-batch.js";
 
 const bytes = z
   .string()
