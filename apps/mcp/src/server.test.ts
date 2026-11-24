@@ -51,6 +51,19 @@ const ethToUsdc = {
 };
 
 describe("swapchan mcp over streamable http", () => {
+  it("rejects a mainnet pay build before using a quote ID from any network", async () => {
+    const client = await connect();
+    try {
+      const result = await client.callTool({
+        name: "pay",
+        arguments: { chainId: 10, quoteId: "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041" },
+      });
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe("Error: Mainnet payment builds are disabled.");
+    } finally {
+      await client.close();
+    }
+  });
   it("lists Litecoin, Dogecoin and Bitcoin Cash as THORChain-only chains (send and receive)", async () => {
     const c = await connect();
     const t = text(await c.callTool({ name: "get_supported_chains", arguments: {} }));

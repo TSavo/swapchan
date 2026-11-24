@@ -88,5 +88,7 @@ Hosted at `https://mcp.swapchan.com/mcp`.
 
 ## Tests
 
+Run `pnpm --filter @swapchan/mcp e2e:payments` against a running MCP server and API to check the live payment flow. Set `MCP_URL` if the server uses a different URL from `http://127.0.0.1:8788/mcp`, and set `MCP_KEY` if it requires authentication. The check compares both Optimism Sepolia funding routes through `pay` and `quote_payment`. It verifies a historical finalized Base-to-Optimism transfer and reports the current settlement state of the roadmap's testnet deposit. It uses public wallet addresses and requires no signing key.
+
 `pnpm --filter @swapchan/mcp test` boots a mock of the API contract (`src/mockApi.ts`) and drives the real HTTP server with the SDK
 `Client` over Streamable HTTP: tool listing, every tool, auth 401s, 429 rate limiting, slippage cap, input validation and upstream errors.

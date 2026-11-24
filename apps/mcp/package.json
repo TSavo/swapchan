@@ -14,7 +14,8 @@
     "dev": "MCP_ALLOW_ANONYMOUS=1 tsx watch --env-file-if-exists=../../.env src/index.ts",
     "start": "node dist/index.js",
     "start:stdio": "node dist/index.js --stdio",
-    "e2e": "tsx scripts/e2e.ts"
+    "e2e": "tsx scripts/e2e.ts",
+    "e2e:payments": "tsx scripts/payment-e2e.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "2.1.1",

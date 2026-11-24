@@ -987,7 +987,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "Start with a destination chain, sender, recipient and micro-USDC amount. Base Sepolia inspects local USDC and WETH. Optimism and Optimism Sepolia check Base USDC on the corresponding network. After human review pass the quote ID to build the next unsigned wallet action. Base Sepolia first-time setup needs the chain-specific signed delegation. On Base mainnet, wait for a successful approval receipt before requesting after_approval. If atomicOrigin is present, atomic_origin builds one locally signed Base Sepolia transaction through the existing verified delegate. Only an independently confirmed destination receipt proves payout.",
+        "Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across. Inspect routes, fundingShortfall and recommendedQuoteId. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Use atomic_origin when atomicOrigin is offered. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
       inputSchema: z
         .object({
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
@@ -1029,6 +1029,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           ...a.intent,
           chainId: a.chainId,
         });
+      if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
       return a.chainId !== 84532
         ? api.crossPaymentBuild({ quoteId: a.quoteId, stage: a.stage ?? "initial" })
         : api.paymentBuild({
@@ -1059,7 +1060,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Check payment settlement",
       description:
-        "Check a Base Sepolia userOpHash, or provide crossChain with the reviewed Base-to-Optimism payment intent and the origin transaction hash. The destination fill hash is optional. Cross-chain settled requires finalized receipts, matching deposit and fill events, and exact token deltas.",
+        "Check a Base Sepolia userOpHash, a direct Optimism USDC transfer using direct and its transactionHash, or an Across deposit using crossChain and its originHash. An optional destination fillHash bypasses the Across index. Cross-chain settlement requires finalized receipts, matching deposit and fill events, and exact token movements.",
       inputSchema: z
         .object({
           userOpHash: z
