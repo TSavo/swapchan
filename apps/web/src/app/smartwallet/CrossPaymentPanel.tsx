@@ -20,7 +20,12 @@ import {
 } from "viem";
 import { useConfig, useSendTransaction, useSwitchChain } from "wagmi";
 import { getConnectorClient, getTransaction, getTransactionReceipt } from "wagmi/actions";
-import { atomicWalletRequest, supportsAtomicOrigin, walletBatchReceipt } from "@/lib/atomicWallet";
+import {
+  atomicWalletRequest,
+  supportsAtomicOrigin,
+  walletBatchReceipt,
+  walletRejectedRequest,
+} from "@/lib/atomicWallet";
 import { paymentRequest } from "@/lib/paymentRequest";
 
 type Proposal = { chainId: number; actionId: string; recipient: string; amountMicroUsdc: string };
@@ -261,9 +266,13 @@ export function CrossPaymentPanel({
           );
         setMessage("Atomic batch submitted to the wallet.");
       } catch (error) {
-        if (error && typeof error === "object" && "code" in error && error.code === 4001)
+        if (walletRejectedRequest(error)) {
           save(review);
-        throw error;
+          throw error;
+        }
+        throw Error(
+          "The wallet submission is unconfirmed. Check transaction status using the saved batch ID.",
+        );
       }
       return;
     }
@@ -278,8 +287,13 @@ export function CrossPaymentPanel({
       });
       save({ ...review, step: { ...step, hash } });
     } catch (e) {
-      if (e instanceof Error && /user rejected|user denied/i.test(e.message)) save(review);
-      throw e;
+      if (walletRejectedRequest(e)) {
+        save(review);
+        throw e;
+      }
+      throw Error(
+        "The wallet submission is unconfirmed. Enter the origin transaction hash from your wallet to resume.",
+      );
     }
   }
   async function check(candidateFillHash?: Hex) {
@@ -415,7 +429,8 @@ export function CrossPaymentPanel({
   const refreshStatus = useEffectEvent(() => {
     if (!lock.current) void run(check);
   });
-  const submittedHash = review?.step?.hash ?? review?.step?.batchId;
+  const batchId = review?.step?.batchId;
+  const submittedHash = review?.step?.hash ?? batchId;
   useEffect(() => {
     if (!submittedHash) return;
     const timer = setInterval(refreshStatus, 15000);
@@ -516,6 +531,25 @@ export function CrossPaymentPanel({
           <button disabled={busy} onClick={() => run(check)}>
             Check transaction status
           </button>
+          {batchId && (
+            <button
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  const client = await getConnectorClient(config, {
+                    account: sender,
+                    chainId: 84532,
+                  });
+                  await client.request(
+                    { method: "wallet_showCallsStatus", params: [batchId] },
+                    { retryCount: 0 },
+                  );
+                })
+              }
+            >
+              Open batch in wallet
+            </button>
+          )}
           {review.step.hash &&
             (review.step.action === "deposit" || review.step.action === "atomic_origin") && (
               <details>

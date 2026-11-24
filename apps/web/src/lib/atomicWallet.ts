@@ -2,6 +2,15 @@ import { type Address, type Hex, toHex } from "viem";
 import { z } from "zod";
 
 const chain = toHex(84532);
+export function walletRejectedRequest(error: unknown) {
+  const seen = new Set<object>();
+  while (error && typeof error === "object" && !seen.has(error)) {
+    seen.add(error);
+    if ("code" in error && error.code === 4001) return true;
+    error = "cause" in error ? error.cause : undefined;
+  }
+  return false;
+}
 export function supportsAtomicOrigin(capabilities: unknown) {
   const record = z.record(z.string(), z.unknown()).safeParse(capabilities);
   if (!record.success) return false;
@@ -44,6 +53,18 @@ export function walletBatchReceipt(raw: unknown, id: Hex) {
   if (s.id !== id || BigInt(s.chainId) !== 84532n)
     throw Error("Wallet status belongs to another batch or network.");
   if (s.status >= 100 && s.status < 200) return null;
+  if (s.status === 400)
+    throw Error(
+      "The wallet reports the batch failed before inclusion. Open the batch in your wallet to review it.",
+    );
+  if (s.status === 500)
+    throw Error(
+      "The wallet reports the whole batch reverted. Check the origin receipt for the gas charge.",
+    );
+  if (s.status === 600)
+    throw Error(
+      "The wallet reports partial execution. Review its receipts for any approval or deposit before another payment.",
+    );
   if (
     s.status !== 200 ||
     s.atomic !== true ||

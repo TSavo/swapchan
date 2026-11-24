@@ -1,6 +1,11 @@
 import { type Address, toHex } from "viem";
 import { describe, expect, it } from "vitest";
-import { atomicWalletRequest, supportsAtomicOrigin, walletBatchReceipt } from "./atomicWallet";
+import {
+  atomicWalletRequest,
+  supportsAtomicOrigin,
+  walletBatchReceipt,
+  walletRejectedRequest,
+} from "./atomicWallet";
 
 const chainId = toHex(84532),
   id = toHex(1, { size: 32 }),
@@ -15,6 +20,15 @@ const confirmed = {
   receipts: [{ status: "0x1", transactionHash: hash }],
 };
 describe("atomic wallet execution", () => {
+  it("clears a submission only for an explicit wallet rejection, including wrapped errors", () => {
+    expect(walletRejectedRequest({ cause: { cause: { code: 4001 } } })).toBe(true);
+    expect(walletRejectedRequest(new Error("connection lost: user rejected or timed out"))).toBe(
+      false,
+    );
+    const cycle = { code: -32603, cause: {} };
+    cycle.cause = cycle;
+    expect(walletRejectedRequest(cycle)).toBe(false);
+  });
   it("requires live support on Base Sepolia without a delegation upgrade", () => {
     expect(supportsAtomicOrigin({ [chainId]: { atomic: { status: "supported" } } })).toBe(true);
     for (const unsupported of [
