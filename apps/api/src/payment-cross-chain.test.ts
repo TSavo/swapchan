@@ -1,4 +1,6 @@
-import { acrossRoute } from "@swapchan/shared";
+import { readFileSync } from "node:fs";
+import { acrossRoute, batchAbi, checkAcrossAtomicOrigin, paymentContracts } from "@swapchan/shared";
+import { type Address, decodeFunctionData, encodeFunctionData, type Hex } from "viem";
 import { afterEach, expect, it, vi } from "vitest";
 import sample from "./fixtures/across-exact-base-op.json";
 import sepolia from "./fixtures/across-exact-sepolia.json";
@@ -18,6 +20,7 @@ function app(
   depositReverts = false,
   feeUnavailable = false,
   native = "0x0",
+  delegation: "none" | "verified" | "changed" | "revert" = "none",
 ) {
   const fixture = result.swapTx.chainId === 84532 ? sepolia : sample;
   const route = acrossRoute(result.swapTx.chainId === 84532 ? 11155420 : 10);
@@ -33,6 +36,21 @@ function app(
         if (method === "eth_gasPrice") return Response.json({ result: "0xa" });
         if (method === "eth_maxPriorityFeePerGas") return Response.json({ result: "0x1" });
         expect(params.at(-1)).toBe("0xabc");
+        if (method === "eth_getCode") {
+          if (delegation === "none") return Response.json({ result: "0x" });
+          if (params[0].toLowerCase() === intent.sender.toLowerCase())
+            return Response.json({ result: "0xef0100" + paymentContracts.delegate.slice(2) });
+          expect(params[0]).toBe(paymentContracts.delegate);
+          return Response.json({
+            result:
+              delegation === "changed"
+                ? "0x6000"
+                : readFileSync(
+                    new URL("./fixtures/base-sepolia-simple7702.hex", import.meta.url),
+                    "utf8",
+                  ).trim(),
+          });
+        }
         if (method === "eth_getTransactionCount") return Response.json({ result: "0x3" });
         if (
           method === "eth_call" &&
@@ -43,6 +61,33 @@ function app(
         }
         if (method === "eth_simulateV1") {
           const calls = params[0].blockStateCalls[0].calls;
+          if (calls.length === 1 && calls[0].to === intent.sender) {
+            checkAcrossAtomicOrigin(
+              { ...calls[0], value: "0x0", chainId: 84532 },
+              {
+                ...intent,
+                sender: intent.sender as Address,
+                recipient: intent.recipient as Address,
+                chainId: 11155420,
+                maxInputMicroUsdc: result.maxInputAmount,
+                expiresAt: result.quoteExpiryTimestamp,
+              },
+              result.inputAmount,
+            );
+            return Response.json({
+              result: [
+                {
+                  calls: [
+                    {
+                      status: delegation === "revert" ? "0x0" : "0x1",
+                      returnData: "0x",
+                      gasUsed: "0x100",
+                    },
+                  ],
+                },
+              ],
+            });
+          }
           expect(calls.at(-1)).toMatchObject({
             from: intent.sender,
             to: fixture.swapTx.to,
@@ -131,6 +176,58 @@ it.each([false, true])(
     ).toBe(approved ? 200 : 409);
   },
 );
+it.each(["none", "verified", "changed", "revert"] as const)(
+  "binds atomic origin execution to a verified delegate and successful outer simulation (%s)",
+  async (mode) => {
+    const a = app(sepolia, BigInt(sepolia.inputAmount), 0n, false, false, "0xffff", mode);
+    const target = { ...intent, sourceChainId: 84532, chainId: 11155420 };
+    const q = await (await post(a, "/quote", target)).json();
+    const build = await post(a, "/cross-chain/build", {
+      quoteId: q.quoteId,
+      stage: "atomic_origin",
+    });
+    if (mode !== "verified") {
+      expect(q.atomicOrigin).toBeNull();
+      expect(build.status).toBe(422);
+      return;
+    }
+    expect(q.atomic).toBe(false);
+    expect(q.atomicOrigin.delegate).toBe(paymentContracts.delegate);
+    expect(build.status).toBe(200);
+    const { action, unsignedTransaction: tx } = await build.json();
+    expect(action).toBe("atomic_origin");
+    const review = {
+      ...target,
+      sender: intent.sender as Address,
+      recipient: intent.recipient as Address,
+      maxInputMicroUsdc: q.maxInputMicroUsdc,
+      expiresAt: q.expiresAt,
+    };
+    expect(() => checkAcrossAtomicOrigin(tx, review, q.inputMicroUsdc)).not.toThrow();
+    const [calls] = decodeFunctionData({ abi: batchAbi, data: tx.data as Hex }).args;
+    for (const bad of [
+      [...calls].reverse(),
+      [...calls, calls[0]!],
+      [{ ...calls[0]!, value: 1n }, calls[1]!],
+    ]) {
+      const data = encodeFunctionData({ abi: batchAbi, functionName: "executeBatch", args: [bad] });
+      expect(() => checkAcrossAtomicOrigin({ ...tx, data }, review, q.inputMicroUsdc)).toThrow();
+    }
+  },
+);
+it("offers only the atomic path when the wallet can afford one batch but cannot afford two transactions", async () => {
+  const a = app(sepolia, BigInt(sepolia.inputAmount), 0n, false, false, "0xbbb", "verified");
+  const q = await (
+    await post(a, "/quote", { ...intent, sourceChainId: 84532, chainId: 11155420 })
+  ).json();
+  expect(q.execution).toBe("unsigned_atomic_origin");
+  expect(
+    (await post(a, "/cross-chain/build", { quoteId: q.quoteId, stage: "atomic_origin" })).status,
+  ).toBe(200);
+  expect(
+    (await post(a, "/cross-chain/build", { quoteId: q.quoteId, stage: "initial" })).status,
+  ).toBe(422);
+});
 it("checks only local holdings for an ordinary Optimism send", async () => {
   const hosts = new Set<string>();
   const a = paymentRoutes(

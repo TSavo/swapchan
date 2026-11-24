@@ -7,6 +7,7 @@ import {
   pad,
   parseAbi,
 } from "viem";
+import { batchAbi } from "./payment-batch.js";
 
 const sourceToken = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const destinationToken = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85";
@@ -98,4 +99,40 @@ export function checkAcrossApproval(
     expected.toLowerCase() !== tx.data.toLowerCase()
   )
     throw Error("Approval differs from the review");
+}
+
+/** Independently check the exact two calls an already delegated account will execute. */
+export function checkAcrossAtomicOrigin(
+  tx: { from: string; to: string; data: Hex; value: string; chainId: number },
+  intent: Parameters<typeof checkAcrossDeposit>[1],
+  approvalCap: string,
+) {
+  if (
+    intent.chainId !== 11155420 ||
+    tx.chainId !== 84532 ||
+    tx.from.toLowerCase() !== intent.sender.toLowerCase() ||
+    tx.to.toLowerCase() !== intent.sender.toLowerCase() ||
+    BigInt(tx.value) !== 0n
+  )
+    throw Error("Unexpected origin batch account or chain");
+  const { args } = decodeFunctionData({ abi: batchAbi, data: tx.data });
+  const [approval, deposit] = args[0];
+  if (
+    args[0].length !== 2 ||
+    !approval ||
+    !deposit ||
+    encodeFunctionData({ abi: batchAbi, functionName: "executeBatch", args }).toLowerCase() !==
+      tx.data.toLowerCase()
+  )
+    throw Error("Unexpected origin batch calldata");
+  const { amountIn } = checkAcrossDeposit(
+    { to: deposit.target, data: deposit.data, value: String(deposit.value) },
+    intent,
+  );
+  if (amountIn > BigInt(approvalCap)) throw Error("Origin batch approval exceeds review");
+  checkAcrossApproval(
+    { to: approval.target, data: approval.data, value: String(approval.value) },
+    String(amountIn),
+    intent.chainId,
+  );
 }

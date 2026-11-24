@@ -191,7 +191,7 @@ export function paymentRoutes(
   });
   app.post("/cross-chain/build", async (c) => {
     const body = z
-      .object({ quoteId: z.uuid(), stage: z.enum(["initial", "after_approval"]) })
+      .object({ quoteId: z.uuid(), stage: z.enum(["initial", "after_approval", "atomic_origin"]) })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: "invalid_build_request" }, 400);
@@ -234,32 +234,38 @@ export function paymentRoutes(
       return c.json({ error: "quote_expired" }, 410);
     if (saved.intent.chainId === 10)
       return c.json({ error: "mainnet_payment_build_disabled" }, 403);
+    const atomic = body.data.stage === "atomic_origin";
     const reviewedGas = saved.review.originGas.estimate;
-    if (!reviewedGas || saved.review.originGas.estimatedShortfallWei !== "0")
+    if (
+      !reviewedGas ||
+      (!atomic && saved.review.originGas.estimatedShortfallWei !== "0") ||
+      saved.review.execution === "quote_only"
+    )
       return c.json({ error: "funded_quote_required" }, 422);
     try {
-      const { quote, calls } = await inspectCrossPayment(saved.intent);
+      const { quote, calls, atomicTx } = await inspectCrossPayment(saved.intent);
       if (saved.review.expiresAt <= Date.now() / 1000)
         return c.json({ error: "quote_expired" }, 410);
       if (
         quote.originSimulation.status !== "succeeded" ||
         !quote.originGas.estimate ||
-        quote.originGas.estimatedShortfallWei !== "0" ||
+        (!atomic && quote.originGas.estimatedShortfallWei !== "0") ||
         !calls.length
       )
         return c.json({ error: "origin_preflight_failed" }, 422);
       if (
         BigInt(quote.maxInputMicroUsdc) > BigInt(saved.review.maxInputMicroUsdc) ||
-        BigInt(quote.originGas.estimate.totalWei) > BigInt(reviewedGas.totalWei)
+        (!atomic && BigInt(quote.originGas.estimate.totalWei) > BigInt(reviewedGas.totalWei))
       )
         return c.json({ error: "payment_terms_changed" }, 409);
       const approval = calls.length === 2;
       const reviewedSteps = reviewedGas.perTransactionWei.slice(-calls.length);
       if (
-        reviewedSteps.length !== calls.length ||
-        quote.originGas.estimate.perTransactionWei.some(
-          (cost, i) => BigInt(cost) > BigInt(reviewedSteps[i]!),
-        )
+        !atomic &&
+        (reviewedSteps.length !== calls.length ||
+          quote.originGas.estimate.perTransactionWei.some(
+            (cost, i) => BigInt(cost) > BigInt(reviewedSteps[i]!),
+          ))
       )
         return c.json({ error: "origin_fee_estimate_changed" }, 409);
       if (
@@ -270,6 +276,26 @@ export function paymentRoutes(
             BigInt(saved.review.sourceWallet.requiredApprovalMicroUsdc))
       )
         return c.json({ error: "approval_changed" }, 409);
+      if (body.data.stage === "atomic_origin") {
+        const previous = saved.review.atomicOrigin;
+        if (
+          !previous ||
+          !approval ||
+          !atomicTx ||
+          !quote.atomicOrigin ||
+          BigInt(quote.atomicOrigin.estimatedFeeWei) > BigInt(previous.estimatedFeeWei) ||
+          saved.review.expiresAt <= Date.now() / 1000
+        )
+          return c.json({ error: "atomic_origin_unavailable" }, 422);
+        return c.json({
+          quoteId: body.data.quoteId,
+          action: "atomic_origin",
+          unsignedTransaction: { ...atomicTx, chainId: 84532, value: "0x0" },
+          originSimulation: { status: "succeeded" },
+          estimatedOriginFeeWei: quote.atomicOrigin.estimatedFeeWei,
+          expiresAt: Math.min(quote.expiresAt, saved.review.expiresAt),
+        });
+      }
       return c.json({
         quoteId: body.data.quoteId,
         action: approval ? "approve" : "deposit",
@@ -363,7 +389,7 @@ export function paymentRoutes(
       }
       if (!candidates.length) return c.json({ error: "no_verified_quotes" }, 503);
       const rate =
-        candidates.filter((c) => c.execution === "unsigned_origin_steps").length > 1
+        candidates.filter((c) => c.execution !== "quote_only").length > 1
           ? await testnetGasConversion().catch(() => null)
           : null;
       return c.json({

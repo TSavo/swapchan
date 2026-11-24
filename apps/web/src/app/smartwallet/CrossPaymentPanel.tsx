@@ -1,5 +1,11 @@
 "use client";
-import { acrossRoute, checkAcrossApproval, checkAcrossDeposit } from "@swapchan/shared";
+import {
+  acrossRoute,
+  checkAcrossApproval,
+  checkAcrossAtomicOrigin,
+  checkAcrossDeposit,
+  paymentContracts,
+} from "@swapchan/shared";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   type Address,
@@ -21,6 +27,8 @@ type Quote = Pick<Proposal, "recipient" | "amountMicroUsdc"> & {
   quoteId: string;
   expiresAt: number;
   provider?: string;
+  atomicOrigin?: { delegate: string; estimatedFeeWei: string } | null;
+  fundingFeeWei?: string | null;
   estimatedTotalMicroUsdc?: string | null;
   maxInputMicroUsdc: string;
   sourceWallet: {
@@ -32,7 +40,7 @@ type Quote = Pick<Proposal, "recipient" | "amountMicroUsdc"> & {
   execution: string;
 };
 type Tx = { from: Address; to: Address; data: Hex; chainId: number; value: string };
-type Step = { action: "approve" | "deposit" | "transfer"; tx: Tx; hash?: Hex };
+type Step = { action: "approve" | "deposit" | "transfer" | "atomic_origin"; tx: Tx; hash?: Hex };
 type Comparison = {
   routes: Quote[];
   recommendedQuoteId: string | null;
@@ -142,8 +150,17 @@ export function CrossPaymentPanel({
     : review?.approved || q?.sourceWallet.requiredApprovalMicroUsdc === "0"
       ? "deposit"
       : "approve";
-  async function sign() {
+  async function sign(atomic = false) {
     if (!review || !q || review.step || !matches(q) || !q.originGas.estimate) return;
+    if (
+      atomic &&
+      (action !== "approve" ||
+        q.atomicOrigin?.delegate.toLowerCase() !== paymentContracts.delegate.toLowerCase() ||
+        signingChain !== 84532)
+    )
+      throw Error("Atomic origin unavailable");
+    const expectedAction = atomic ? "atomic_origin" : action;
+    const reviewedFee = atomic ? q.atomicOrigin!.estimatedFeeWei : q.originGas.estimate.totalWei;
     await switchChainAsync({ chainId: signingChain });
     const b = await paymentRequest<{
       quoteId: string;
@@ -154,21 +171,27 @@ export function CrossPaymentPanel({
       estimatedOriginFeeWei: string;
     }>("cross-chain/build", {
       quoteId: q.quoteId,
-      stage: review.approved ? "after_approval" : "initial",
+      stage: atomic ? "atomic_origin" : review.approved ? "after_approval" : "initial",
     });
     const tx = b.unsignedTransaction;
     const expiresAt = Math.min(b.expiresAt, q.expiresAt);
     if (
       b.quoteId !== q.quoteId ||
-      b.action !== action ||
+      b.action !== expectedAction ||
       tx.chainId !== signingChain ||
       tx.from.toLowerCase() !== sender.toLowerCase() ||
       b.originSimulation.status !== "succeeded" ||
       !(expiresAt > Date.now() / 1000) ||
-      BigInt(b.estimatedOriginFeeWei) > BigInt(q.originGas.estimate.totalWei)
+      BigInt(b.estimatedOriginFeeWei) > BigInt(reviewedFee)
     )
       throw Error("Payment terms changed. Request a fresh quote.");
-    if (action === "transfer") {
+    if (atomic)
+      checkAcrossAtomicOrigin(
+        tx,
+        { ...intent, expiresAt, maxInputMicroUsdc: q.maxInputMicroUsdc },
+        q.sourceWallet.requiredApprovalMicroUsdc,
+      );
+    else if (action === "transfer") {
       const expected = encodeFunctionData({
         abi: erc20Abi,
         functionName: "transfer",
@@ -183,7 +206,7 @@ export function CrossPaymentPanel({
     } else if (action === "approve")
       checkAcrossApproval(tx, q.sourceWallet.requiredApprovalMicroUsdc, route.destination);
     else checkAcrossDeposit(tx, { ...intent, maxInputMicroUsdc: q.maxInputMicroUsdc, expiresAt });
-    const step = { action, tx } as Step;
+    const step = { action: expectedAction, tx } as Step;
     save({ ...review, step });
     try {
       const hash = await sendTransactionAsync({
@@ -340,7 +363,9 @@ export function CrossPaymentPanel({
                   : "spend " +
                     usdc(option.maxInputMicroUsdc) +
                     " USDC plus " +
-                    formatEther(BigInt(option.originGas.estimate!.totalWei)) +
+                    formatEther(
+                      BigInt(option.fundingFeeWei ?? option.originGas.estimate!.totalWei),
+                    ) +
                     " ETH"}{" "}
               {option.quoteId === choices.recommendedQuoteId ? "(recommended)" : ""}
             </button>
@@ -394,6 +419,22 @@ export function CrossPaymentPanel({
           <button disabled={!ready || busy} onClick={() => run(quote)}>
             {q ? "Refresh quote" : "Get payment quote"}
           </button>
+          {action === "approve" &&
+            q &&
+            q.execution !== "quote_only" &&
+            q.atomicOrigin?.delegate.toLowerCase() === paymentContracts.delegate.toLowerCase() && (
+              <div>
+                <p>
+                  Your existing Simple7702Account delegation can approve and deposit in one Base
+                  Sepolia transaction. Estimated gas{" "}
+                  {formatEther(BigInt(q.atomicOrigin.estimatedFeeWei))} ETH. The destination fill
+                  settles separately.
+                </p>
+                <button disabled={busy} onClick={() => run(() => sign(true))}>
+                  Sign atomic approval and deposit
+                </button>
+              </div>
+            )}
           {q?.execution === "unsigned_origin_steps" && (
             <button disabled={busy} onClick={() => run(sign)}>
               {action === "approve"

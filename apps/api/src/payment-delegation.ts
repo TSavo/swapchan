@@ -7,7 +7,8 @@ const bytes = z
   .regex(/^0x(?:[0-9a-f]{2})*$/i)
   .transform((value) => value as Hex);
 // Simple7702Account runtime used by the Base Sepolia acceptance payments.
-const approvedHash = "0x82c1e6c0f83d22eef579344e8eff26baf24db4dabe5408d681b00d0512bc3ec4";
+export const simpleAccountRuntimeHash =
+  "0x82c1e6c0f83d22eef579344e8eff26baf24db4dabe5408d681b00d0512bc3ec4";
 type Rpc = (method: string, params: unknown[]) => Promise<unknown>;
 
 export async function inspectDelegation(rpc: Rpc, sender: string, proposedDelegate?: string) {
@@ -33,7 +34,7 @@ export async function inspectDelegation(rpc: Rpc, sender: string, proposedDelega
     const codeHash = keccak256(runtime);
     const known =
       address.toLowerCase() === paymentContracts.delegate.toLowerCase() &&
-      codeHash === approvedHash;
+      codeHash === simpleAccountRuntimeHash;
     return {
       address,
       codeHash,

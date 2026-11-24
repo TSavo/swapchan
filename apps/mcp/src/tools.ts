@@ -987,7 +987,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "Start with a destination chain, sender, recipient and micro-USDC amount. Base Sepolia inspects local USDC and WETH. Optimism and Optimism Sepolia check Base USDC on the corresponding network. After human review pass the quote ID to build the next unsigned wallet action. Base Sepolia first-time setup needs the chain-specific signed delegation. On Base mainnet, wait for a successful approval receipt before requesting after_approval. Only an independently confirmed destination receipt proves payout.",
+        "Start with a destination chain, sender, recipient and micro-USDC amount. Base Sepolia inspects local USDC and WETH. Optimism and Optimism Sepolia check Base USDC on the corresponding network. After human review pass the quote ID to build the next unsigned wallet action. Base Sepolia first-time setup needs the chain-specific signed delegation. On Base mainnet, wait for a successful approval receipt before requesting after_approval. If atomicOrigin is present, atomic_origin builds one locally signed Base Sepolia transaction through the existing verified delegate. Only an independently confirmed destination receipt proves payout.",
       inputSchema: z
         .object({
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
@@ -1000,7 +1000,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .strict()
             .optional(),
           quoteId: z.uuid().optional(),
-          stage: z.enum(["initial", "after_approval"]).optional(),
+          stage: z.enum(["initial", "after_approval", "atomic_origin"]).optional(),
           authorization: z
             .object({
               chainId: z.literal(84532),
