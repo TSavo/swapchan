@@ -111,6 +111,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
           (id, m, p) =>
             rpc(id === 8453 ? "https://mainnet.base.org" : "https://mainnet.optimism.io", m, p),
           parsed.data,
+          f,
         ),
       );
     } catch {

@@ -13,7 +13,12 @@ const intent = settlementInput.parse({
   amountMicroUsdc: "13440834",
   maxInputMicroUsdc: "13442407",
 });
-function verify(receipts = sample, isFinal = true, cap = intent.maxInputMicroUsdc) {
+function verify(
+  receipts = sample,
+  isFinal = true,
+  cap = intent.maxInputMicroUsdc,
+  lookup?: typeof fetch,
+) {
   return crossSettlement(
     async (chain, method, params) => {
       const r = chain === 8453 ? receipts.origin : receipts.destination;
@@ -21,9 +26,40 @@ function verify(receipts = sample, isFinal = true, cap = intent.maxInputMicroUsd
       if (params[0] === "finalized") return { number: isFinal ? r.blockNumber : "0x0" };
       return { hash: r.blockHash };
     },
-    { ...intent, maxInputMicroUsdc: cap },
+    { ...intent, maxInputMicroUsdc: cap, fillHash: lookup ? undefined : intent.fillHash },
+    lookup,
   );
 }
+const indexResult = {
+  status: "filled",
+  originChainId: 8453,
+  destinationChainId: 10,
+  depositId: "6488685",
+  depositTxnRef: intent.originHash,
+  fillTxnRef: intent.fillHash,
+};
+it("uses the index to locate the fill for an origin-only request", async () => {
+  expect(
+    await verify(sample, true, intent.maxInputMicroUsdc, async (url) => {
+      expect(new URL(String(url)).searchParams.get("depositTxnRef")).toBe(intent.originHash);
+      return Response.json(indexResult);
+    }),
+  ).toMatchObject({ status: "settled", fillHash: intent.fillHash });
+});
+it("rejects a fill hint for a different deposit", async () => {
+  await expect(
+    verify(sample, true, intent.maxInputMicroUsdc, async () =>
+      Response.json({ ...indexResult, depositId: "1" }),
+    ),
+  ).rejects.toThrow();
+});
+it("reports a provider refund separately from verified settlement", async () => {
+  expect(
+    await verify(sample, true, intent.maxInputMicroUsdc, async () =>
+      Response.json({ ...indexResult, status: "refunded", fillTxnRef: null }),
+    ),
+  ).toMatchObject({ status: "recovery_reported", providerStatus: "refunded" });
+});
 it("reconciles the historical Base deposit with the finalized Optimism payout", async () => {
   expect(await verify()).toMatchObject({
     status: "settled",

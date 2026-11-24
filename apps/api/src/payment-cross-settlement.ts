@@ -21,7 +21,7 @@ const receipt = z.object({
 });
 export const settlementInput = crossPaymentInput.safeExtend({
   originHash: hash,
-  fillHash: hash,
+  fillHash: hash.optional(),
   maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
 });
 const abi = parseAbi([
@@ -29,7 +29,11 @@ const abi = parseAbi([
   "event FilledRelay(bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 repaymentChainId,uint256 indexed originChainId,uint256 indexed depositId,uint32 fillDeadline,uint32 exclusivityDeadline,bytes32 exclusiveRelayer,bytes32 indexed relayer,bytes32 depositor,bytes32 recipient,bytes32 messageHash,(bytes32 updatedRecipient,bytes32 updatedMessageHash,uint256 updatedOutputAmount,uint8 fillType) relayExecutionInfo)",
 ]);
 type Rpc = (chain: 8453 | 10, method: string, params: unknown[]) => Promise<unknown>;
-export async function crossSettlement(rpc: Rpc, intent: z.infer<typeof settlementInput>) {
+export async function crossSettlement(
+  rpc: Rpc,
+  intent: z.infer<typeof settlementInput>,
+  f: typeof fetch = fetch,
+) {
   async function canonical(chain: 8453 | 10, tx: Hex) {
     const raw = await rpc(chain, "eth_getTransactionReceipt", [tx]);
     if (raw === null) return null;
@@ -47,11 +51,8 @@ export async function crossSettlement(rpc: Rpc, intent: z.infer<typeof settlemen
         BigInt(r.blockNumber),
     };
   }
-  const [origin, dest] = await Promise.all([
-    canonical(8453, intent.originHash),
-    canonical(10, intent.fillHash),
-  ]);
-  if (!origin || !dest) return { status: "awaiting_receipts" };
+  const origin = await canonical(8453, intent.originHash);
+  if (!origin) return { status: "awaiting_origin_receipt", originHash: intent.originHash };
   const logs = (r: z.infer<typeof receipt>, addr: string) =>
     r.logs
       .filter((l) => l.address.toLowerCase() === addr.toLowerCase())
@@ -59,12 +60,8 @@ export async function crossSettlement(rpc: Rpc, intent: z.infer<typeof settlemen
   const deposits = logs(origin.r, route.pool)
     .filter((l) => l.topics[0] === toEventSelector(abi[0]))
     .map((l) => decodeEventLog({ abi: [abi[0]], ...l }));
-  const fills = logs(dest.r, route.destinationPool)
-    .filter((l) => l.topics[0] === toEventSelector(abi[1]))
-    .map((l) => decodeEventLog({ abi: [abi[1]], ...l }));
-  if (deposits.length !== 1 || fills.length !== 1) throw Error("Ambiguous or missing relay events");
-  const d = deposits[0]!.args,
-    f = fills[0]!.args;
+  if (deposits.length !== 1) throw Error("Ambiguous or missing origin deposit");
+  const d = deposits[0]!.args;
   if (
     d.depositor !== pad(intent.sender).toLowerCase() ||
     d.recipient !== pad(intent.recipient).toLowerCase() ||
@@ -74,12 +71,56 @@ export async function crossSettlement(rpc: Rpc, intent: z.infer<typeof settlemen
     d.inputAmount > BigInt(intent.maxInputMicroUsdc) ||
     d.outputAmount !== BigInt(intent.amountMicroUsdc) ||
     d.destinationChainId !== 10n ||
-    f.originChainId !== 8453n ||
     d.message !== "0x" ||
-    f.messageHash !== zeroHash ||
-    f.relayExecutionInfo.updatedRecipient !== d.recipient ||
-    f.relayExecutionInfo.updatedOutputAmount !== d.outputAmount ||
-    f.relayExecutionInfo.updatedMessageHash !== zeroHash ||
+    delta(origin.r, route.sourceToken, intent.sender) !== -d.inputAmount ||
+    delta(origin.r, route.sourceToken, route.pool) !== d.inputAmount
+  )
+    throw Error("Origin deposit differs from payment intent");
+  const progress = {
+    originHash: intent.originHash,
+    depositId: String(d.depositId),
+    originFinalized: origin.final,
+    spentMicroUsdc: String(d.inputAmount),
+  };
+  let fillHash = intent.fillHash;
+  if (!fillHash) {
+    const params = new URLSearchParams({ originChainId: "8453", depositTxnRef: intent.originHash });
+    const reply = await f("https://app.across.to/api/deposit/status?" + params, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (reply.status === 404) return { ...progress, status: "awaiting_fill_index" };
+    if (!reply.ok) throw Error("Across status lookup unavailable");
+    const hint = z
+      .object({
+        status: z.string(),
+        originChainId: z.literal(8453),
+        destinationChainId: z.literal(10),
+        depositId: z.union([z.string(), z.number().int().safe()]),
+        depositTxnRef: hash,
+        fillTxnRef: hash.nullish(),
+      })
+      .parse(await reply.json());
+    if (hint.depositTxnRef !== intent.originHash || String(hint.depositId) !== progress.depositId)
+      throw Error("Across index returned a different deposit");
+    if (hint.status === "refunded" || hint.status === "expired")
+      return { ...progress, status: "recovery_reported", providerStatus: hint.status };
+    if (hint.status !== "filled" || !hint.fillTxnRef)
+      return { ...progress, status: "awaiting_verified_fill", providerStatus: hint.status };
+    fillHash = hint.fillTxnRef;
+  }
+  const dest = await canonical(10, fillHash);
+  if (!dest) return { ...progress, status: "awaiting_destination_receipt", fillHash };
+  const fills = logs(dest.r, route.destinationPool)
+    .filter((l) => l.topics[0] === toEventSelector(abi[1]))
+    .map((l) => decodeEventLog({ abi: [abi[1]], ...l }));
+  if (fills.length !== 1) throw Error("Ambiguous or missing destination fill");
+  const fill = fills[0]!.args;
+  if (
+    fill.originChainId !== 8453n ||
+    fill.messageHash !== zeroHash ||
+    fill.relayExecutionInfo.updatedRecipient !== d.recipient ||
+    fill.relayExecutionInfo.updatedOutputAmount !== d.outputAmount ||
+    fill.relayExecutionInfo.updatedMessageHash !== zeroHash ||
     (
       [
         "depositId",
@@ -93,7 +134,7 @@ export async function crossSettlement(rpc: Rpc, intent: z.infer<typeof settlemen
         "exclusiveRelayer",
         "exclusivityDeadline",
       ] as const
-    ).some((k) => f[k] !== d[k])
+    ).some((k) => fill[k] !== d[k])
   )
     throw Error("Relay differs from intent");
   function delta(r: z.infer<typeof receipt>, token: string, who: string) {
@@ -108,16 +149,12 @@ export async function crossSettlement(rpc: Rpc, intent: z.infer<typeof settlemen
         0n,
       );
   }
-  if (
-    delta(origin.r, route.sourceToken, intent.sender) !== -d.inputAmount ||
-    delta(origin.r, route.sourceToken, route.pool) !== d.inputAmount ||
-    delta(dest.r, route.destinationToken, intent.recipient) !== d.outputAmount
-  )
+  if (delta(dest.r, route.destinationToken, intent.recipient) !== d.outputAmount)
     throw Error("Token movements differ from relay");
   return {
     status: origin.final && dest.final ? "settled" : "awaiting_finality",
     originHash: intent.originHash,
-    fillHash: intent.fillHash,
+    fillHash,
     depositId: String(d.depositId),
     spentMicroUsdc: String(d.inputAmount),
     paidMicroUsdc: String(d.outputAmount),

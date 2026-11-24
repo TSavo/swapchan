@@ -945,7 +945,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Check payment settlement",
       description:
-        "Check a Base Sepolia userOpHash, or provide crossChain with the reviewed Base-to-Optimism payment intent and both transaction hashes. Cross-chain settled requires finalized receipts, matching deposit and fill events, and exact token deltas.",
+        "Check a Base Sepolia userOpHash, or provide crossChain with the reviewed Base-to-Optimism payment intent and the origin transaction hash. The destination fill hash is optional. Cross-chain settled requires finalized receipts, matching deposit and fill events, and exact token deltas.",
       inputSchema: z
         .object({
           userOpHash: z
@@ -961,7 +961,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
               maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
               originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
-              fillHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              fillHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
             })
             .optional(),
         })
