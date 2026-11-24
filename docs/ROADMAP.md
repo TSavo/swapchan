@@ -238,6 +238,8 @@ The safety layer is largely built for one transaction. `verify_tx`, `simulate_sw
 
 ### Chain abstraction
 
+The local `quote_payment` accepts Base USDC as a source (`sourceChainId: 8453`) and Optimism USDC as the destination (`chainId: 10`). A live quote on 24 November 2026 bound a 1 USDC payout to a maximum 1.005 USDC deposit. Origin ETH gas is additional. The API decodes the Across SpokePool deposit and checks the sender, recipient, tokens, amounts, destination chain, expiry and empty destination message. This route currently returns a quote only. Funding selection, origin gas estimation, wallet execution and destination settlement evidence remain open. [Across swap API](https://legacy.docs.across.to/introduction/swap-api)
+
 Swap routing already covers 15 networks, including native BTC/LTC/DOGE/BCH through THORChain and Solana through Jupiter and the other routers. `find_money` and `broadcast_tx` go wider. The payment tool should sit on top of that: source from those holdings, settle USDC on an EVM chain (or Solana when a corresponding one-signature path exists). 7702 bundles themselves are EVM-only; THOR and Solana legs stay as today (PSBT, memo deposit, or a Solana tx) and should be called out when a payment cannot be one signature.
 
 ## Proposed tools

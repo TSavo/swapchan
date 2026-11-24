@@ -19,6 +19,7 @@ import {
 import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
+import { crossPaymentInput, quoteCrossPayment } from "./payment-cross-chain.js";
 import { inspectDelegation } from "./payment-delegation.js";
 import { chainReceipt, operationReceipt, reconcilePayment } from "./payment-receipt.js";
 import { openPaymentStore } from "./payment-store.js";
@@ -129,7 +130,17 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     }
   });
   app.post("/quote", async (c) => {
-    const parsed = input.safeParse(await c.req.json().catch(() => null));
+    const raw = await c.req.json().catch(() => null);
+    if (raw?.sourceChainId !== undefined) {
+      const cross = crossPaymentInput.safeParse(raw);
+      if (!cross.success) return c.json({ error: "unsupported_cross_chain_payment" }, 400);
+      try {
+        return c.json(await quoteCrossPayment(f, cross.data));
+      } catch {
+        return c.json({ error: "verified_cross_chain_quote_unavailable" }, 503);
+      }
+    }
+    const parsed = input.safeParse(raw);
     if (!parsed.success) return c.json({ error: "invalid_payment" }, 400);
     const { sender, amountMicroUsdc } = parsed.data;
     try {

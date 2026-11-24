@@ -886,21 +886,19 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
   server.registerTool(
     "quote_payment",
     {
-      title: "Quote an exact Base Sepolia USDC payment",
+      title: "Quote an exact USDC payment",
       description:
-        "Quote an exact recipient payout, the USDC gas limit and the maximum WETH spend. Amounts are integer micro-USDC (1 means 0.000001 USDC).",
+        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For a read-only Across USDC quote from Base to Optimism, pass sourceChainId 8453 and destination chainId 10. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z.object({
-        chainId: z.literal(84532),
+        chainId: z.union([z.literal(84532), z.literal(10)]),
+        sourceChainId: z.literal(8453).optional(),
         sender: evm,
         recipient: evm,
         amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
       }),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    safe(
-      async (a: { chainId: 84532; sender: string; recipient: string; amountMicroUsdc: string }) =>
-        api.paymentQuote(a),
-    ),
+    safe(async (a) => api.paymentQuote(a)),
   );
   server.registerTool(
     "build_7702_bundle",
