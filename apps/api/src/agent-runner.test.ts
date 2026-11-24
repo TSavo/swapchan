@@ -14,6 +14,22 @@ function setup(respond: Respond) {
 const kinds = (es: SessionEvent[]) => es.map((e) => e.kind);
 
 describe("runTurn", () => {
+  it("hands the exact payment intent to the wallet with a server-assigned action ID", async () => {
+    const action = {
+      type: "review_payment",
+      chainId: 84532,
+      recipient: A,
+      amountMicroUsdc: "1",
+    } as const;
+    const { store, bus, respond } = setup(async () => ({
+      message: "Review your payment.",
+      action,
+    }));
+    await runTurn(store, bus, A, respond);
+    expect(store.all(A).find((e) => e.kind === "action_proposed")?.data).toMatchObject({
+      action: { ...action, actionId: expect.any(String) },
+    });
+  });
   it("emits agent_message + a server-id'd action_proposed for an actionable envelope", async () => {
     const { store, bus, respond } = setup(async () => ({
       message: "Swapping 0.5 BNB to USDC.",

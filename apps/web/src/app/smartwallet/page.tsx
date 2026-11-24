@@ -36,6 +36,7 @@ interface VerifySummary {
   note?: string;
 }
 type ModelAction =
+  | { type: "review_payment"; chainId: 84532; recipient: string; amountMicroUsdc: string }
   | { type: "sign_and_send"; chainId: number; tx: EvmTx; verify: VerifySummary }
   | { type: "sign_message"; message: string }
   | { type: "switch_chain"; chainId: number }
@@ -68,7 +69,7 @@ const isActionable = (a: ProposedAction) =>
   // sign_message is no longer offered by the agent (an old stored one is shown but not actionable).
   // onramp (card on-ramp) is gated off until MoonPay signature validation is resolved on their side —
   // re-add "|| a.type === 'onramp'" here (and in the api's isActionable) to turn it back on.
-  a.type === "sign_and_send" || a.type === "switch_chain";
+  a.type === "review_payment" || a.type === "sign_and_send" || a.type === "switch_chain";
 
 export default function SmartWalletPage() {
   const config = useConfig();
@@ -229,7 +230,7 @@ export default function SmartWalletPage() {
 
   // Auto-send: fire a proposed action straight to the wallet (never a danger-verdict one).
   useEffect(() => {
-    if (!autoSend || !pending || busy) return;
+    if (!autoSend || !pending || busy || pending.type === "review_payment") return;
     if (!synced.current) return; // never auto-fire during a reload's catch-up replay
     if (resolvedRef.current.has(pending.actionId)) return; // already broadcast/handled
     // The server guard never proposes a danger action (danger → nothing is proposed), so a pending
@@ -336,12 +337,14 @@ export default function SmartWalletPage() {
   const report = useCallback(
     async (actionId: string, data: Record<string, unknown>) => {
       if (!address) return;
-      await postEvent({
+      const result = await postEvent({
         address,
         kind: "wallet_result",
         data: { action_id: actionId, ...data },
         idempotencyKey: `${actionId}:${String(data.status)}:${String(data.hash ?? "")}`,
       });
+      if (!result.ok)
+        throw new Error(`Could not record the wallet result (HTTP ${result.status}).`);
     },
     [address],
   );
@@ -443,7 +446,9 @@ export default function SmartWalletPage() {
         .sw-md h1, .sw-md h2, .sw-md h3 { font-weight: 700; margin: 0.4rem 0 0.2rem; }
       `}</style>
 
-      <PaymentPanel key={address} sender={address} chainId={chainId} />
+      {pending?.type !== "review_payment" && (
+        <PaymentPanel key={address} sender={address} chainId={chainId} />
+      )}
       {confirmAutoSend && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
@@ -695,7 +700,16 @@ export default function SmartWalletPage() {
                     : "I read the warning above and want to send this anyway."}
                 </label>
               )}
-            {pending.type !== "onramp" && (
+            {pending.type === "review_payment" && (
+              <PaymentPanel
+                key={pending.actionId}
+                sender={address}
+                chainId={chainId}
+                proposal={pending}
+                report={report}
+              />
+            )}
+            {pending.type !== "onramp" && pending.type !== "review_payment" && (
               <div className="flex gap-2">
                 <button
                   type="button"

@@ -61,12 +61,18 @@ function readAuthorization(raw: string, q: Review): SignedAuthorization {
 export function PaymentPanel({
   sender,
   chainId,
+  proposal,
+  report,
 }: {
   sender: Address;
   chainId: number | undefined;
+  proposal?: { actionId: string; recipient: string; amountMicroUsdc: string };
+  report?: (id: string, data: Record<string, unknown>) => Promise<void>;
 }) {
-  const [recipient, setRecipient] = useState(""),
-    [amount, setAmount] = useState(""),
+  const [recipient, setRecipient] = useState(proposal?.recipient ?? ""),
+    [amount, setAmount] = useState(
+      proposal ? formatUnits(BigInt(proposal.amountMicroUsdc), 6) : "",
+    ),
     [auth, setAuth] = useState("");
   const [q, setQ] = useState<Review | null>(null),
     [msg, setMsg] = useState(""),
@@ -74,7 +80,9 @@ export function PaymentPanel({
   const [pending, setPending] = useState(""),
     [receipt, setReceipt] = useState("");
   const lock = useRef(false);
-  const trackingKey = `swapchan:payment:84532:${sender.toLowerCase()}`;
+  const actionId = proposal?.actionId;
+  const trackingKey =
+    `swapchan:payment:84532:${sender.toLowerCase()}` + (actionId ? ":" + actionId : "");
   useEffect(() => {
     try {
       const saved = localStorage.getItem(trackingKey);
@@ -102,6 +110,15 @@ export function PaymentPanel({
         }>("status/" + pending);
         if (stopped) return;
         if (r.status === "settled" || r.status === "failed") {
+          if (actionId && report)
+            await report(actionId, {
+              status: r.status === "settled" ? "confirmed" : "reverted",
+              chainId: 84532,
+              hash: r.transactionHash,
+              userOpHash: pending,
+              paidMicroUsdc: r.paidMicroUsdc,
+              gasChargedMicroUsdc: r.gasChargedMicroUsdc,
+            });
           setMsg(
             r.status === "failed"
               ? "Payment reverted."
@@ -127,7 +144,7 @@ export function PaymentPanel({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [pending, trackingKey]);
+  }, [pending, trackingKey, actionId, report]);
   async function act() {
     if (lock.current || pending) return;
     lock.current = true;
@@ -217,7 +234,10 @@ export function PaymentPanel({
     }
   }
   return (
-    <details className="rounded-xl border border-white/20 p-3 text-sm">
+    <details
+      open={proposal ? true : undefined}
+      className="rounded-xl border border-white/20 p-3 text-sm"
+    >
       <summary className="cursor-pointer font-semibold">Pay exact USDC · Base Sepolia</summary>
       <div className="mt-2 grid gap-2">
         <label>
@@ -225,6 +245,7 @@ export function PaymentPanel({
           <input
             className="w-full rounded bg-black/30 p-2"
             value={recipient}
+            readOnly={!!proposal}
             disabled={busy || !!pending}
             onChange={(e) => {
               setRecipient(e.target.value);
@@ -238,6 +259,7 @@ export function PaymentPanel({
             className="rounded bg-black/30 p-2"
             inputMode="decimal"
             value={amount}
+            readOnly={!!proposal}
             disabled={busy || !!pending}
             onChange={(e) => {
               setAmount(e.target.value);
@@ -271,6 +293,20 @@ export function PaymentPanel({
           {busy ? "Working…" : q ? "Review and sign in wallet" : "Get payment quote"}
         </button>
         {msg && <p role="status">{msg}</p>}
+        {actionId && report && !pending && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void report(actionId, { status: "rejected" })
+                .catch(() => setMsg("Could not dismiss the payment. Try again."))
+                .finally(() => setBusy(false));
+            }}
+          >
+            Dismiss payment
+          </button>
+        )}
         {pending && <p className="break-all">Operation hash {pending}</p>}
         {receipt && <a href={`https://sepolia.basescan.org/tx/${receipt}`}>View payment receipt</a>}
       </div>

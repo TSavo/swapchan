@@ -31,6 +31,17 @@ export type VerifySummary = z.infer<typeof VerifySummary>;
 
 // The action the model proposes (no actionId — the server assigns that).
 export const ModelAction = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("review_payment"),
+      chainId: z.literal(84532),
+      recipient: z
+        .string()
+        .regex(/^0x[0-9a-f]{40}$/i)
+        .refine((a) => !/^0x0{40}$/i.test(a)),
+      amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+    })
+    .strict(),
   z.object({
     type: z.literal("sign_and_send"),
     chainId: z.number().int(),
@@ -67,5 +78,10 @@ export function isActionable(
   // onramp (card on-ramp) is intentionally NOT actionable yet — MoonPay signature validation is
   // unresolved on their side, so we don't surface a card checkout. Re-add "onramp" here (and in the
   // web page's isActionable) to turn it back on once MoonPay validates. The schema keeps the literal.
-  return a.type === "sign_and_send" || a.type === "sign_message" || a.type === "switch_chain";
+  return (
+    a.type === "review_payment" ||
+    a.type === "sign_and_send" ||
+    a.type === "sign_message" ||
+    a.type === "switch_chain"
+  );
 }
