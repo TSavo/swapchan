@@ -1,7 +1,14 @@
 "use client";
 import { acrossRoute, checkAcrossApproval, checkAcrossDeposit } from "@swapchan/shared";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { type Address, formatEther, formatUnits, type Hex } from "viem";
+import {
+  type Address,
+  encodeFunctionData,
+  erc20Abi,
+  formatEther,
+  formatUnits,
+  type Hex,
+} from "viem";
 import { useConfig, useSendTransaction, useSwitchChain } from "wagmi";
 import { getTransaction, getTransactionReceipt } from "wagmi/actions";
 import { paymentRequest } from "@/lib/paymentRequest";
@@ -13,13 +20,25 @@ type Quote = Pick<Proposal, "recipient" | "amountMicroUsdc"> & {
   chainId: number;
   quoteId: string;
   expiresAt: number;
+  provider?: string;
+  estimatedTotalMicroUsdc?: string | null;
   maxInputMicroUsdc: string;
-  sourceWallet: { requiredApprovalMicroUsdc: string };
+  sourceWallet: {
+    requiredApprovalMicroUsdc: string;
+    balanceMicroUsdc: string;
+    nativeBalanceWei: string;
+  };
   originGas: { estimate: { totalWei: string } | null };
   execution: string;
 };
 type Tx = { from: Address; to: Address; data: Hex; chainId: number; value: string };
-type Step = { action: "approve" | "deposit"; tx: Tx; hash?: Hex };
+type Step = { action: "approve" | "deposit" | "transfer"; tx: Tx; hash?: Hex };
+type Comparison = {
+  routes: Quote[];
+  recommendedQuoteId: string | null;
+  gasConversionSource: string | null;
+  unavailableSourceChainIds: number[];
+};
 type Review = { quote: Quote; approved?: boolean; approvalHash?: Hex; step?: Step };
 const usdc = (n: string) => formatUnits(BigInt(n), 6);
 export function CrossPaymentPanel({
@@ -33,6 +52,7 @@ export function CrossPaymentPanel({
 }) {
   const key = `swapchan:across:${sender.toLowerCase()}:${proposal.actionId}`;
   const [review, setReview] = useState<Review | null>(null);
+  const [choices, setChoices] = useState<Comparison | null>(null);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
@@ -73,10 +93,9 @@ export function CrossPaymentPanel({
     }
   }
   const route = acrossRoute(proposal.chainId);
-  const origin = route.origin === 84532 ? "Base Sepolia" : "Base";
+  const bridgeOrigin = route.origin === 84532 ? "Base Sepolia" : "Base";
   const destination = route.destination === 10 ? "Optimism" : "Optimism Sepolia";
   const intent = {
-    sourceChainId: route.origin,
     chainId: route.destination,
     sender,
     recipient: proposal.recipient as Address,
@@ -85,27 +104,47 @@ export function CrossPaymentPanel({
   function matches(q: Quote) {
     return (
       q.chainId === route.destination &&
-      q.sourceChainId === route.origin &&
+      (q.provider === "direct_transfer"
+        ? q.sourceChainId === route.destination && q.maxInputMicroUsdc === intent.amountMicroUsdc
+        : q.sourceChainId === route.origin) &&
       q.sender.toLowerCase() === sender.toLowerCase() &&
       q.recipient.toLowerCase() === proposal.recipient.toLowerCase() &&
       q.amountMicroUsdc === proposal.amountMicroUsdc
     );
   }
   async function quote() {
-    const q = await paymentRequest<Quote>("quote", intent);
+    const list = await paymentRequest<Comparison>("quote", intent);
     if (
-      !matches(q) ||
-      BigInt(q.sourceWallet.requiredApprovalMicroUsdc) > BigInt(q.maxInputMicroUsdc)
+      !list.routes.length ||
+      list.routes.some(
+        (q) =>
+          !matches(q) ||
+          BigInt(q.sourceWallet.requiredApprovalMicroUsdc) > BigInt(q.maxInputMicroUsdc),
+      )
     )
       throw Error("Quote differs from your request.");
-    save({ quote: q, ...(review?.approvalHash ? { approvalHash: review.approvalHash } : {}) });
+    const selected =
+      list.routes.find((q) => q.quoteId === list.recommendedQuoteId) ?? list.routes[0]!;
+    setChoices(list);
+    save({
+      quote: selected,
+      ...(review?.approvalHash ? { approvalHash: review.approvalHash } : {}),
+    });
+    if (!list.recommendedQuoteId)
+      setMessage("Review the available funding routes and their costs.");
   }
   const q = review?.quote;
-  const action =
-    review?.approved || q?.sourceWallet.requiredApprovalMicroUsdc === "0" ? "deposit" : "approve";
+  const direct = q?.provider === "direct_transfer";
+  const origin = direct ? destination : bridgeOrigin;
+  const signingChain = direct ? route.destination : route.origin;
+  const action = direct
+    ? "transfer"
+    : review?.approved || q?.sourceWallet.requiredApprovalMicroUsdc === "0"
+      ? "deposit"
+      : "approve";
   async function sign() {
     if (!review || !q || review.step || !matches(q) || !q.originGas.estimate) return;
-    await switchChainAsync({ chainId: route.origin });
+    await switchChainAsync({ chainId: signingChain });
     const b = await paymentRequest<{
       quoteId: string;
       action: string;
@@ -122,14 +161,26 @@ export function CrossPaymentPanel({
     if (
       b.quoteId !== q.quoteId ||
       b.action !== action ||
-      tx.chainId !== route.origin ||
+      tx.chainId !== signingChain ||
       tx.from.toLowerCase() !== sender.toLowerCase() ||
       b.originSimulation.status !== "succeeded" ||
       !(expiresAt > Date.now() / 1000) ||
       BigInt(b.estimatedOriginFeeWei) > BigInt(q.originGas.estimate.totalWei)
     )
       throw Error("Payment terms changed. Request a fresh quote.");
-    if (action === "approve")
+    if (action === "transfer") {
+      const expected = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [intent.recipient, BigInt(intent.amountMicroUsdc)],
+      });
+      if (
+        tx.to.toLowerCase() !== route.destinationToken.toLowerCase() ||
+        tx.data.toLowerCase() !== expected.toLowerCase() ||
+        BigInt(tx.value) !== 0n
+      )
+        throw Error("Transfer differs from your request.");
+    } else if (action === "approve")
       checkAcrossApproval(tx, q.sourceWallet.requiredApprovalMicroUsdc, route.destination);
     else checkAcrossDeposit(tx, { ...intent, maxInputMicroUsdc: q.maxInputMicroUsdc, expiresAt });
     const step = { action, tx } as Step;
@@ -137,7 +188,7 @@ export function CrossPaymentPanel({
     try {
       const hash = await sendTransactionAsync({
         account: sender,
-        chainId: route.origin,
+        chainId: signingChain,
         to: tx.to,
         data: tx.data,
         value: 0n,
@@ -153,9 +204,9 @@ export function CrossPaymentPanel({
     const { step } = review;
     const hash = step.hash ?? (recovery as Hex);
     if (!/^0x[a-f0-9]{64}$/i.test(hash))
-      throw Error("Enter the Base transaction hash from your wallet.");
+      throw Error("Enter the origin transaction hash from your wallet.");
     if (!step.hash) {
-      const tx = await getTransaction(config, { chainId: route.origin, hash });
+      const tx = await getTransaction(config, { chainId: signingChain, hash });
       if (
         tx.from.toLowerCase() !== sender.toLowerCase() ||
         tx.to?.toLowerCase() !== step.tx.to.toLowerCase() ||
@@ -165,14 +216,38 @@ export function CrossPaymentPanel({
         throw Error("Transaction differs from the reviewed step.");
       save({ ...review, step: { ...step, hash } });
     }
-    const receipt = await getTransactionReceipt(config, { chainId: route.origin, hash });
+    const receipt = await getTransactionReceipt(config, { chainId: signingChain, hash });
     if (receipt.status !== "success") {
       save({ quote: q });
-      throw Error("Base transaction reverted. Refresh the quote before signing again.");
+      throw Error("Origin transaction reverted. Refresh the quote before signing again.");
     }
     if (step.action === "approve") {
       save({ quote: q, approved: true, approvalHash: hash });
       setMessage("Approval confirmed on Base.");
+      return;
+    }
+    if (step.action === "transfer") {
+      const result = await paymentRequest<{
+        status: string;
+        paidMicroUsdc?: string;
+        transactionHash?: Hex;
+      }>("direct/status", { ...intent, transactionHash: hash });
+      if (
+        result.status === "settled" &&
+        result.transactionHash === hash &&
+        result.paidMicroUsdc === intent.amountMicroUsdc
+      )
+        await report(proposal.actionId, {
+          status: "confirmed",
+          chainId: route.destination,
+          hash,
+          paidMicroUsdc: result.paidMicroUsdc,
+        });
+      setMessage(
+        result.status === "settled"
+          ? "The recipient’s USDC transfer is finalized."
+          : "Waiting for destination finality.",
+      );
       return;
     }
     const result = await paymentRequest<{
@@ -186,6 +261,7 @@ export function CrossPaymentPanel({
       fillDeadline?: number;
     }>("cross-chain/status", {
       ...intent,
+      sourceChainId: route.origin,
       originHash: hash,
       maxInputMicroUsdc: q.maxInputMicroUsdc,
     });
@@ -234,15 +310,57 @@ export function CrossPaymentPanel({
     <section className="space-y-3 p-3">
       <p>
         Pay {usdc(intent.amountMicroUsdc)} USDC on {destination} to <code>{intent.recipient}</code>{" "}
-        from {origin} via Across.
+        {q ? (direct ? "by direct USDC transfer." : `from ${origin} via Across.`) : "."}
       </p>
+      {choices && !review?.step && (
+        <div>
+          {choices.routes.map((option) => (
+            <button
+              type="button"
+              key={option.quoteId}
+              disabled={busy || q?.quoteId === option.quoteId}
+              onClick={() =>
+                run(async () =>
+                  save({
+                    quote: option,
+                    ...(review?.approvalHash ? { approvalHash: review.approvalHash } : {}),
+                  }),
+                )
+              }
+            >
+              {option.provider === "direct_transfer"
+                ? destination + " direct"
+                : bridgeOrigin + " via Across"}{" "}
+              · {usdc(option.sourceWallet.balanceMicroUsdc)} USDC available ·{" "}
+              {formatEther(BigInt(option.sourceWallet.nativeBalanceWei))} ETH available ·{" "}
+              {option.execution === "quote_only"
+                ? "unavailable"
+                : option.estimatedTotalMicroUsdc
+                  ? "estimated total " + usdc(option.estimatedTotalMicroUsdc) + " USDC"
+                  : "spend " +
+                    usdc(option.maxInputMicroUsdc) +
+                    " USDC plus " +
+                    formatEther(BigInt(option.originGas.estimate!.totalWei)) +
+                    " ETH"}{" "}
+              {option.quoteId === choices.recommendedQuoteId ? "(recommended)" : ""}
+            </button>
+          ))}
+          {choices.gasConversionSource && <p>Gas conversion uses {choices.gasConversionSource}.</p>}
+          {!!choices.unavailableSourceChainIds.length && (
+            <p>Quote unavailable on chain {choices.unavailableSourceChainIds.join(", ")}.</p>
+          )}
+        </div>
+      )}
       {q && (
         <p>
           Maximum source spend {usdc(q.maxInputMicroUsdc)} USDC. Estimated {origin} gas{" "}
           {q.originGas.estimate
             ? formatEther(BigInt(q.originGas.estimate.totalWei)) + " ETH"
             : "unavailable"}
-          . Destination settlement requires a separate fill.
+          .{" "}
+          {direct
+            ? "The transfer settles on this chain."
+            : "Destination settlement requires a separate fill."}
         </p>
       )}
       {review?.approvalHash && (
@@ -253,12 +371,16 @@ export function CrossPaymentPanel({
       {review?.step ? (
         <>
           <p>
-            {review.step.action === "approve" ? "Token approval" : "Base deposit"} ·{" "}
-            {review.step.hash ?? "Check your wallet for the submitted transaction."}
+            {review.step.action === "approve"
+              ? "Token approval"
+              : direct
+                ? "USDC transfer"
+                : "Base deposit"}{" "}
+            · {review.step.hash ?? "Check your wallet for the submitted transaction."}
           </p>
           {!review.step.hash && (
             <input
-              aria-label="Base transaction hash"
+              aria-label="origin transaction hash"
               value={recovery}
               onChange={(e) => setRecovery(e.target.value)}
             />
@@ -276,7 +398,9 @@ export function CrossPaymentPanel({
             <button disabled={busy} onClick={() => run(sign)}>
               {action === "approve"
                 ? `Sign USDC approval on ${origin}`
-                : `Sign deposit on ${origin}`}
+                : direct
+                  ? `Sign USDC transfer on ${origin}`
+                  : `Sign deposit on ${origin}`}
             </button>
           )}
           <button

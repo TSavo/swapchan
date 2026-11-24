@@ -164,6 +164,12 @@ export class SwapChanApi {
       body: JSON.stringify(body),
     });
   }
+  directPaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/direct/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   crossPaymentBuild(body: Record<string, unknown>) {
     return this.req(z.record(z.string(), z.unknown()), "/payments/cross-chain/build", {
       method: "POST",

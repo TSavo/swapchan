@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
+  acrossRoute,
   EvmAddress,
   type PaymentQuote,
   paymentBatch,
@@ -21,11 +22,19 @@ import {
 import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
+import { comparePaymentCosts } from "./payment-costs.js";
 import { crossPaymentInput, quoteCrossPayment } from "./payment-cross-chain.js";
 import { crossSettlement, settlementInput } from "./payment-cross-settlement.js";
 import { inspectDelegation } from "./payment-delegation.js";
+import {
+  destinationIntent,
+  directReceipt,
+  directReceiptInput,
+  quoteDirect,
+} from "./payment-direct.js";
 import { chainReceipt, operationReceipt, reconcilePayment } from "./payment-receipt.js";
 import { openPaymentStore } from "./payment-store.js";
+import { llamaPricer, ZERO_ADDRESS } from "./pricing.js";
 
 const { weth, usdc, paymaster, entry, delegate } = paymentContracts;
 const quoter = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27";
@@ -117,12 +126,105 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
   } as const;
   const inspectCrossPayment = (intent: z.infer<typeof crossPaymentInput>) =>
     quoteCrossPayment(f, intent, (m, p) => rpc(bridgeRpc[intent.sourceChainId], m, p));
+  const inspectDirect = (i: z.infer<typeof destinationIntent>) =>
+    quoteDirect(i, (m, p) => rpc(bridgeRpc[i.chainId], m, p));
+  const directQuotes = new Map<
+    string,
+    {
+      intent: z.infer<typeof destinationIntent>;
+      review: Awaited<ReturnType<typeof quoteDirect>>["quote"];
+    }
+  >();
+  function retain<T extends { review: { expiresAt: number } }>(cache: Map<string, T>, entry: T) {
+    const now = Date.now() / 1000;
+    for (const [id, item] of cache) {
+      if (item.review.expiresAt <= now) cache.delete(id);
+    }
+    if (cache.size >= 2048) cache.delete(cache.keys().next().value!);
+    const id = randomUUID();
+    cache.set(id, entry);
+    return id;
+  }
+  async function issueCross(i: z.infer<typeof crossPaymentInput>) {
+    const { quote } = await inspectCrossPayment(i);
+    quote.expiresAt = Math.min(quote.expiresAt, Math.floor(Date.now() / 1000) + 120);
+    return { ...quote, quoteId: retain(crossQuotes, { intent: i, review: quote }) };
+  }
+  async function issueDirect(i: z.infer<typeof destinationIntent>) {
+    const { quote } = await inspectDirect(i);
+    return { ...quote, quoteId: retain(directQuotes, { intent: i, review: quote }) };
+  }
+  const pricer = llamaPricer(f);
+  async function conversion(id: 10 | 11155420) {
+    if (id === 10) {
+      const [eth, usd] = await Promise.all([
+        pricer.token(id, ZERO_ADDRESS),
+        pricer.token(id, acrossRoute(id).destinationToken),
+      ]);
+      const rate = ((eth?.priceUsd ?? 0) / (usd?.priceUsd ?? 0)) * 1e6;
+      return Number.isSafeInteger(Math.ceil(rate)) && rate > 0 ? BigInt(Math.ceil(rate)) : null;
+    }
+    const data = encodeFunctionData({
+      abi,
+      functionName: "quoteExactOutputSingle",
+      args: [{ tokenIn: weth, tokenOut: usdc, amount: 1000000n, fee: 3000, sqrtPriceLimitX96: 0n }],
+    });
+    const [wei] = decodeFunctionResult({
+      abi,
+      functionName: "quoteExactOutputSingle",
+      data: hex.parse(await chain("eth_call", [{ to: quoter, data }, "latest"])) as Hex,
+    });
+    return wei > 0n ? 10n ** 24n / wei : null;
+  }
+  app.post("/direct/status", async (c) => {
+    const p = directReceiptInput.safeParse(await c.req.json().catch(() => null));
+    if (!p.success) return c.json({ error: "invalid_direct_payment" }, 400);
+    try {
+      return c.json(
+        await directReceipt(p.data, (m, params) => rpc(bridgeRpc[p.data.chainId], m, params)),
+      );
+    } catch {
+      return c.json({ error: "receipt_unverified" }, 502);
+    }
+  });
   app.post("/cross-chain/build", async (c) => {
     const body = z
       .object({ quoteId: z.uuid(), stage: z.enum(["initial", "after_approval"]) })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: "invalid_build_request" }, 400);
+    const local = directQuotes.get(body.data.quoteId);
+    if (local) {
+      if (local.review.expiresAt <= Date.now() / 1000)
+        return c.json({ error: "quote_expired" }, 410);
+      if (
+        body.data.stage !== "initial" ||
+        local.review.execution !== "unsigned_origin_steps" ||
+        !local.review.originGas.estimate
+      )
+        return c.json({ error: "funded_quote_required" }, 422);
+      try {
+        const { quote, tx } = await inspectDirect(local.intent);
+        if (
+          quote.execution !== "unsigned_origin_steps" ||
+          !quote.originGas.estimate ||
+          BigInt(quote.originGas.estimate.totalWei) >
+            BigInt(local.review.originGas.estimate.totalWei) ||
+          local.review.expiresAt <= Date.now() / 1000
+        )
+          return c.json({ error: "payment_terms_changed" }, 409);
+        return c.json({
+          quoteId: body.data.quoteId,
+          action: "transfer",
+          unsignedTransaction: tx,
+          originSimulation: quote.originSimulation,
+          estimatedOriginFeeWei: quote.originGas.estimate.totalWei,
+          expiresAt: local.review.expiresAt,
+        });
+      } catch {
+        return c.json({ error: "direct_build_unavailable" }, 503);
+      }
+    }
     const saved = crossQuotes.get(body.data.quoteId);
     if (!saved || saved.review.expiresAt <= Date.now() / 1000)
       return c.json({ error: "quote_expired" }, 410);
@@ -213,23 +315,54 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
   });
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
-    if (raw?.sourceChainId !== undefined) {
-      const cross = crossPaymentInput.safeParse(raw);
-      if (!cross.success) return c.json({ error: "unsupported_cross_chain_payment" }, 400);
-      try {
-        const { quote } = await inspectCrossPayment(cross.data);
-        const quoteId = randomUUID();
-        quote.expiresAt = Math.min(quote.expiresAt, Math.floor(Date.now() / 1000) + 120);
-        for (const [id, saved] of crossQuotes) {
-          if (saved.review.expiresAt > Date.now() / 1000 && crossQuotes.size < 2048) break;
-          crossQuotes.delete(id);
+    if (raw?.chainId === 10 || raw?.chainId === 11155420) {
+      const { sourceChainId, ...rest } = raw;
+      const parsed = destinationIntent.safeParse(rest);
+      if (!parsed.success) return c.json({ error: "invalid_payment" }, 400);
+      const i = parsed.data;
+      const cross = { ...i, sourceChainId: acrossRoute(i.chainId).origin };
+      if (sourceChainId !== undefined) {
+        try {
+          if (sourceChainId === i.chainId) return c.json(await issueDirect(i));
+          if (sourceChainId === cross.sourceChainId) return c.json(await issueCross(cross));
+          return c.json({ error: "unsupported_cross_chain_payment" }, 400);
+        } catch {
+          return c.json({ error: "verified_cross_chain_quote_unavailable" }, 503);
         }
-        crossQuotes.set(quoteId, { intent: cross.data, review: quote });
-        return c.json({ ...quote, quoteId });
-      } catch {
-        return c.json({ error: "verified_cross_chain_quote_unavailable" }, 503);
       }
+      const [direct, bridge] = await Promise.allSettled([issueDirect(i), issueCross(cross)]);
+      type Candidate =
+        | Awaited<ReturnType<typeof issueDirect>>
+        | Awaited<ReturnType<typeof issueCross>>;
+      const candidates: Candidate[] = [];
+      const unavailableSourceChainIds: number[] = [];
+      for (const [result, origin] of [
+        [direct, i.chainId],
+        [bridge, cross.sourceChainId],
+      ] as const) {
+        if (result.status === "fulfilled") candidates.push(result.value);
+        else unavailableSourceChainIds.push(origin);
+      }
+      if (!candidates.length) return c.json({ error: "no_verified_quotes" }, 503);
+      const rate =
+        candidates.filter((c) => c.execution === "unsigned_origin_steps").length > 1
+          ? await conversion(i.chainId).catch(() => null)
+          : null;
+      return c.json({
+        ...comparePaymentCosts(
+          candidates.filter((c) => c.expiresAt > Date.now() / 1000),
+          rate,
+        ),
+        unavailableSourceChainIds,
+        gasConversionSource: rate
+          ? i.chainId === 10
+            ? "DefiLlama ETH/USDC reference"
+            : "Base Sepolia WETH/USDC pool reference"
+          : null,
+      });
     }
+    if (raw?.sourceChainId !== undefined)
+      return c.json({ error: "unsupported_cross_chain_payment" }, 400);
     const parsed = input.safeParse(raw);
     if (!parsed.success) return c.json({ error: "invalid_payment" }, 400);
     const { sender, amountMicroUsdc } = parsed.data;

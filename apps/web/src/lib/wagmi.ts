@@ -9,6 +9,7 @@ import {
   linea,
   mainnet,
   optimism,
+  optimismSepolia,
   polygon,
   scroll,
   solana,
@@ -27,6 +28,7 @@ import {
   linea as wLinea,
   mainnet as wMain,
   optimism as wOp,
+  optimismSepolia as wOpSepolia,
   polygon as wPoly,
   scroll as wScroll,
 } from "wagmi/chains";
@@ -39,6 +41,7 @@ export const networks: [AppKitNetwork, ...AppKitNetwork[]] = [
   base,
   arbitrum,
   optimism,
+  optimismSepolia,
   polygon,
   bsc,
   avalanche,
@@ -71,7 +74,19 @@ export const wagmiAdapter = hasAppKit
 export const wagmiConfig =
   wagmiAdapter?.wagmiConfig ??
   createConfig({
-    chains: [wMain, wBase, wArb, wOp, wPoly, wBsc, wAvax, wLinea, wScroll, wBaseSepolia],
+    chains: [
+      wMain,
+      wBase,
+      wArb,
+      wOp,
+      wPoly,
+      wBsc,
+      wAvax,
+      wLinea,
+      wScroll,
+      wBaseSepolia,
+      wOpSepolia,
+    ],
     connectors: [injected()],
     multiInjectedProviderDiscovery: true,
     ssr: true,
@@ -80,6 +95,7 @@ export const wagmiConfig =
       [wMain.id]: http(),
       [wBase.id]: http(),
       [wBaseSepolia.id]: http(),
+      [wOpSepolia.id]: http(),
       [wArb.id]: http(),
       [wOp.id]: http(),
       [wPoly.id]: http(),

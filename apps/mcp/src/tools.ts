@@ -888,10 +888,12 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote an exact USDC payment",
       description:
-        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
+        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism or Optimism Sepolia omit sourceChainId to compare a direct transfer with an Across bridge by available USDC and estimated ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z.object({
         chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
-        sourceChainId: z.union([z.literal(8453), z.literal(84532)]).optional(),
+        sourceChainId: z
+          .union([z.literal(8453), z.literal(84532), z.literal(10), z.literal(11155420)])
+          .optional(),
         sender: evm,
         recipient: evm,
         amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
@@ -987,7 +989,6 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         return api.paymentQuote({
           ...a.intent,
           chainId: a.chainId,
-          ...(a.chainId !== 84532 ? { sourceChainId: a.chainId === 10 ? 8453 : 84532 } : {}),
         });
       return a.chainId !== 84532
         ? api.crossPaymentBuild({ quoteId: a.quoteId, stage: a.stage ?? "initial" })
@@ -1026,6 +1027,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .string()
             .regex(/^0x[0-9a-f]{64}$/i)
             .optional(),
+          direct: z
+            .object({
+              chainId: z.union([z.literal(10), z.literal(11155420)]),
+              sender: evm,
+              recipient: evm,
+              amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+            })
+            .optional(),
           crossChain: z
             .object({
               sourceChainId: z.union([z.literal(8453), z.literal(84532)]),
@@ -1043,13 +1053,17 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .optional(),
         })
         .refine(
-          (a) => Boolean(a.userOpHash) !== Boolean(a.crossChain),
+          (a) => [a.userOpHash, a.crossChain, a.direct].filter(Boolean).length === 1,
           "Supply one payment reference",
         ),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     safe(async (a) =>
-      a.crossChain ? api.crossPaymentStatus(a.crossChain) : api.paymentStatus(a.userOpHash!),
+      a.direct
+        ? api.directPaymentStatus(a.direct)
+        : a.crossChain
+          ? api.crossPaymentStatus(a.crossChain)
+          : api.paymentStatus(a.userOpHash!),
     ),
   );
   server.registerTool(

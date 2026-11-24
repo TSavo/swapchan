@@ -15,10 +15,10 @@ const uint256 = z
   .regex(/^0x[0-9a-f]{64}$/i)
   .transform(BigInt);
 
-/** Estimate Base origin charges for the exact sequence that successfully simulated. */
+/** Estimate OP Stack origin charges for the exact sequence that successfully simulated. */
 export async function estimateOriginFees(
   rpc: (method: string, params: unknown[]) => Promise<unknown>,
-  chainId: 8453 | 84532,
+  chainId: 8453 | 84532 | 10 | 11155420,
   block: string,
   sender: Address,
   calls: { to: Address; data: Hex; gas: bigint }[],
@@ -33,7 +33,7 @@ export async function estimateOriginFees(
     tip > gasPrice ||
     nonce + BigInt(calls.length) > BigInt(Number.MAX_SAFE_INTEGER)
   )
-    throw Error("Invalid Base gas pricing");
+    throw Error("Invalid origin gas pricing");
   const read = async (data: Hex) =>
     uint256.parse(await rpc("eth_call", [{ to: oracle, data }, block]));
   const fees = await Promise.all(
