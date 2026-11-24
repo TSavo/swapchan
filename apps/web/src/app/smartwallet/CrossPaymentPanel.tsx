@@ -1,6 +1,7 @@
 "use client";
 import {
   acrossRoute,
+  batchAbi,
   checkAcrossApproval,
   checkAcrossAtomicOrigin,
   checkAcrossDeposit,
@@ -9,14 +10,17 @@ import {
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   type Address,
+  decodeFunctionData,
   encodeFunctionData,
   erc20Abi,
   formatEther,
   formatUnits,
   type Hex,
+  toHex,
 } from "viem";
 import { useConfig, useSendTransaction, useSwitchChain } from "wagmi";
-import { getTransaction, getTransactionReceipt } from "wagmi/actions";
+import { getConnectorClient, getTransaction, getTransactionReceipt } from "wagmi/actions";
+import { atomicWalletRequest, supportsAtomicOrigin, walletBatchReceipt } from "@/lib/atomicWallet";
 import { paymentRequest } from "@/lib/paymentRequest";
 
 type Proposal = { chainId: number; actionId: string; recipient: string; amountMicroUsdc: string };
@@ -40,7 +44,12 @@ type Quote = Pick<Proposal, "recipient" | "amountMicroUsdc"> & {
   execution: string;
 };
 type Tx = { from: Address; to: Address; data: Hex; chainId: number; value: string };
-type Step = { action: "approve" | "deposit" | "transfer" | "atomic_origin"; tx: Tx; hash?: Hex };
+type Step = {
+  action: "approve" | "deposit" | "transfer" | "atomic_origin";
+  tx: Tx;
+  hash?: Hex;
+  batchId?: Hex;
+};
 type Comparison = {
   routes: Quote[];
   recommendedQuoteId: string | null;
@@ -61,6 +70,7 @@ export function CrossPaymentPanel({
   const key = `swapchan:across:${sender.toLowerCase()}:${proposal.actionId}`;
   const [review, setReview] = useState<Review | null>(null);
   const [choices, setChoices] = useState<Comparison | null>(null);
+  const [atomicWallet, setAtomicWallet] = useState(false);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
@@ -150,6 +160,23 @@ export function CrossPaymentPanel({
     : review?.approved || q?.sourceWallet.requiredApprovalMicroUsdc === "0"
       ? "deposit"
       : "approve";
+  useEffect(() => {
+    let active = true;
+    setAtomicWallet(false);
+    if (q?.atomicOrigin && signingChain === 84532) {
+      void getConnectorClient(config, { account: sender, chainId: 84532 })
+        .then((client) =>
+          client.request({ method: "wallet_getCapabilities", params: [sender, [toHex(84532)]] }),
+        )
+        .then((features) => {
+          if (active) setAtomicWallet(supportsAtomicOrigin(features));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      active = false;
+    };
+  }, [config, sender, q?.quoteId, q?.atomicOrigin, signingChain]);
   async function sign(atomic = false) {
     if (!review || !q || review.step || !matches(q) || !q.originGas.estimate) return;
     if (
@@ -207,6 +234,34 @@ export function CrossPaymentPanel({
       checkAcrossApproval(tx, q.sourceWallet.requiredApprovalMicroUsdc, route.destination);
     else checkAcrossDeposit(tx, { ...intent, maxInputMicroUsdc: q.maxInputMicroUsdc, expiresAt });
     const step = { action: expectedAction, tx } as Step;
+    if (atomic && atomicWallet) {
+      const client = await getConnectorClient(config, { account: sender, chainId: 84532 });
+      const features = await client.request({
+        method: "wallet_getCapabilities",
+        params: [sender, [toHex(84532)]],
+      });
+      if (!supportsAtomicOrigin(features) || expiresAt <= Date.now() / 1000)
+        throw Error("Wallet capabilities or payment terms changed. Refresh the quote.");
+      const batchId = toHex(crypto.getRandomValues(new Uint8Array(32)));
+      const [calls] = decodeFunctionData({ abi: batchAbi, data: tx.data }).args;
+      save({ ...review, step: { ...step, batchId } });
+      try {
+        const reply = await client.request(
+          { method: "wallet_sendCalls", params: [atomicWalletRequest(sender, batchId, calls)] },
+          { retryCount: 0 },
+        );
+        if (!reply || typeof reply !== "object" || reply.id !== batchId)
+          throw Error(
+            "Wallet returned a different batch ID. Check the original request in your wallet.",
+          );
+        setMessage("Atomic batch submitted to the wallet.");
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === 4001)
+          save(review);
+        throw error;
+      }
+      return;
+    }
     save({ ...review, step });
     try {
       const hash = await sendTransactionAsync({
@@ -225,10 +280,23 @@ export function CrossPaymentPanel({
   async function check() {
     if (!review?.step || !q || !matches(q)) return;
     const { step } = review;
-    const hash = step.hash ?? (recovery as Hex);
+    let hash = step.hash ?? (recovery as Hex);
+    if (step.batchId && !step.hash) {
+      const client = await getConnectorClient(config, { account: sender, chainId: 84532 });
+      const status = await client.request({
+        method: "wallet_getCallsStatus",
+        params: [step.batchId],
+      });
+      const mined = walletBatchReceipt(status, step.batchId);
+      if (!mined) {
+        setMessage("Waiting for the wallet to include the atomic batch.");
+        return;
+      }
+      hash = mined;
+    }
     if (!/^0x[a-f0-9]{64}$/i.test(hash))
       throw Error("Enter the origin transaction hash from your wallet.");
-    if (!step.hash) {
+    if (!step.hash && !step.batchId) {
       const tx = await getTransaction(config, { chainId: signingChain, hash });
       if (
         tx.from.toLowerCase() !== sender.toLowerCase() ||
@@ -239,6 +307,7 @@ export function CrossPaymentPanel({
         throw Error("Transaction differs from the reviewed step.");
       save({ ...review, step: { ...step, hash } });
     }
+    if (step.batchId && !step.hash) save({ ...review, step: { ...step, hash } });
     const receipt = await getTransactionReceipt(config, { chainId: signingChain, hash });
     if (receipt.status !== "success") {
       save({ quote: q });
@@ -323,7 +392,7 @@ export function CrossPaymentPanel({
   const refreshStatus = useEffectEvent(() => {
     if (!lock.current) void run(check);
   });
-  const submittedHash = review?.step?.hash;
+  const submittedHash = review?.step?.hash ?? review?.step?.batchId;
   useEffect(() => {
     if (!submittedHash) return;
     const timer = setInterval(refreshStatus, 15000);
@@ -401,9 +470,12 @@ export function CrossPaymentPanel({
               : direct
                 ? "USDC transfer"
                 : "Base deposit"}{" "}
-            · {review.step.hash ?? "Check your wallet for the submitted transaction."}
+            ·{" "}
+            {review.step.hash ??
+              review.step.batchId ??
+              "Check your wallet for the submitted transaction."}
           </p>
-          {!review.step.hash && (
+          {!review.step.hash && !review.step.batchId && (
             <input
               aria-label="origin transaction hash"
               value={recovery}
@@ -430,8 +502,13 @@ export function CrossPaymentPanel({
                   {formatEther(BigInt(q.atomicOrigin.estimatedFeeWei))} ETH. The destination fill
                   settles separately.
                 </p>
+                {atomicWallet && (
+                  <p>
+                    Your wallet supports atomic calls. Review its final network fee in the wallet.
+                  </p>
+                )}
                 <button disabled={busy} onClick={() => run(() => sign(true))}>
-                  Sign atomic approval and deposit
+                  {atomicWallet ? "Review atomic wallet batch" : "Sign atomic approval and deposit"}
                 </button>
               </div>
             )}
