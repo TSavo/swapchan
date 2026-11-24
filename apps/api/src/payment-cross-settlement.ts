@@ -90,6 +90,18 @@ export async function crossSettlement(
   };
   let fillHash = intent.fillHash;
   if (!fillHash) {
+    async function pending(status: string, providerStatus?: string) {
+      if (Date.now() > d.fillDeadline * 1000) {
+        const block = await rpc(route.destination, "eth_getBlockByNumber", [
+          "finalized",
+          false,
+        ]).catch(() => null);
+        const finalized = z.object({ timestamp: height }).safeParse(block);
+        if (finalized.success && BigInt(finalized.data.timestamp) > BigInt(d.fillDeadline))
+          return { ...progress, status: "fill_deadline_passed", providerStatus };
+      }
+      return { ...progress, status, providerStatus };
+    }
     const params = new URLSearchParams({
       originChainId: String(route.origin),
       depositTxnRef: intent.originHash,
@@ -97,7 +109,7 @@ export async function crossSettlement(
     const reply = await f(route.api + "/deposit/status?" + params, {
       signal: AbortSignal.timeout(10000),
     });
-    if (reply.status === 404) return { ...progress, status: "awaiting_fill_index" };
+    if (reply.status === 404) return pending("awaiting_fill_index");
     if (!reply.ok) throw Error("Across status lookup unavailable");
     const hint = z
       .object({
@@ -114,7 +126,7 @@ export async function crossSettlement(
     if (hint.status === "refunded" || hint.status === "expired")
       return { ...progress, status: "recovery_reported", providerStatus: hint.status };
     if (hint.status !== "filled" || !hint.fillTxnRef)
-      return { ...progress, status: "awaiting_verified_fill", providerStatus: hint.status };
+      return pending("awaiting_verified_fill", hint.status);
     fillHash = hint.fillTxnRef;
   }
   const dest = await canonical(route.destination, fillHash);

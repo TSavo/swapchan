@@ -371,6 +371,8 @@ export function CrossPaymentPanel({
     const details = {
       awaiting_origin_receipt: "Waiting for the origin deposit receipt.",
       awaiting_fill_index: "Waiting for Across to index the deposit.",
+      fill_deadline_passed:
+        "The destination chain has passed the fill deadline. A fill or refund still needs a verified receipt.",
       awaiting_verified_fill: "Waiting for the recipient’s USDC on the destination chain.",
       awaiting_destination_receipt: "Across reported a fill. Waiting for its on-chain receipt.",
       awaiting_finality: "The destination transfer matches. Waiting for chain finality.",

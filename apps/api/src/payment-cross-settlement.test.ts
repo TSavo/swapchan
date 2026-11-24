@@ -18,12 +18,14 @@ function verify(
   isFinal = true,
   cap = intent.maxInputMicroUsdc,
   lookup?: typeof fetch,
+  finalizedTimestamp?: string,
 ) {
   return crossSettlement(
     async (chain, method, params) => {
       const r = chain === 8453 ? receipts.origin : receipts.destination;
       if (method === "eth_getTransactionReceipt") return r;
-      if (params[0] === "finalized") return { number: isFinal ? r.blockNumber : "0x0" };
+      if (params[0] === "finalized")
+        return { number: isFinal ? r.blockNumber : "0x0", timestamp: finalizedTimestamp };
       return { hash: r.blockHash };
     },
     { ...intent, maxInputMicroUsdc: cap, fillHash: lookup ? undefined : intent.fillHash },
@@ -59,6 +61,14 @@ it("reports a provider refund separately from verified settlement", async () => 
       Response.json({ ...indexResult, status: "refunded", fillTxnRef: null }),
     ),
   ).toMatchObject({ status: "recovery_reported", providerStatus: "refunded" });
+});
+it("reports a finalized destination deadline separately from a fill or refund", async () => {
+  const pending = async () =>
+    Response.json({ ...indexResult, status: "pending", fillTxnRef: null });
+  const before = await verify(sample, true, undefined, pending, "0x1");
+  expect(before.status).toBe("awaiting_verified_fill");
+  const after = await verify(sample, true, undefined, pending, "0xffffffff");
+  expect(after).toMatchObject({ status: "fill_deadline_passed", providerStatus: "pending" });
 });
 it("reconciles the historical Base deposit with the finalized Optimism payout", async () => {
   expect(await verify()).toMatchObject({
