@@ -59,6 +59,7 @@ export async function estimateOriginFees(
     operator = fees.reduce((a, v) => a + v.operator, 0n);
   return {
     executionWei: execution.toString(),
+    perTransactionWei: fees.map((fee) => (fee.execution + fee.data + fee.operator).toString()),
     l1DataWei: data.toString(),
     operatorWei: operator.toString(),
     totalWei: (execution + data + operator).toString(),

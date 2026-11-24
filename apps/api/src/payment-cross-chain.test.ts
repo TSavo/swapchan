@@ -9,12 +9,13 @@ const intent = {
   recipient: "0xa11F5DA00D9a0E9b809E94c4cAe1efa36E8ff50b",
   amountMicroUsdc: "1000000",
 };
-function quote(
+function app(
   result: typeof sample,
   balance = 0n,
   allowance = 0n,
   depositReverts = false,
   feeUnavailable = false,
+  native = "0x0",
 ) {
   vi.spyOn(Date, "now").mockReturnValue((sample.quoteExpiryTimestamp - 100) * 1000);
   return paymentRoutes(async (url, init) => {
@@ -56,7 +57,7 @@ function quote(
           ],
         });
       }
-      if (method === "eth_getBalance") return Response.json({ result: "0x0" });
+      if (method === "eth_getBalance") return Response.json({ result: native });
       expect(method).toBe("eth_call");
       expect(params[0].to.toLowerCase()).toBe("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913");
       const calldata = String(params[0].data).toLowerCase();
@@ -73,12 +74,50 @@ function quote(
     expect(p.get("tradeType")).toBe("exactOutput");
     expect(p.get("recipient")).toBe(intent.recipient);
     return Response.json(result);
-  }).request("/quote", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(intent),
   });
 }
+function post(app: ReturnType<typeof paymentRoutes>, path: string, body: unknown) {
+  return app.request(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+function quote(...args: Parameters<typeof app>) {
+  return post(app(...args), "/quote", intent);
+}
+it.each([false, true])(
+  "returns only the next simulated unsigned action (approved=%s)",
+  async (approved) => {
+    const amount = BigInt(sample.inputAmount);
+    const test = app(sample, amount, approved ? amount : 0n, false, false, "0xffff");
+    const q = await (await post(test, "/quote", intent)).json();
+    expect(q.execution).toBe("unsigned_origin_steps");
+    const r = await post(test, "/cross-chain/build", { quoteId: q.quoteId, stage: "initial" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({
+      action: approved ? "deposit" : "approve",
+      unsignedTransaction: {
+        chainId: 8453,
+        value: "0x0",
+        from: intent.sender,
+        to: approved ? sample.swapTx.to : "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      },
+    });
+    const next = await post(test, "/cross-chain/build", {
+      quoteId: q.quoteId,
+      stage: "after_approval",
+    });
+    expect(next.status).toBe(approved ? 200 : 409);
+  },
+);
+it("withholds unsigned calls for an unfunded review", async () => {
+  const test = app(sample);
+  const q = await (await post(test, "/quote", intent)).json();
+  const r = await post(test, "/cross-chain/build", { quoteId: q.quoteId, stage: "initial" });
+  expect(r.status).toBe(422);
+  expect(await r.json()).toEqual({ error: "funded_quote_required" });
+});
 afterEach(() => vi.restoreAllMocks());
 it("decodes the exact USDC deposit on a live Base to Optimism quote", async () => {
   const r = await quote(sample);

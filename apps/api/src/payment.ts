@@ -45,6 +45,11 @@ const input = z
 const hex = z.string().regex(/^0x[0-9a-f]+$/i);
 export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
   const issued = new Map<string, PaymentQuote>();
+  type CrossQuote = Awaited<ReturnType<typeof quoteCrossPayment>>["quote"];
+  const crossQuotes = new Map<
+    string,
+    { intent: z.infer<typeof crossPaymentInput>; review: CrossQuote }
+  >();
   type RpcOp = Record<string, string | Record<string, string>>;
   const builds = new Map<string, { op: RpcOp; digest: Hex; quote: PaymentQuote }>();
   async function rpc(url: string, method: string, params: unknown[]) {
@@ -102,6 +107,65 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     };
   }
   const app = new Hono();
+  const inspectCrossPayment = (intent: z.infer<typeof crossPaymentInput>) =>
+    quoteCrossPayment(f, intent, (m, p) => rpc("https://mainnet.base.org", m, p));
+  app.post("/cross-chain/build", async (c) => {
+    const body = z
+      .object({ quoteId: z.uuid(), stage: z.enum(["initial", "after_approval"]) })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "invalid_build_request" }, 400);
+    const saved = crossQuotes.get(body.data.quoteId);
+    if (!saved || saved.review.expiresAt <= Date.now() / 1000)
+      return c.json({ error: "quote_expired" }, 410);
+    const reviewedGas = saved.review.originGas.estimate;
+    if (!reviewedGas || saved.review.originGas.estimatedShortfallWei !== "0")
+      return c.json({ error: "funded_quote_required" }, 422);
+    try {
+      const { quote, calls } = await inspectCrossPayment(saved.intent);
+      if (saved.review.expiresAt <= Date.now() / 1000)
+        return c.json({ error: "quote_expired" }, 410);
+      if (
+        quote.originSimulation.status !== "succeeded" ||
+        !quote.originGas.estimate ||
+        quote.originGas.estimatedShortfallWei !== "0" ||
+        !calls.length
+      )
+        return c.json({ error: "origin_preflight_failed" }, 422);
+      if (
+        BigInt(quote.maxInputMicroUsdc) > BigInt(saved.review.maxInputMicroUsdc) ||
+        BigInt(quote.originGas.estimate.totalWei) > BigInt(reviewedGas.totalWei)
+      )
+        return c.json({ error: "payment_terms_changed" }, 409);
+      const approval = calls.length === 2;
+      const reviewedSteps = reviewedGas.perTransactionWei.slice(-calls.length);
+      if (
+        reviewedSteps.length !== calls.length ||
+        quote.originGas.estimate.perTransactionWei.some(
+          (cost, i) => BigInt(cost) > BigInt(reviewedSteps[i]!),
+        )
+      )
+        return c.json({ error: "origin_fee_estimate_changed" }, 409);
+      if (
+        approval &&
+        (body.data.stage === "after_approval" ||
+          saved.review.sourceWallet.requiredApprovalMicroUsdc === "0" ||
+          BigInt(quote.sourceWallet.requiredApprovalMicroUsdc) >
+            BigInt(saved.review.sourceWallet.requiredApprovalMicroUsdc))
+      )
+        return c.json({ error: "approval_changed" }, 409);
+      return c.json({
+        quoteId: body.data.quoteId,
+        action: approval ? "approve" : "deposit",
+        unsignedTransaction: { ...calls[0], chainId: 8453, value: "0x0" },
+        expiresAt: Math.min(quote.expiresAt, saved.review.expiresAt),
+        originSimulation: quote.originSimulation,
+        estimatedOriginFeeWei: quote.originGas.estimate.totalWei,
+      });
+    } catch {
+      return c.json({ error: "cross_chain_build_unavailable" }, 503);
+    }
+  });
   app.post("/cross-chain/status", async (c) => {
     const parsed = settlementInput.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid_settlement_request" }, 400);
@@ -152,11 +216,15 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
       const cross = crossPaymentInput.safeParse(raw);
       if (!cross.success) return c.json({ error: "unsupported_cross_chain_payment" }, 400);
       try {
-        return c.json(
-          await quoteCrossPayment(f, cross.data, (method, params) =>
-            rpc("https://mainnet.base.org", method, params),
-          ),
-        );
+        const { quote } = await inspectCrossPayment(cross.data);
+        const quoteId = randomUUID();
+        quote.expiresAt = Math.min(quote.expiresAt, Math.floor(Date.now() / 1000) + 120);
+        for (const [id, saved] of crossQuotes) {
+          if (saved.review.expiresAt > Date.now() / 1000 && crossQuotes.size < 2048) break;
+          crossQuotes.delete(id);
+        }
+        crossQuotes.set(quoteId, { intent: cross.data, review: quote });
+        return c.json({ ...quote, quoteId });
       } catch {
         return c.json({ error: "verified_cross_chain_quote_unavailable" }, 503);
       }

@@ -113,9 +113,9 @@ export async function quoteCrossPayment(
   ]);
   let originSimulation: { status: string; gasUsed?: string[] };
   let feeEstimate: Awaited<ReturnType<typeof estimateOriginFees>> | null = null;
+  const calls: { from: Hex; to: Hex; data: Hex }[] = [];
   if (balance < amountIn) originSimulation = { status: "insufficient_usdc" };
   else {
-    const calls: { from: Hex; to: Hex; data: Hex }[] = [];
     if (allowance < amountIn)
       calls.push({
         from: intent.sender,
@@ -172,10 +172,13 @@ export async function quoteCrossPayment(
   }
   if (Math.min(q.quoteExpiryTimestamp, args[9]) <= Date.now() / 1000)
     throw Error("Expired cross-chain payment quote");
-  return {
+  const quote = {
     ...intent,
     provider: "across",
-    execution: "quote_only",
+    execution:
+      feeEstimate && native >= BigInt(feeEstimate.totalWei)
+        ? "unsigned_origin_steps"
+        : "quote_only",
     atomic: false,
     inputToken: sourceToken,
     outputToken: destinationToken,
@@ -206,4 +209,5 @@ export async function quoteCrossPayment(
     expiresAt: Math.min(q.quoteExpiryTimestamp, args[9]),
     settlement: "Requires a separate destination fill and confirmation.",
   };
+  return { quote, calls };
 }

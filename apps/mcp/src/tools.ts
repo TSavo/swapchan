@@ -924,6 +924,62 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     safe(async (a: { quoteId: string; authorization?: unknown }) => api.paymentBuild(a)),
   );
   server.registerTool(
+    "pay",
+    {
+      title: "Prepare an exact USDC payment for wallet review",
+      description:
+        "Start with a destination chain, sender, recipient and micro-USDC amount. Base Sepolia inspects local USDC and WETH. Optimism checks the supported Base USDC funding route. After human review pass the quote ID to build the next unsigned wallet action. Base Sepolia first-time setup needs the chain-specific signed delegation. On Base mainnet, wait for a successful approval receipt before requesting after_approval. Only an independently confirmed destination receipt proves payout.",
+      inputSchema: z
+        .object({
+          chainId: z.union([z.literal(84532), z.literal(10)]),
+          intent: z
+            .object({
+              sender: evm,
+              recipient: evm,
+              amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+            })
+            .strict()
+            .optional(),
+          quoteId: z.uuid().optional(),
+          stage: z.enum(["initial", "after_approval"]).optional(),
+          authorization: z
+            .object({
+              chainId: z.literal(84532),
+              address: evm,
+              nonce: z.number().int().nonnegative().safe(),
+              yParity: z.union([z.literal(0), z.literal(1)]),
+              r: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              s: z.string().regex(/^0x[0-9a-f]{64}$/i),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict()
+        .refine(
+          (a) =>
+            Boolean(a.intent) !== Boolean(a.quoteId) &&
+            (!a.stage || (a.quoteId && a.chainId === 10)) &&
+            (!a.authorization || (a.quoteId && a.chainId === 84532)),
+          "Supply a payment intent or a reviewed quote ID with its chain-specific build arguments.",
+        ),
+      annotations: ro,
+    },
+    safe(async (a) => {
+      if (a.intent)
+        return api.paymentQuote({
+          ...a.intent,
+          chainId: a.chainId,
+          ...(a.chainId === 10 ? { sourceChainId: 8453 } : {}),
+        });
+      return a.chainId === 10
+        ? api.crossPaymentBuild({ quoteId: a.quoteId, stage: a.stage ?? "initial" })
+        : api.paymentBuild({
+            quoteId: a.quoteId,
+            ...(a.authorization ? { authorization: a.authorization } : {}),
+          });
+    }),
+  );
+  server.registerTool(
     "submit_payment",
     {
       title: "Relay a signed Base Sepolia payment",
