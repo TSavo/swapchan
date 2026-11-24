@@ -945,11 +945,35 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Check payment settlement",
       description:
-        "Check a submitted Base Sepolia payment. Reports settled only when the receipt confirms the exact USDC payout and the WETH spend and USDC fee fit the quote.",
-      inputSchema: z.object({ userOpHash: z.string().regex(/^0x[0-9a-f]{64}$/i) }),
+        "Check a Base Sepolia userOpHash, or provide crossChain with the reviewed Base-to-Optimism payment intent and both transaction hashes. Cross-chain settled requires finalized receipts, matching deposit and fill events, and exact token deltas.",
+      inputSchema: z
+        .object({
+          userOpHash: z
+            .string()
+            .regex(/^0x[0-9a-f]{64}$/i)
+            .optional(),
+          crossChain: z
+            .object({
+              sourceChainId: z.literal(8453),
+              chainId: z.literal(10),
+              sender: evm,
+              recipient: evm,
+              amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              fillHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+            })
+            .optional(),
+        })
+        .refine(
+          (a) => Boolean(a.userOpHash) !== Boolean(a.crossChain),
+          "Supply one payment reference",
+        ),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    safe(async (a: { userOpHash: string }) => api.paymentStatus(a.userOpHash)),
+    safe(async (a) =>
+      a.crossChain ? api.crossPaymentStatus(a.crossChain) : api.paymentStatus(a.userOpHash!),
+    ),
   );
   server.registerTool(
     "build_limit_order",

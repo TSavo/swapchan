@@ -1,0 +1,49 @@
+import { expect, it } from "vitest";
+import sample from "./fixtures/across-settled-base-op.json";
+import { crossSettlement, settlementInput } from "./payment-cross-settlement.js";
+
+const sender = "0x46e25D3756e1Be06c3B477170c3A4DBA6528C7A9";
+const intent = settlementInput.parse({
+  originHash: sample.origin.transactionHash,
+  fillHash: sample.destination.transactionHash,
+  sender,
+  recipient: sender,
+  sourceChainId: 8453,
+  chainId: 10,
+  amountMicroUsdc: "13440834",
+  maxInputMicroUsdc: "13442407",
+});
+function verify(receipts = sample, isFinal = true, cap = intent.maxInputMicroUsdc) {
+  return crossSettlement(
+    async (chain, method, params) => {
+      const r = chain === 8453 ? receipts.origin : receipts.destination;
+      if (method === "eth_getTransactionReceipt") return r;
+      if (params[0] === "finalized") return { number: isFinal ? r.blockNumber : "0x0" };
+      return { hash: r.blockHash };
+    },
+    { ...intent, maxInputMicroUsdc: cap },
+  );
+}
+it("reconciles the historical Base deposit with the finalized Optimism payout", async () => {
+  expect(await verify()).toMatchObject({
+    status: "settled",
+    depositId: "6488685",
+    spentMicroUsdc: "13442407",
+    paidMicroUsdc: "13440834",
+  });
+});
+it("waits for finality on both chains", async () =>
+  expect(await verify(sample, false)).toMatchObject({ status: "awaiting_finality" }));
+it("requires the reviewed source cap", async () =>
+  expect(verify(sample, true, "13442406")).rejects.toThrow());
+it.each(["transfer", "fill", "origin hash", "deposit id"])(
+  "refuses missing or changed %s",
+  async (field) => {
+    const r = structuredClone(sample);
+    if (field === "transfer") r.destination.logs.pop();
+    if (field === "fill") r.destination.logs.shift();
+    if (field === "origin hash") r.origin.transactionHash = r.destination.transactionHash;
+    if (field === "deposit id") r.destination.logs[0]!.topics[2] = "0x" + "0".repeat(64);
+    await expect(verify(r)).rejects.toThrow();
+  },
+);

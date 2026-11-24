@@ -20,6 +20,7 @@ import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
 import { crossPaymentInput, quoteCrossPayment } from "./payment-cross-chain.js";
+import { crossSettlement, settlementInput } from "./payment-cross-settlement.js";
 import { inspectDelegation } from "./payment-delegation.js";
 import { chainReceipt, operationReceipt, reconcilePayment } from "./payment-receipt.js";
 import { openPaymentStore } from "./payment-store.js";
@@ -101,6 +102,21 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     };
   }
   const app = new Hono();
+  app.post("/cross-chain/status", async (c) => {
+    const parsed = settlementInput.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_settlement_request" }, 400);
+    try {
+      return c.json(
+        await crossSettlement(
+          (id, m, p) =>
+            rpc(id === 8453 ? "https://mainnet.base.org" : "https://mainnet.optimism.io", m, p),
+          parsed.data,
+        ),
+      );
+    } catch {
+      return c.json({ error: "settlement_unverified" }, 502);
+    }
+  });
   app.post("/gas-quote", async (c) => {
     const body = z
       .object({ chainId: z.literal(84532) })

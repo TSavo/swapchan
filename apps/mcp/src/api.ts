@@ -170,6 +170,12 @@ export class SwapChanApi {
       "/payments/status/" + encodeURIComponent(hash),
     );
   }
+  crossPaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/cross-chain/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   limitOrders(chainId: number, owner: string): Promise<Record<string, unknown>[]> {
     return this.req(
       z.array(z.record(z.string(), z.unknown())),

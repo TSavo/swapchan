@@ -7,6 +7,12 @@ import { getJson } from "./providers/types.js";
 const sourceToken = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const destinationToken = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85";
 const pool = "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64";
+export const acrossBaseRoute = {
+  sourceToken,
+  destinationToken,
+  pool,
+  destinationPool: "0x6f26bf09b1c792e3228e5467807a900a503c0281",
+} as const;
 const deposit = parseAbi([
   "function deposit(bytes32 depositor,bytes32 recipient,bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 destinationChainId,bytes32 exclusiveRelayer,uint32 quoteTimestamp,uint32 fillDeadline,uint32 exclusivityDeadline,bytes message)",
 ]);
