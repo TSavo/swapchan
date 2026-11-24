@@ -84,6 +84,7 @@ export async function crossSettlement(
   const progress = {
     originHash: intent.originHash,
     depositId: String(d.depositId),
+    fillDeadline: d.fillDeadline,
     originFinalized: origin.final,
     spentMicroUsdc: String(d.inputAmount),
   };
@@ -161,12 +162,9 @@ export async function crossSettlement(
     throw Error("Token movements differ from relay");
   return {
     status: origin.final && dest.final ? "settled" : "awaiting_finality",
-    originHash: intent.originHash,
+    ...progress,
     fillHash,
-    depositId: String(d.depositId),
-    spentMicroUsdc: String(d.inputAmount),
     paidMicroUsdc: String(d.outputAmount),
-    originFinalized: origin.final,
     destinationFinalized: dest.final,
   };
 }

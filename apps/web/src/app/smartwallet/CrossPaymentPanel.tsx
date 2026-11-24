@@ -1,6 +1,6 @@
 "use client";
 import { acrossRoute, checkAcrossApproval, checkAcrossDeposit } from "@swapchan/shared";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { type Address, formatEther, formatUnits, type Hex } from "viem";
 import { useConfig, useSendTransaction, useSwitchChain } from "wagmi";
 import { getTransaction, getTransactionReceipt } from "wagmi/actions";
@@ -20,7 +20,7 @@ type Quote = Pick<Proposal, "recipient" | "amountMicroUsdc"> & {
 };
 type Tx = { from: Address; to: Address; data: Hex; chainId: number; value: string };
 type Step = { action: "approve" | "deposit"; tx: Tx; hash?: Hex };
-type Review = { quote: Quote; approved?: boolean; step?: Step };
+type Review = { quote: Quote; approved?: boolean; approvalHash?: Hex; step?: Step };
 const usdc = (n: string) => formatUnits(BigInt(n), 6);
 export function CrossPaymentPanel({
   sender,
@@ -98,7 +98,7 @@ export function CrossPaymentPanel({
       BigInt(q.sourceWallet.requiredApprovalMicroUsdc) > BigInt(q.maxInputMicroUsdc)
     )
       throw Error("Quote differs from your request.");
-    save({ quote: q });
+    save({ quote: q, ...(review?.approvalHash ? { approvalHash: review.approvalHash } : {}) });
   }
   const q = review?.quote;
   const action =
@@ -171,7 +171,7 @@ export function CrossPaymentPanel({
       throw Error("Base transaction reverted. Refresh the quote before signing again.");
     }
     if (step.action === "approve") {
-      save({ quote: q, approved: true });
+      save({ quote: q, approved: true, approvalHash: hash });
       setMessage("Approval confirmed on Base.");
       return;
     }
@@ -179,6 +179,11 @@ export function CrossPaymentPanel({
       status: string;
       fillHash?: Hex;
       providerStatus?: string;
+      spentMicroUsdc?: string;
+      paidMicroUsdc?: string;
+      originFinalized?: boolean;
+      destinationFinalized?: boolean;
+      fillDeadline?: number;
     }>("cross-chain/status", {
       ...intent,
       originHash: hash,
@@ -190,10 +195,41 @@ export function CrossPaymentPanel({
         chainId: route.destination,
         hash: result.fillHash,
         originHash: hash,
+        approvalHash: review.approvalHash,
+        spentMicroUsdc: result.spentMicroUsdc,
+        paidMicroUsdc: result.paidMicroUsdc,
       });
     }
-    setMessage([result.status, result.providerStatus, result.fillHash].filter(Boolean).join(" · "));
+    const details = {
+      awaiting_origin_receipt: "Waiting for the origin deposit receipt.",
+      awaiting_fill_index: "Waiting for Across to index the deposit.",
+      awaiting_verified_fill: "Waiting for the recipient’s USDC on the destination chain.",
+      awaiting_destination_receipt: "Across reported a fill. Waiting for its on-chain receipt.",
+      awaiting_finality: "The destination transfer matches. Waiting for chain finality.",
+      settled: "The exact destination payout is finalized.",
+      recovery_reported:
+        "Across reported " +
+        result.providerStatus +
+        ". Check the origin receipt and recovery status before taking further action.",
+    };
+    const deadline = result.fillDeadline
+      ? " Fill deadline " + new Date(result.fillDeadline * 1000).toLocaleString() + "."
+      : "";
+    setMessage(
+      (details[result.status as keyof typeof details] ?? result.status) +
+        deadline +
+        (result.fillHash ? " Destination transaction " + result.fillHash : ""),
+    );
   }
+  const refreshStatus = useEffectEvent(() => {
+    if (!lock.current) void run(check);
+  });
+  const submittedHash = review?.step?.hash;
+  useEffect(() => {
+    if (!submittedHash) return;
+    const timer = setInterval(refreshStatus, 15000);
+    return () => clearInterval(timer);
+  }, [submittedHash]);
   return (
     <section className="space-y-3 p-3">
       <p>
@@ -207,6 +243,11 @@ export function CrossPaymentPanel({
             ? formatEther(BigInt(q.originGas.estimate.totalWei)) + " ETH"
             : "unavailable"}
           . Destination settlement requires a separate fill.
+        </p>
+      )}
+      {review?.approvalHash && (
+        <p>
+          Approval receipt · <code>{review.approvalHash}</code>
         </p>
       )}
       {review?.step ? (
