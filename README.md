@@ -1,5 +1,7 @@
 # SwapChan
 
+[![TSavo/swapchan MCP server](https://glama.ai/mcp/servers/TSavo/swapchan/badges/score.svg)](https://glama.ai/mcp/servers/TSavo/swapchan)
+
 **Best-price same-chain and cross-chain crypto swap routing — as an MCP server, with an anime cast.** 🎌
 
 SwapChan fans out a single swap request to LI.FI, 0x, CoW, Velora, Across, Relay, Jupiter, KyberSwap, 1inch, deBridge and THORChain at once, ranks every route by net USD after gas and fees, and returns an **unsigned** transaction for the winner. It never signs, never holds keys or funds, and never controls your money — your wallet signs. The optional `broadcast_tx` only relays a transaction you already signed locally, unchanged, to 51 chains (EVM, Bitcoin and its forks, Solana, Tron, XRP, Stellar, Algorand, Cosmos Hub, Polkadot, TON, Cardano); it can't alter it. 15 networks, same-chain and cross-chain.
