@@ -3,6 +3,7 @@ import {
   arbitrum,
   avalanche,
   base,
+  baseSepolia,
   bitcoin,
   bsc,
   linea,
@@ -21,6 +22,7 @@ import {
   arbitrum as wArb,
   avalanche as wAvax,
   base as wBase,
+  baseSepolia as wBaseSepolia,
   bsc as wBsc,
   linea as wLinea,
   mainnet as wMain,
@@ -44,6 +46,7 @@ export const networks: [AppKitNetwork, ...AppKitNetwork[]] = [
   scroll,
   solana,
   bitcoin,
+  baseSepolia,
 ];
 
 /** Solana wallets (Phantom, Solflare, Backpack...) through AppKit. */
@@ -68,7 +71,7 @@ export const wagmiAdapter = hasAppKit
 export const wagmiConfig =
   wagmiAdapter?.wagmiConfig ??
   createConfig({
-    chains: [wMain, wBase, wArb, wOp, wPoly, wBsc, wAvax, wLinea, wScroll],
+    chains: [wMain, wBase, wArb, wOp, wPoly, wBsc, wAvax, wLinea, wScroll, wBaseSepolia],
     connectors: [injected()],
     multiInjectedProviderDiscovery: true,
     ssr: true,
@@ -76,6 +79,7 @@ export const wagmiConfig =
     transports: {
       [wMain.id]: http(),
       [wBase.id]: http(),
+      [wBaseSepolia.id]: http(),
       [wArb.id]: http(),
       [wOp.id]: http(),
       [wPoly.id]: http(),

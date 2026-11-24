@@ -1,0 +1,86 @@
+import { type Address, encodeFunctionData, erc20Abi, type Hex, parseAbi } from "viem";
+
+export const paymentContracts = {
+  weth: "0x4200000000000000000000000000000000000006",
+  usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  router: "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+  paymaster: "0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402",
+  delegate: "0x4Cd241E8d1510e30b2076397afc7508Ae59C66c9",
+  entry: "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+} as const;
+const { weth, usdc, router, paymaster } = paymentContracts;
+const routerAbi = parseAbi([
+  "function exactOutputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountOut,uint256 amountInMaximum,uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountIn)",
+]);
+export const batchAbi = parseAbi([
+  "function executeBatch((address target,uint256 value,bytes data)[] calls)",
+]);
+export type PaymentQuote = {
+  chainId: 84532;
+  sender: Address;
+  recipient: Address;
+  amountMicroUsdc: string;
+  expiresAt: number;
+  maxGasMicroUsdc: string;
+  maxWethWei: string;
+  swapOutputMicroUsdc: string;
+  requiresDelegation: boolean;
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+};
+/** Gas ceilings used for both quoting and signing on Base Sepolia. */
+export function paymentGasLimits(direct: boolean) {
+  return {
+    callGasLimit: direct ? 80000n : 450000n,
+    verificationGasLimit: direct ? 70000n : 140000n,
+    preVerificationGas: direct ? 90000n : 145000n,
+    paymasterVerificationGasLimit: direct ? 85000n : 120000n,
+    paymasterPostOpGasLimit: direct ? 90000n : 100000n,
+  };
+}
+/** Reconstruct the same batch from the reviewed quote on client and server. */
+export function paymentBatch(q: PaymentQuote) {
+  const calls: { target: Address; value: bigint; data: Hex }[] = [];
+  const add = (target: Address, data: Hex) => calls.push({ target, value: 0n, data });
+  const approve = (token: Address, spender: Address, cap: bigint) =>
+    add(
+      token,
+      encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, cap] }),
+    );
+  const spend = BigInt(q.maxWethWei),
+    output = BigInt(q.swapOutputMicroUsdc);
+  if ((spend === 0n) !== (output === 0n)) throw new Error("inconsistent swap limits");
+  if (output) {
+    approve(weth, router, spend);
+    add(
+      router,
+      encodeFunctionData({
+        abi: routerAbi,
+        functionName: "exactOutputSingle",
+        args: [
+          {
+            tokenIn: weth,
+            tokenOut: usdc,
+            fee: 3000,
+            recipient: q.sender,
+            amountOut: output,
+            amountInMaximum: spend,
+            sqrtPriceLimitX96: 0n,
+          },
+        ],
+      }),
+    );
+    approve(weth, router, 0n);
+  }
+  add(
+    usdc,
+    encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [q.recipient, BigInt(q.amountMicroUsdc)],
+    }),
+  );
+  // Overwrite residual allowance so the fee pull for this operation is bounded.
+  approve(usdc, paymaster, BigInt(q.maxGasMicroUsdc));
+  return encodeFunctionData({ abi: batchAbi, functionName: "executeBatch", args: [calls] });
+}

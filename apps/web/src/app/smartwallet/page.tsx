@@ -15,6 +15,7 @@ import {
   streamSession,
 } from "@/lib/liveStream";
 import { SANITIZE_CONFIG } from "@/lib/sanitize";
+import { PaymentPanel } from "./PaymentPanel";
 
 // Client-only (the Crossmint SDK must not run during SSR / the build).
 // MoonPay is the active card on-ramp provider; Crossmint (./FundWithCard) stays dormant pending access.
@@ -442,6 +443,7 @@ export default function SmartWalletPage() {
         .sw-md h1, .sw-md h2, .sw-md h3 { font-weight: 700; margin: 0.4rem 0 0.2rem; }
       `}</style>
 
+      <PaymentPanel key={address} sender={address} chainId={chainId} />
       {confirmAutoSend && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"

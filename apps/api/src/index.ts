@@ -43,6 +43,8 @@ import {
   partnerRoutes,
   recordQuote,
 } from "./partners.js";
+import { paymentRoutes } from "./payment.js";
+import { openPaymentStore } from "./payment-store.js";
 import { llamaPricer, type Pricer } from "./pricing.js";
 import { across } from "./providers/across.js";
 import { cow } from "./providers/cow.js";
@@ -438,6 +440,13 @@ export function createApp(
     return null;
   }
   app.route("/limit", limitRoutes(opts.cowFetch ?? fetch, env));
+  app.route(
+    "/payments",
+    paymentRoutes(
+      opts.scannerFetch ?? fetch,
+      openPaymentStore(env.SWAPCHAN_DATA_DIR ? `${env.SWAPCHAN_DATA_DIR}/payments.db` : ":memory:"),
+    ),
+  );
   // pure blocktools developer tools on public input (no body logging, size-capped, per-client rate limit)
   app.route("/tools", devToolRoutes());
   // Read/Write Contract (/tools/contract): ABI lookup, eth_call reads, unsigned calldata. Never signs or sends.

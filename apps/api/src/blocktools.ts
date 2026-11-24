@@ -176,9 +176,7 @@ export function blocktools(): Wasm | null {
   if (wasm !== undefined) return wasm;
   try {
     const req = createRequire(import.meta.url);
-    wasm = req(
-      new URL("../vendor/blocktools/blocktools_wasm.js", import.meta.url).pathname,
-    ) as Wasm;
+    wasm = req("../vendor/blocktools/blocktools_wasm.js") as Wasm;
     wasm.version();
   } catch (e) {
     console.log(JSON.stringify({ evt: "blocktools_load_failed", err: String(e).slice(0, 200) }));

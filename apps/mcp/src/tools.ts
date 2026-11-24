@@ -844,6 +844,76 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     );
 
   server.registerTool(
+    "quote_payment",
+    {
+      title: "Quote an exact Base Sepolia USDC payment",
+      description:
+        "Quote an exact recipient payout, the USDC gas limit and the maximum WETH spend. Amounts are integer micro-USDC (1 means 0.000001 USDC).",
+      inputSchema: z.object({
+        chainId: z.literal(84532),
+        sender: evm,
+        recipient: evm,
+        amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    safe(
+      async (a: { chainId: 84532; sender: string; recipient: string; amountMicroUsdc: string }) =>
+        api.paymentQuote(a),
+    ),
+  );
+  server.registerTool(
+    "build_7702_bundle",
+    {
+      title: "Build a simulated Base Sepolia payment",
+      description:
+        "Build the exact quoted payment by quoteId. Returns an unsigned EntryPoint v0.8 operation after paymaster and bundler simulation. Fresh accounts require the sender's chain-specific delegation authorization. The sender signs locally.",
+      inputSchema: z.object({
+        quoteId: z.uuid(),
+        authorization: z
+          .object({
+            chainId: z.literal(84532),
+            address: evm,
+            nonce: z.number().int().nonnegative().safe(),
+            yParity: z.union([z.literal(0), z.literal(1)]),
+            r: z.string().regex(/^0x[0-9a-f]{64}$/i),
+            s: z.string().regex(/^0x[0-9a-f]{64}$/i),
+          })
+          .optional(),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    safe(async (a: { quoteId: string; authorization?: unknown }) => api.paymentBuild(a)),
+  );
+  server.registerTool(
+    "submit_payment",
+    {
+      title: "Relay a signed Base Sepolia payment",
+      description:
+        "Submit the previously simulated operation exactly as signed by the sender. Requires the quote ID, operation hash and the wallet's EIP-712 signature. Returns the operation hash for payment_status.",
+      inputSchema: z.object({
+        quoteId: z.uuid(),
+        userOpHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+        signature: z.string().regex(/^0x[0-9a-f]{130}$/i),
+      }),
+      annotations: { readOnlyHint: false, openWorldHint: true },
+    },
+    safe(async (a: { quoteId: string; userOpHash: string; signature: string }) =>
+      api.paymentSubmit(a),
+    ),
+  );
+  server.registerTool(
+    "payment_status",
+    {
+      title: "Check payment settlement",
+      description:
+        "Check a submitted Base Sepolia payment. Reports settled only when the receipt confirms the exact USDC payout and the WETH spend and USDC fee fit the quote.",
+      inputSchema: z.object({ userOpHash: z.string().regex(/^0x[0-9a-f]{64}$/i) }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    safe(async (a: { userOpHash: string }) => api.paymentStatus(a.userOpHash)),
+  );
+  server.registerTool(
     "build_limit_order",
     {
       title: "Build a limit order",

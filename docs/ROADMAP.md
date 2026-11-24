@@ -5,6 +5,7 @@ The product bet is EIP-7702 plus stablecoin payments: one signature to pay exact
 ## Contents
 
 - [The bet](#the-bet)
+- [Milestone 1 — one same-chain payment](#milestone-1--one-same-chain-payment)
 - [What already exists](#what-already-exists)
 - [Current MCP tools](#current-mcp-tools)
 - [Gaps against the bet](#gaps-against-the-bet)
@@ -30,6 +31,56 @@ flowchart LR
   verify -->|"ok / warned yes"| sign["One wallet signature<br/>EIP-5792 wallet_sendCalls"]
   sign --> paid["Recipient is paid<br/>gas in USDC via paymaster"]
 ```
+
+## Milestone 1 — one same-chain payment
+
+**Integrated first payment, 24 November 2026.** At Base Sepolia block 63,156,739, the local SmartWallet page paid exactly 0.000001 USDC from a fresh Block Tools account with zero ETH and zero USDC. The funder exchanged 0.015793 of its 20 USDC for exactly 0.000061769863559573 WETH, delivered directly to the sender. The funder paid 0.000001163977650395 ETH across approval and funding. [Funding swap](https://sepolia.basescan.org/tx/0x515f7c36406a386e86a37913a29aa023736828caacc8440c5a0150ec6d28d389)
+
+The browser ran the normal `/smartwallet` page with an automated disposable wallet. The controls were “Connect wallet”, “Get payment quote”, “First payment: import the signed Block Tools delegation” and “Review and sign in wallet”. The successful review showed a maximum WETH spend of 0.000061769863559573 and a maximum gas charge of 0.015590 USDC. The first payment required a chain-specific, nonce-zero delegation signature and one EIP-712 payment signature. The standalone Block Tools executable inspected the unsigned batch. The test wallet produced the signatures automatically with its locally derived key. An earlier test attempt produced the same delegation authorization and ended before signing a payment.
+
+| Balance | Before payment | After payment |
+| --- | ---: | ---: |
+| Sender ETH | 0 | 0 |
+| Sender WETH | 0.000061769863559573 | 0.000000419128645934 |
+| Sender USDC | 0 | 0.010723 |
+| Recipient USDC | 0.000003 | 0.000004 |
+
+The swap yielded 0.015591 USDC. The recipient received 0.000001 USDC and Pimlico charged 0.004867 USDC. SmartWallet displayed “View payment receipt”. UserOperation `0x765d8b2e29eb370c335afe294c11e4f1d2595814cbe2a260fe1f036d395ab9d6`. [Payment receipt](https://sepolia.basescan.org/tx/0x041ec7fac5c7cbcf428001f7d75aba0e2e46891e3c9dafece879f530c0dd5af8)
+
+**Integrated repeat payment, 24 November 2026.** A local MCP client called `quote_payment`, `build_7702_bundle`, `submit_payment`, and `payment_status` against the live Base Sepolia API path. The review showed a payout of 0.000001 USDC, a maximum fee of 0.006996 USDC and zero WETH spend. Standalone Block Tools inspected the operation. The disposable test wallet signed one EIP-712 request automatically and reused its existing delegation. There were zero interactive prompts. The receipt recorded 0.000001 USDC paid and 0.002246 USDC charged by the paymaster. [Transaction receipt](https://sepolia.basescan.org/tx/0xb51044eb5158ee0e47e1ebeec2e19b392a8597248c0ab69ce906042626ba60e9)
+
+| Balance | Before | After |
+| --- | ---: | ---: |
+| Sender ETH | 0 | 0 |
+| Sender WETH | 0.000018700416519787 | 0.000018700416519787 |
+| Sender USDC | 0.008387 | 0.006140 |
+| Recipient USDC | 0.000002 | 0.000003 |
+
+UserOperation `0xd95146b6e3d1539be4e4e385d77db365aced558b8d065a74c8eb02414b1f7b54`. This repeat used the already-delegated sender from the standalone proof below.
+
+**Prerequisite in the standalone Block Tools project.** Before implementing the SwapChan payment path, land and test support for the signing formats it needs: the EIP-7702 delegation authorization and the selected wallet's ERC-4337 UserOperation. Include known-answer vectors for both and verify that changing the delegate, chain, payment calldata, or fee terms invalidates the corresponding signature. Use disposable Base Sepolia accounts for the end-to-end proof.
+
+Start with one supported wallet, one EVM chain, one source token other than USDC, and one paymaster. The user starts with enough of the source token to cover the payment and fees, zero USDC, and zero native gas token. In SmartWallet they request an exact USDC payout on the same chain. Use 0.000001 USDC (one base unit) for the testnet acceptance run.
+
+**Live protocol proof, November 24, 2026.** Both payments settled on Base Sepolia using Simple7702Account and Pimlico's ERC-20 paymaster. The sender held zero native ETH before and after both payments.
+
+| Run | Sender balances before → after | Recipient USDC before → after | USDC gas charge | Sender signatures |
+| --- | --- | --- | ---: | --- |
+| [First payment, block 63,144,963](https://sepolia.basescan.org/tx/0xaabcc6cffcbd810033b854d3f048723519d38f59e8fda1499d9574d5b72ea40e) | WETH 0.000080000000000000 → 0.000018700416519787; USDC 0 → 0.010539 | 0 → 0.000001 | 0.005038 | Delegation authorization and UserOperation |
+| [Repeat payment, block 63,145,375](https://sepolia.basescan.org/tx/0xce569ed6bf9a579e584504f70e32a369babd31016a0b95f65357ec0bca2e17ac) | WETH unchanged; USDC 0.010539 → 0.008387 | 0.000001 → 0.000002 | 0.002151 | One UserOperation using the existing delegation |
+
+Block Tools generated the disposable wallets. A noninteractive test signer produced the live payment signatures. The first swap yielded 0.015578 USDC, covering the payout and fee. The repeat used the remaining USDC directly. Both payment runs had zero interactive prompts. The integrated runs above exercise SmartWallet and MCP with a disposable signer. Production release still requires packaging the new Block Tools commands and deploying the tested Swapchan changes.
+
+Run this acceptance test with a fresh wallet, then repeat it with the same wallet after delegation is in place. Record the wallet version, chain, quote, verification result, wallet prompts, and transaction receipt for each run.
+
+1. **Quote.** Before the wallet prompts the user, show the chain, recipient, exact payout, maximum total source-token spend, and maximum USDC gas charge included in that spend. When starting from zero USDC, the swap must fund both the payout and the paymaster charge.
+2. **Verify.** Check that the delegate is allowlisted and explain what permission persists and how to revoke it. Simulate the full batch and check the spender, exact approval, recipient, payout, and paymaster charge against the quote. A changed recipient, unknown delegate, charge above the cap, or failed simulation must stop the flow before signing.
+3. **Count confirmations.** Record every wallet prompt and signature on each run, identifying delegation setup separately from payment approval. The repeat payment must require exactly one user signature. Claim one signature on the first payment only if the fresh-wallet run demonstrates it.
+4. **Reconcile settlement.** Use the confirmed transaction and token balance changes to verify that the recipient gained the exact requested amount, the sender spent at most the quoted maximum, and the paymaster charged at most the displayed USDC cap. Both runs must succeed without a native-token top-up.
+
+Ship this path once both runs meet those criteria. After release, track how many first-time payers complete a second payment within 30 days to test demand separately from technical correctness.
+
+Cross-chain payments are a later milestone. Track the source transaction through destination settlement, show pending and refund outcomes, and mark a payment complete only after verifying the exact payout on the destination chain.
 
 ## What already exists
 
@@ -206,6 +257,8 @@ New or changed MCP tools only, plus the SmartWallet change that makes them usabl
 | SmartWallet (product)   | Not an MCP tool. Lift the one-tx-per-turn rule for a verified bundle; accept `authorizationList` or `wallet_sendCalls`; stop forcing EOA-only AppKit on 7702-capable chains. Keep human sign-off as the default; auto-send stays advanced. | `/smartwallet`, `wallet_respond`, `verify_tx`                                 | L      |
 
 ## Ranked by impact
+
+These ranks describe product impact. For the first milestone, implement quoting, delegate checks, bundle verification, and the SmartWallet signing path together for the single supported payment above.
 
 | Rank | Work                                   | Why it comes first                                                                                                           | Effort |
 | ---: | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------ |

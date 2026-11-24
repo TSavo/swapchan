@@ -101,6 +101,10 @@ describe("swapchan mcp over streamable http", () => {
     const { tools } = await c.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        "quote_payment",
+        "build_7702_bundle",
+        "submit_payment",
+        "payment_status",
         "build_limit_order",
         "build_swap_tx",
         "cancel_limit_order",
