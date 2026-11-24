@@ -9,13 +9,40 @@ const intent = {
   recipient: "0xa11F5DA00D9a0E9b809E94c4cAe1efa36E8ff50b",
   amountMicroUsdc: "1000000",
 };
-function quote(result: typeof sample, balance = 0n, allowance = 0n) {
+function quote(result: typeof sample, balance = 0n, allowance = 0n, depositReverts = false) {
   vi.spyOn(Date, "now").mockReturnValue((sample.quoteExpiryTimestamp - 100) * 1000);
   return paymentRoutes(async (url, init) => {
     if (String(url) === "https://mainnet.base.org") {
       const { method, params } = JSON.parse(String(init?.body));
       if (method === "eth_blockNumber") return Response.json({ result: "0xabc" });
       expect(params.at(-1)).toBe("0xabc");
+      if (method === "eth_simulateV1") {
+        const calls = params[0].blockStateCalls[0].calls;
+        expect(calls.at(-1)).toMatchObject({
+          from: intent.sender,
+          to: sample.swapTx.to,
+          data: sample.swapTx.data,
+        });
+        const needsApproval = allowance < BigInt(result.inputAmount);
+        expect(calls).toHaveLength(needsApproval ? 2 : 1);
+        if (needsApproval)
+          expect(calls[0].data).toBe(
+            "0x095ea7b3" +
+              sample.swapTx.to.slice(2).toLowerCase().padStart(64, "0") +
+              BigInt(result.inputAmount).toString(16).padStart(64, "0"),
+          );
+        return Response.json({
+          result: [
+            {
+              calls: calls.map((_: unknown, i: number) => ({
+                status: depositReverts && i === calls.length - 1 ? "0x0" : "0x1",
+                gasUsed: "0x100",
+                returnData: needsApproval && i === 0 ? "0x" + "0".repeat(63) + "1" : "0x",
+              })),
+            },
+          ],
+        });
+      }
       if (method === "eth_getBalance") return Response.json({ result: "0x0" });
       expect(method).toBe("eth_call");
       expect(params[0].to.toLowerCase()).toBe("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913");
@@ -45,6 +72,7 @@ it("decodes the exact USDC deposit on a live Base to Optimism quote", async () =
   expect(r.status).toBe(200);
   expect(await r.json()).toMatchObject({
     execution: "quote_only",
+    originSimulation: { status: "insufficient_usdc" },
     atomic: false,
     amountMicroUsdc: "1000000",
     maxInputMicroUsdc: sample.maxInputAmount,
@@ -62,9 +90,16 @@ it("requires the full approval amount only when the existing allowance is insuff
     [amount - 1n, sample.inputAmount],
   ] as const) {
     expect(await (await quote(sample, amount, existing)).json()).toMatchObject({
+      originSimulation: { status: "succeeded" },
       sourceWallet: { depositShortfallMicroUsdc: "0", requiredApprovalMicroUsdc: required },
     });
   }
+});
+it("reports a reverted deposit even when the preceding approval succeeds", async () => {
+  expect(await (await quote(sample, BigInt(sample.inputAmount), 0n, true)).json()).toMatchObject({
+    execution: "quote_only",
+    originSimulation: { status: "reverted" },
+  });
 });
 it.each(["recipient", "payout", "cap", "pool", "expiry", "calldata suffix"])(
   "rejects a mismatched %s",

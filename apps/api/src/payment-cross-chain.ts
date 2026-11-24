@@ -104,6 +104,57 @@ export async function quoteCrossPayment(
     ),
     sourceRpc("eth_getBalance", [intent.sender, block]).then((v) => BigInt(quantity.parse(v))),
   ]);
+  let originSimulation: { status: string; gasUsed?: string[] };
+  if (balance < amountIn) originSimulation = { status: "insufficient_usdc" };
+  else {
+    const calls = [];
+    if (allowance < amountIn)
+      calls.push({
+        from: intent.sender,
+        to: sourceToken,
+        data: encodeFunctionData({
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [pool, amountIn],
+        }),
+      });
+    calls.push({ from: intent.sender, to: pool, data: q.swapTx.data });
+    try {
+      const simulation = z
+        .array(
+          z.object({
+            calls: z.array(
+              z.object({
+                status: quantity,
+                gasUsed: quantity,
+                returnData: z.string(),
+              }),
+            ),
+          }),
+        )
+        .length(1)
+        .parse(
+          await sourceRpc("eth_simulateV1", [
+            {
+              blockStateCalls: [{ calls }],
+              validation: false,
+            },
+            block,
+          ]),
+        );
+      const results = simulation[0]!.calls;
+      if (results.length !== calls.length) throw Error("Incomplete origin simulation");
+      const success =
+        results.every((r) => r.status === "0x1" && BigInt(r.gasUsed) > 0n) &&
+        (allowance >= amountIn || /^0x0{63}1$/i.test(results[0]!.returnData));
+      originSimulation = {
+        status: success ? "succeeded" : "reverted",
+        gasUsed: results.map((r) => BigInt(r.gasUsed).toString()),
+      };
+    } catch {
+      originSimulation = { status: "unavailable" };
+    }
+  }
   if (Math.min(q.quoteExpiryTimestamp, args[9]) <= Date.now() / 1000)
     throw Error("Expired cross-chain payment quote");
   return {
@@ -125,6 +176,7 @@ export async function quoteCrossPayment(
       requiredApprovalMicroUsdc: allowance < amountIn ? amountIn.toString() : "0",
     },
     originGas: { token: "ETH", includedInMaxInput: false },
+    originSimulation,
     expectedFillSeconds: q.expectedFillTime,
     expiresAt: Math.min(q.quoteExpiryTimestamp, args[9]),
     settlement: "Requires a separate destination fill and confirmation.",
