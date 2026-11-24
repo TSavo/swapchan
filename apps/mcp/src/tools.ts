@@ -306,6 +306,14 @@ async function summarize(api: SwapChanApi, q: Quote) {
   return {
     quoteId: q.id,
     provider: q.provider,
+    executionMechanism:
+      q.execution === "order"
+        ? "solver order"
+        : q.request.fromChainId !== q.request.toChainId
+          ? "bridge transaction"
+          : q.execution === "nonevm" || vmOf(q.request.fromChainId) !== "evm"
+            ? "native swap transaction"
+            : "router transaction",
     crossChain: q.request.fromChainId !== q.request.toChainId,
     toAmount: q.toAmount,
     toAmountMin: q.toAmountMin,
@@ -495,69 +503,75 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     ),
   );
 
-  server.registerTool(
-    "compare_routes",
-    {
-      title: "Compare routes",
-      description:
-        "Compare every route SwapChan found, ranked best-first by net USD received, across aggregators and bridges. Pass extra destination chains in alsoToChainIds to compare same-chain vs cross-chain outcomes side by side. Swap-chan lines up the whole cast. Result includes `display` markdown with chan images and a swapchan.com link: show it to the user.",
-      inputSchema: z.object({
-        ...swap,
-        alsoToChainIds: z
-          .array(chainId)
-          .max(4)
-          .optional()
-          .describe(
-            "Extra destination chains to compare. toToken must then be valid on each (e.g. native token).",
-          ),
-        limit: z.number().int().min(1).max(25).default(10),
-      }),
-      annotations: ro,
-    },
-    safe(
-      async (a: SwapArgs & { alsoToChainIds?: number[] | undefined; limit: number }) => {
-        const base = await toRequest(api, a);
-        const dests = [...new Set([a.toChainId, ...(a.alsoToChainIds ?? [])])];
-        const results = await Promise.allSettled(
-          dests.map((d) => api.quotes({ ...base, toChainId: d })),
-        );
-        const quotes: Quote[] = [];
-        const errors: { provider: string; message: string }[] = [];
-        results.forEach((r, i) => {
-          if (r.status === "fulfilled") {
-            quotes.push(...r.value.quotes);
-            errors.push(...r.value.errors);
-          } else
-            errors.push({ provider: `chain ${dests[i]}`, message: (r.reason as Error).message });
-        });
-        quotes.sort((x, y) => {
-          if (x.netUsd !== null && y.netUsd !== null) return y.netUsd - x.netUsd;
-          if (x.netUsd !== null) return -1;
-          if (y.netUsd !== null) return 1;
-          return BigInt(y.toAmount) > BigInt(x.toAmount)
-            ? 1
-            : BigInt(y.toAmount) < BigInt(x.toAmount)
-              ? -1
-              : 0;
-        });
-        return {
-          routes: await Promise.all(quotes.slice(0, a.limit).map((q) => summarize(api, q))),
-          totalFound: quotes.length,
-          providerErrors: errors,
-          note: "Ranked by netUsd = toAmount priced by SwapChan (same price for every route) - gasUsd; unpriced routes follow, by raw toAmount.",
-        };
+  for (const comparison of ["compare_routes", "compare_intents"] as const) {
+    server.registerTool(
+      comparison,
+      {
+        title:
+          comparison === "compare_routes"
+            ? "Compare routes"
+            : "Compare solver orders and transaction routes",
+        description:
+          comparison === "compare_intents"
+            ? "Compare solver orders, router swaps and bridge transactions by net USD received. Each route identifies how the wallet initiates it, its fees and expected time."
+            : "Compare every route SwapChan found, ranked best-first by net USD received, across aggregators and bridges. Pass extra destination chains in alsoToChainIds to compare same-chain vs cross-chain outcomes side by side. Swap-chan lines up the whole cast. Result includes `display` markdown with chan images and a swapchan.com link: show it to the user.",
+        inputSchema: z.object({
+          ...swap,
+          alsoToChainIds: z
+            .array(chainId)
+            .max(4)
+            .optional()
+            .describe(
+              "Extra destination chains to compare. toToken must then be valid on each (e.g. native token).",
+            ),
+          limit: z.number().int().min(1).max(25).default(10),
+        }),
+        annotations: ro,
       },
-      (a, r) => ({
-        fromChainId: a.fromChainId,
-        toChainId: a.toChainId,
-        says: r.routes[0]
-          ? `${r.totalFound} routes lined up! ${r.routes[0].provider} is in front~`
-          : "Uwaa, nobody had a route for that one.",
-        swapUrl: swapUrl(a),
-      }),
-    ),
-  );
-
+      safe(
+        async (a: SwapArgs & { alsoToChainIds?: number[] | undefined; limit: number }) => {
+          const base = await toRequest(api, a);
+          const dests = [...new Set([a.toChainId, ...(a.alsoToChainIds ?? [])])];
+          const results = await Promise.allSettled(
+            dests.map((d) => api.quotes({ ...base, toChainId: d })),
+          );
+          const quotes: Quote[] = [];
+          const errors: { provider: string; message: string }[] = [];
+          results.forEach((r, i) => {
+            if (r.status === "fulfilled") {
+              quotes.push(...r.value.quotes);
+              errors.push(...r.value.errors);
+            } else
+              errors.push({ provider: `chain ${dests[i]}`, message: (r.reason as Error).message });
+          });
+          quotes.sort((x, y) => {
+            if (x.netUsd !== null && y.netUsd !== null) return y.netUsd - x.netUsd;
+            if (x.netUsd !== null) return -1;
+            if (y.netUsd !== null) return 1;
+            return BigInt(y.toAmount) > BigInt(x.toAmount)
+              ? 1
+              : BigInt(y.toAmount) < BigInt(x.toAmount)
+                ? -1
+                : 0;
+          });
+          return {
+            routes: await Promise.all(quotes.slice(0, a.limit).map((q) => summarize(api, q))),
+            totalFound: quotes.length,
+            providerErrors: errors,
+            note: "Ranked by netUsd = toAmount priced by SwapChan (same price for every route) - gasUsd; unpriced routes follow, by raw toAmount.",
+          };
+        },
+        (a, r) => ({
+          fromChainId: a.fromChainId,
+          toChainId: a.toChainId,
+          says: r.routes[0]
+            ? `${r.totalFound} routes lined up! ${r.routes[0].provider} is in front~`
+            : "Uwaa, nobody had a route for that one.",
+          swapUrl: swapUrl(a),
+        }),
+      ),
+    );
+  }
   server.registerTool(
     "build_swap_tx",
     {

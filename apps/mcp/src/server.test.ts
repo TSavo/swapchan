@@ -110,6 +110,7 @@ describe("swapchan mcp over streamable http", () => {
         "cancel_limit_order",
         "list_limit_orders",
         "compare_routes",
+        "compare_intents",
         "get_quote",
         "get_route_status",
         "get_supported_chains",
@@ -466,24 +467,30 @@ describe("swapchan mcp over streamable http", () => {
     await c.close();
   });
 
-  it("compare_routes ranks same-chain and cross-chain together", async () => {
-    const c = await connect();
-    const r = data(
-      await c.callTool({
-        name: "compare_routes",
-        arguments: { ...ethToUsdc, alsoToChainIds: [8453] },
-      }),
-    );
-    expect(r.totalFound).toBe(4);
-    expect(r.routes.map((x: { provider: string }) => x.provider)).toEqual([
-      "0x",
-      "cow",
-      "across",
-      "lifi",
-    ]);
-    expect(r.routes[2].crossChain).toBe(true);
-    await c.close();
-  });
+  it.each(["compare_routes", "compare_intents"])(
+    "%s ranks same-chain and cross-chain together",
+    async (name) => {
+      const c = await connect();
+      const r = data(
+        await c.callTool({
+          name,
+          arguments: { ...ethToUsdc, alsoToChainIds: [8453] },
+        }),
+      );
+      expect(r.totalFound).toBe(4);
+      expect(r.routes.map((x: { provider: string }) => x.provider)).toEqual([
+        "0x",
+        "cow",
+        "across",
+        "lifi",
+      ]);
+      expect(r.routes[2].crossChain).toBe(true);
+      expect(r.routes.map((row: { executionMechanism: string }) => row.executionMechanism)).toEqual(
+        ["router transaction", "solver order", "bridge transaction", "bridge transaction"],
+      );
+      await c.close();
+    },
+  );
 
   it("build_swap_tx returns unsigned tx + approval, never signs", async () => {
     const c = await connect();

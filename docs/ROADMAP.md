@@ -234,7 +234,7 @@ The safety layer is largely built for one transaction. `verify_tx`, `simulate_sw
 
 ### Intents and solvers
 
-`compare_routes` already ranks CoW and the classic aggregators by net USD received, which is the comparison that matters. The gap is labeling: an agent cannot tell the user 'this is an intent filled by solvers' vs 'this is a classic router tx' except by provider name. CoW still needs a separate approve and cannot be the 7702 payment path until it is either bundled or used only when it wins on net proceeds.
+`compare_routes` already ranks CoW and the classic aggregators by net USD received, which is the comparison that matters. The local MCP tools now label signed solver orders, router swaps, bridge transactions, and explicitly declared native swap transactions. Use `compare_intents` for that comparison. The execution label describes the wallet action; a bridge may also use solvers internally. CoW still needs a separate approve and cannot be the 7702 payment path until it is either bundled or used only when it wins on net proceeds.
 
 ### Chain abstraction
 
@@ -242,7 +242,7 @@ Swap routing already covers 15 networks, including native BTC/LTC/DOGE/BCH throu
 
 ## Proposed tools
 
-New or changed MCP tools only, plus the SmartWallet change that makes them usable in the hosted agent. Effort is rough: S days, M a short project, L a multi-week build including wallet and paymaster work. None of these exist in the repo today.
+New or changed MCP tools only, plus the SmartWallet change that makes them usable in the hosted agent. Effort is rough: S days, M a short project, L a multi-week build including wallet and paymaster work. The Base Sepolia milestone implements limited payment quoting, bundle building and SmartWallet signing. The local MCP also implements `compare_intents`. The table gives the full target for each capability.
 
 | Tool                    | Spec                                                                                                                                                                                                                                       | Builds on                                                                     | Effort |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- | ------ |
