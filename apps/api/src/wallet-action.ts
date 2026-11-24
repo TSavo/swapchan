@@ -34,7 +34,7 @@ export const ModelAction = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("review_payment"),
-      chainId: z.literal(84532),
+      chainId: z.union([z.literal(84532), z.literal(10)]),
       recipient: z
         .string()
         .regex(/^0x[0-9a-f]{40}$/i)

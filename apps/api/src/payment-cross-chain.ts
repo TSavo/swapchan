@@ -1,21 +1,12 @@
-import { EvmAddress } from "@swapchan/shared";
-import { decodeFunctionData, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
+import { acrossBaseRoute, checkAcrossDeposit, EvmAddress } from "@swapchan/shared";
+import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { z } from "zod";
 import { estimateOriginFees } from "./payment-origin-fees.js";
 import { getJson } from "./providers/types.js";
 
-const sourceToken = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const destinationToken = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85";
-const pool = "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64";
-export const acrossBaseRoute = {
-  sourceToken,
-  destinationToken,
-  pool,
-  destinationPool: "0x6f26bf09b1c792e3228e5467807a900a503c0281",
-} as const;
-const deposit = parseAbi([
-  "function deposit(bytes32 depositor,bytes32 recipient,bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 destinationChainId,bytes32 exclusiveRelayer,uint32 quoteTimestamp,uint32 fillDeadline,uint32 exclusivityDeadline,bytes message)",
-]);
+export { acrossBaseRoute } from "@swapchan/shared";
+
+const { sourceToken, destinationToken, pool } = acrossBaseRoute;
 const units = z.string().regex(/^[1-9][0-9]{0,37}$/);
 export const crossPaymentInput = z
   .object({
@@ -64,35 +55,16 @@ export async function quoteCrossPayment(
       signal: AbortSignal.timeout(10000),
     }),
   );
-  const { args } = decodeFunctionData({ abi: deposit, data: q.swapTx.data as Hex });
-  const [sender, recipient, tokenIn, tokenOut, amountIn, amountOut, destination, , , , , message] =
-    args;
-  const canonical = encodeFunctionData({
-    abi: deposit,
-    functionName: "deposit",
-    args,
-  }).toLowerCase();
-  const data = q.swapTx.data.toLowerCase();
-  const now = Math.floor(Date.now() / 1000);
+  const { amountIn, fillDeadline } = checkAcrossDeposit(
+    { ...q.swapTx, data: q.swapTx.data as Hex },
+    { ...intent, maxInputMicroUsdc: q.maxInputAmount, expiresAt: q.quoteExpiryTimestamp },
+  );
   if (
-    (data !== canonical && data !== canonical + "1dc0de000073c0de") ||
-    q.swapTx.to.toLowerCase() !== pool.toLowerCase() ||
-    BigInt(q.swapTx.value ?? 0) !== 0n ||
-    sender.toLowerCase() !== pad(intent.sender).toLowerCase() ||
-    recipient.toLowerCase() !== pad(intent.recipient).toLowerCase() ||
-    tokenIn.toLowerCase() !== pad(sourceToken).toLowerCase() ||
-    tokenOut.toLowerCase() !== pad(destinationToken).toLowerCase() ||
-    destination !== BigInt(intent.chainId) ||
-    message !== "0x" ||
-    amountOut !== BigInt(intent.amountMicroUsdc) ||
     q.expectedOutputAmount !== intent.amountMicroUsdc ||
     q.minOutputAmount !== intent.amountMicroUsdc ||
-    amountIn !== BigInt(q.inputAmount) ||
-    amountIn > BigInt(q.maxInputAmount) ||
-    args[9] <= now ||
-    q.quoteExpiryTimestamp <= now
+    amountIn !== BigInt(q.inputAmount)
   )
-    throw Error("Cross-chain deposit differs from payment intent or has expired");
+    throw Error("Across amounts differ from the deposit");
   const quantity = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]*)$/i);
   const block = quantity.parse(await sourceRpc("eth_blockNumber", []));
   const readUsdc = async (data: Hex) =>
@@ -170,7 +142,7 @@ export async function quoteCrossPayment(
       originSimulation = { status: "unavailable" };
     }
   }
-  if (Math.min(q.quoteExpiryTimestamp, args[9]) <= Date.now() / 1000)
+  if (Math.min(q.quoteExpiryTimestamp, fillDeadline) <= Date.now() / 1000)
     throw Error("Expired cross-chain payment quote");
   const quote = {
     ...intent,
@@ -206,7 +178,7 @@ export async function quoteCrossPayment(
     },
     originSimulation,
     expectedFillSeconds: q.expectedFillTime,
-    expiresAt: Math.min(q.quoteExpiryTimestamp, args[9]),
+    expiresAt: Math.min(q.quoteExpiryTimestamp, fillDeadline),
     settlement: "Requires a separate destination fill and confirmation.",
   };
   return { quote, calls };

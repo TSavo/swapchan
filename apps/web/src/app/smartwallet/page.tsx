@@ -15,6 +15,7 @@ import {
   streamSession,
 } from "@/lib/liveStream";
 import { SANITIZE_CONFIG } from "@/lib/sanitize";
+import { CrossPaymentPanel } from "./CrossPaymentPanel";
 import { PaymentPanel } from "./PaymentPanel";
 
 // Client-only (the Crossmint SDK must not run during SSR / the build).
@@ -36,7 +37,7 @@ interface VerifySummary {
   note?: string;
 }
 type ModelAction =
-  | { type: "review_payment"; chainId: 84532; recipient: string; amountMicroUsdc: string }
+  | { type: "review_payment"; chainId: 84532 | 10; recipient: string; amountMicroUsdc: string }
   | { type: "sign_and_send"; chainId: number; tx: EvmTx; verify: VerifySummary }
   | { type: "sign_message"; message: string }
   | { type: "switch_chain"; chainId: number }
@@ -700,7 +701,15 @@ export default function SmartWalletPage() {
                     : "I read the warning above and want to send this anyway."}
                 </label>
               )}
-            {pending.type === "review_payment" && (
+            {pending.type === "review_payment" && pending.chainId === 10 && address && (
+              <CrossPaymentPanel
+                key={address + pending.actionId}
+                sender={address}
+                proposal={pending}
+                report={report}
+              />
+            )}
+            {pending.type === "review_payment" && pending.chainId === 84532 && (
               <PaymentPanel
                 key={pending.actionId}
                 sender={address}

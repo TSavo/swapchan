@@ -10,37 +10,10 @@ import {
   type SignedAuthorization,
 } from "viem";
 import { useSignTypedData, useSwitchChain } from "wagmi";
-import { API_URL } from "@/lib/api";
+import { PaymentRequestError, paymentRequest as request } from "@/lib/paymentRequest";
 import { paymentSignatureRequest } from "@/lib/paymentSigning";
 
 type Review = PaymentQuote & { quoteId: string; authorizationNonce?: string };
-class PaymentRequestError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-async function request<T>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(
-    API_URL + "/payments/" + path,
-    body === undefined
-      ? { cache: "no-store" }
-      : {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        },
-  );
-  const result = await r.json();
-  if (!r.ok)
-    throw new PaymentRequestError(
-      r.status,
-      String(result.error ?? "Payment request failed").replaceAll("_", " "),
-    );
-  return result;
-}
 function readAuthorization(raw: string, q: Review): SignedAuthorization {
   const value = JSON.parse(raw),
     a = value.authorization ?? value;
