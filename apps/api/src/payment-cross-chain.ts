@@ -1,4 +1,4 @@
-import { acrossBaseRoute, checkAcrossDeposit, EvmAddress } from "@swapchan/shared";
+import { acrossRoute, checkAcrossDeposit, EvmAddress } from "@swapchan/shared";
 import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { z } from "zod";
 import { estimateOriginFees } from "./payment-origin-fees.js";
@@ -6,18 +6,22 @@ import { getJson } from "./providers/types.js";
 
 export { acrossBaseRoute } from "@swapchan/shared";
 
-const { sourceToken, destinationToken, pool } = acrossBaseRoute;
 const units = z.string().regex(/^[1-9][0-9]{0,37}$/);
 export const crossPaymentInput = z
   .object({
-    sourceChainId: z.literal(8453),
-    chainId: z.literal(10),
+    sourceChainId: z.union([z.literal(8453), z.literal(84532)]),
+    chainId: z.union([z.literal(10), z.literal(11155420)]),
     sender: EvmAddress,
     recipient: EvmAddress,
     amountMicroUsdc: units,
   })
   .strict()
-  .refine((x) => !/^0x0{40}$/i.test(x.recipient) && !/^0x0{40}$/i.test(x.sender));
+  .refine(
+    (x) =>
+      acrossRoute(x.chainId).origin === x.sourceChainId &&
+      !/^0x0{40}$/i.test(x.recipient) &&
+      !/^0x0{40}$/i.test(x.sender),
+  );
 const response = z.object({
   amountType: z.literal("exactOutput"),
   crossSwapType: z.literal("bridgeableToBridgeable"),
@@ -28,7 +32,7 @@ const response = z.object({
   quoteExpiryTimestamp: z.number().int(),
   expectedFillTime: z.number().nonnegative(),
   swapTx: z.object({
-    chainId: z.literal(8453),
+    chainId: z.number().int(),
     to: EvmAddress,
     data: z.string().regex(/^0x(?:[0-9a-f]{2})+$/i),
     value: z.string().optional(),
@@ -39,6 +43,8 @@ export async function quoteCrossPayment(
   intent: z.infer<typeof crossPaymentInput>,
   sourceRpc: (method: string, params: unknown[]) => Promise<unknown>,
 ) {
+  const route = acrossRoute(intent.chainId);
+  const { sourceToken, destinationToken, pool } = route;
   const params = new URLSearchParams({
     tradeType: "exactOutput",
     amount: intent.amountMicroUsdc,
@@ -51,10 +57,11 @@ export async function quoteCrossPayment(
     integratorId: "0x0000",
   });
   const q = response.parse(
-    await getJson(f, "https://app.across.to/api/swap/approval?" + params, {
+    await getJson(f, route.api + "/swap/approval?" + params, {
       signal: AbortSignal.timeout(10000),
     }),
   );
+  if (q.swapTx.chainId !== route.origin) throw Error("Wrong origin chain");
   const { amountIn, fillDeadline } = checkAcrossDeposit(
     { ...q.swapTx, data: q.swapTx.data as Hex },
     { ...intent, maxInputMicroUsdc: q.maxInputAmount, expiresAt: q.quoteExpiryTimestamp },
@@ -134,6 +141,7 @@ export async function quoteCrossPayment(
       if (success)
         feeEstimate = await estimateOriginFees(
           sourceRpc,
+          route.origin,
           block,
           intent.sender,
           calls.map((call, index) => ({ ...call, gas: BigInt(results[index]!.gasUsed) })),

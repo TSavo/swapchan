@@ -37,7 +37,12 @@ interface VerifySummary {
   note?: string;
 }
 type ModelAction =
-  | { type: "review_payment"; chainId: 84532 | 10; recipient: string; amountMicroUsdc: string }
+  | {
+      type: "review_payment";
+      chainId: 84532 | 10 | 11155420;
+      recipient: string;
+      amountMicroUsdc: string;
+    }
   | { type: "sign_and_send"; chainId: number; tx: EvmTx; verify: VerifySummary }
   | { type: "sign_message"; message: string }
   | { type: "switch_chain"; chainId: number }
@@ -701,7 +706,7 @@ export default function SmartWalletPage() {
                     : "I read the warning above and want to send this anyway."}
                 </label>
               )}
-            {pending.type === "review_payment" && pending.chainId === 10 && address && (
+            {pending.type === "review_payment" && pending.chainId !== 84532 && address && (
               <CrossPaymentPanel
                 key={address + pending.actionId}
                 sender={address}

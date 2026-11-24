@@ -1,7 +1,7 @@
-import { EvmAddress } from "@swapchan/shared";
+import { acrossRoute, EvmAddress } from "@swapchan/shared";
 import { decodeEventLog, erc20Abi, type Hex, pad, parseAbi, toEventSelector, zeroHash } from "viem";
 import { z } from "zod";
-import { crossPaymentInput, acrossBaseRoute as route } from "./payment-cross-chain.js";
+import { crossPaymentInput } from "./payment-cross-chain.js";
 
 const hash = z
   .string()
@@ -28,13 +28,18 @@ const abi = parseAbi([
   "event FundsDeposited(bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 indexed destinationChainId,uint256 indexed depositId,uint32 quoteTimestamp,uint32 fillDeadline,uint32 exclusivityDeadline,bytes32 indexed depositor,bytes32 recipient,bytes32 exclusiveRelayer,bytes message)",
   "event FilledRelay(bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 repaymentChainId,uint256 indexed originChainId,uint256 indexed depositId,uint32 fillDeadline,uint32 exclusivityDeadline,bytes32 exclusiveRelayer,bytes32 indexed relayer,bytes32 depositor,bytes32 recipient,bytes32 messageHash,(bytes32 updatedRecipient,bytes32 updatedMessageHash,uint256 updatedOutputAmount,uint8 fillType) relayExecutionInfo)",
 ]);
-type Rpc = (chain: 8453 | 10, method: string, params: unknown[]) => Promise<unknown>;
+type Rpc = (
+  chain: 8453 | 10 | 84532 | 11155420,
+  method: string,
+  params: unknown[],
+) => Promise<unknown>;
 export async function crossSettlement(
   rpc: Rpc,
   intent: z.infer<typeof settlementInput>,
   f: typeof fetch = fetch,
 ) {
-  async function canonical(chain: 8453 | 10, tx: Hex) {
+  const route = acrossRoute(intent.chainId);
+  async function canonical(chain: 8453 | 10 | 84532 | 11155420, tx: Hex) {
     const raw = await rpc(chain, "eth_getTransactionReceipt", [tx]);
     if (raw === null) return null;
     const r = receipt.parse(raw);
@@ -51,7 +56,7 @@ export async function crossSettlement(
         BigInt(r.blockNumber),
     };
   }
-  const origin = await canonical(8453, intent.originHash);
+  const origin = await canonical(route.origin, intent.originHash);
   if (!origin) return { status: "awaiting_origin_receipt", originHash: intent.originHash };
   const logs = (r: z.infer<typeof receipt>, addr: string) =>
     r.logs
@@ -70,7 +75,7 @@ export async function crossSettlement(
     d.inputAmount <= 0n ||
     d.inputAmount > BigInt(intent.maxInputMicroUsdc) ||
     d.outputAmount !== BigInt(intent.amountMicroUsdc) ||
-    d.destinationChainId !== 10n ||
+    d.destinationChainId !== BigInt(route.destination) ||
     d.message !== "0x" ||
     delta(origin.r, route.sourceToken, intent.sender) !== -d.inputAmount ||
     delta(origin.r, route.sourceToken, route.pool) !== d.inputAmount
@@ -84,8 +89,11 @@ export async function crossSettlement(
   };
   let fillHash = intent.fillHash;
   if (!fillHash) {
-    const params = new URLSearchParams({ originChainId: "8453", depositTxnRef: intent.originHash });
-    const reply = await f("https://app.across.to/api/deposit/status?" + params, {
+    const params = new URLSearchParams({
+      originChainId: String(route.origin),
+      depositTxnRef: intent.originHash,
+    });
+    const reply = await f(route.api + "/deposit/status?" + params, {
       signal: AbortSignal.timeout(10000),
     });
     if (reply.status === 404) return { ...progress, status: "awaiting_fill_index" };
@@ -93,8 +101,8 @@ export async function crossSettlement(
     const hint = z
       .object({
         status: z.string(),
-        originChainId: z.literal(8453),
-        destinationChainId: z.literal(10),
+        originChainId: z.literal(route.origin),
+        destinationChainId: z.literal(route.destination),
         depositId: z.union([z.string(), z.number().int().safe()]),
         depositTxnRef: hash,
         fillTxnRef: hash.nullish(),
@@ -108,7 +116,7 @@ export async function crossSettlement(
       return { ...progress, status: "awaiting_verified_fill", providerStatus: hint.status };
     fillHash = hint.fillTxnRef;
   }
-  const dest = await canonical(10, fillHash);
+  const dest = await canonical(route.destination, fillHash);
   if (!dest) return { ...progress, status: "awaiting_destination_receipt", fillHash };
   const fills = logs(dest.r, route.destinationPool)
     .filter((l) => l.topics[0] === toEventSelector(abi[1]))
@@ -116,7 +124,7 @@ export async function crossSettlement(
   if (fills.length !== 1) throw Error("Ambiguous or missing destination fill");
   const fill = fills[0]!.args;
   if (
-    fill.originChainId !== 8453n ||
+    fill.originChainId !== BigInt(route.origin) ||
     fill.messageHash !== zeroHash ||
     fill.relayExecutionInfo.updatedRecipient !== d.recipient ||
     fill.relayExecutionInfo.updatedOutputAmount !== d.outputAmount ||

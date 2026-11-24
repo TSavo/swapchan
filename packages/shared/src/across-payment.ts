@@ -12,11 +12,28 @@ const sourceToken = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const destinationToken = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85";
 const pool = "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64";
 export const acrossBaseRoute = {
+  origin: 8453,
+  destination: 10,
+  api: "https://app.across.to/api",
   sourceToken,
   destinationToken,
   pool,
   destinationPool: "0x6f26bf09b1c792e3228e5467807a900a503c0281",
 } as const;
+export const acrossTestRoute = {
+  origin: 84532,
+  destination: 11155420,
+  api: "https://testnet.across.to/api",
+  sourceToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  destinationToken: "0x5fd84259d66Cd46123540766Be93DFE6D43130D7",
+  pool: "0x82B564983aE7274c86695917BBf8C99ECb6F0F8F",
+  destinationPool: "0x4e8E101924eDE233C13e2D8622DC8aED2872d505",
+} as const;
+export function acrossRoute(destination: number) {
+  if (destination === 10) return acrossBaseRoute;
+  if (destination === 11155420) return acrossTestRoute;
+  throw Error("Unsupported Across destination");
+}
 const deposit = parseAbi([
   "function deposit(bytes32 depositor,bytes32 recipient,bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 destinationChainId,bytes32 exclusiveRelayer,uint32 quoteTimestamp,uint32 fillDeadline,uint32 exclusivityDeadline,bytes message)",
 ]);
@@ -24,6 +41,7 @@ const deposit = parseAbi([
 export function checkAcrossDeposit(
   tx: { to: string; data: Hex; value?: string | undefined },
   intent: {
+    chainId?: number;
     sender: Address;
     recipient: Address;
     amountMicroUsdc: string;
@@ -31,6 +49,8 @@ export function checkAcrossDeposit(
     expiresAt: number;
   },
 ) {
+  const route = acrossRoute(intent.chainId ?? 10);
+  const { sourceToken, destinationToken, pool } = route;
   const { args } = decodeFunctionData({ abi: deposit, data: tx.data as Hex });
   const [sender, recipient, tokenIn, tokenOut, amountIn, amountOut, destination, , , , , message] =
     args;
@@ -49,7 +69,7 @@ export function checkAcrossDeposit(
     recipient.toLowerCase() !== pad(intent.recipient).toLowerCase() ||
     tokenIn.toLowerCase() !== pad(sourceToken).toLowerCase() ||
     tokenOut.toLowerCase() !== pad(destinationToken).toLowerCase() ||
-    destination !== 10n ||
+    destination !== BigInt(route.destination) ||
     message !== "0x" ||
     amountOut !== BigInt(intent.amountMicroUsdc) ||
     amountIn <= 0n ||
@@ -63,7 +83,9 @@ export function checkAcrossDeposit(
 export function checkAcrossApproval(
   tx: { to: string; data: Hex; value?: string | undefined },
   cap: string,
+  destination = 10,
 ) {
+  const { sourceToken, pool } = acrossRoute(destination);
   const expected = encodeFunctionData({
     abi: erc20Abi,
     functionName: "approve",

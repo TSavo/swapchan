@@ -107,8 +107,14 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     };
   }
   const app = new Hono();
+  const bridgeRpc = {
+    8453: "https://mainnet.base.org",
+    10: "https://mainnet.optimism.io",
+    84532: "https://sepolia.base.org",
+    11155420: "https://sepolia.optimism.io",
+  } as const;
   const inspectCrossPayment = (intent: z.infer<typeof crossPaymentInput>) =>
-    quoteCrossPayment(f, intent, (m, p) => rpc("https://mainnet.base.org", m, p));
+    quoteCrossPayment(f, intent, (m, p) => rpc(bridgeRpc[intent.sourceChainId], m, p));
   app.post("/cross-chain/build", async (c) => {
     const body = z
       .object({ quoteId: z.uuid(), stage: z.enum(["initial", "after_approval"]) })
@@ -157,7 +163,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
       return c.json({
         quoteId: body.data.quoteId,
         action: approval ? "approve" : "deposit",
-        unsignedTransaction: { ...calls[0], chainId: 8453, value: "0x0" },
+        unsignedTransaction: { ...calls[0], chainId: saved.intent.sourceChainId, value: "0x0" },
         expiresAt: Math.min(quote.expiresAt, saved.review.expiresAt),
         originSimulation: quote.originSimulation,
         estimatedOriginFeeWei: quote.originGas.estimate.totalWei,
@@ -170,14 +176,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     const parsed = settlementInput.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid_settlement_request" }, 400);
     try {
-      return c.json(
-        await crossSettlement(
-          (id, m, p) =>
-            rpc(id === 8453 ? "https://mainnet.base.org" : "https://mainnet.optimism.io", m, p),
-          parsed.data,
-          f,
-        ),
-      );
+      return c.json(await crossSettlement((id, m, p) => rpc(bridgeRpc[id], m, p), parsed.data, f));
     } catch {
       return c.json({ error: "settlement_unverified" }, 502);
     }

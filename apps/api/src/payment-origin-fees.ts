@@ -18,6 +18,7 @@ const uint256 = z
 /** Estimate Base origin charges for the exact sequence that successfully simulated. */
 export async function estimateOriginFees(
   rpc: (method: string, params: unknown[]) => Promise<unknown>,
+  chainId: 8453 | 84532,
   block: string,
   sender: Address,
   calls: { to: Address; data: Hex; gas: bigint }[],
@@ -39,7 +40,7 @@ export async function estimateOriginFees(
     calls.map(async (call, i) => {
       const tx = serializeTransaction({
         type: "eip1559",
-        chainId: 8453,
+        chainId,
         to: call.to,
         data: call.data,
         gas: call.gas,

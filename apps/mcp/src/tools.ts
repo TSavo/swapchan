@@ -888,10 +888,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote an exact USDC payment",
       description:
-        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For a read-only Across USDC quote from Base to Optimism, pass sourceChainId 8453 and destination chainId 10. Origin ETH gas is separate and destination settlement is asynchronous.",
+        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z.object({
-        chainId: z.union([z.literal(84532), z.literal(10)]),
-        sourceChainId: z.literal(8453).optional(),
+        chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
+        sourceChainId: z.union([z.literal(8453), z.literal(84532)]).optional(),
         sender: evm,
         recipient: evm,
         amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
@@ -928,10 +928,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "Start with a destination chain, sender, recipient and micro-USDC amount. Base Sepolia inspects local USDC and WETH. Optimism checks the supported Base USDC funding route. After human review pass the quote ID to build the next unsigned wallet action. Base Sepolia first-time setup needs the chain-specific signed delegation. On Base mainnet, wait for a successful approval receipt before requesting after_approval. Only an independently confirmed destination receipt proves payout.",
+        "Start with a destination chain, sender, recipient and micro-USDC amount. Base Sepolia inspects local USDC and WETH. Optimism and Optimism Sepolia check Base USDC on the corresponding network. After human review pass the quote ID to build the next unsigned wallet action. Base Sepolia first-time setup needs the chain-specific signed delegation. On Base mainnet, wait for a successful approval receipt before requesting after_approval. Only an independently confirmed destination receipt proves payout.",
       inputSchema: z
         .object({
-          chainId: z.union([z.literal(84532), z.literal(10)]),
+          chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
           intent: z
             .object({
               sender: evm,
@@ -958,7 +958,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         .refine(
           (a) =>
             Boolean(a.intent) !== Boolean(a.quoteId) &&
-            (!a.stage || (a.quoteId && a.chainId === 10)) &&
+            (!a.stage || (a.quoteId && a.chainId !== 84532)) &&
             (!a.authorization || (a.quoteId && a.chainId === 84532)),
           "Supply a payment intent or a reviewed quote ID with its chain-specific build arguments.",
         ),
@@ -969,9 +969,9 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         return api.paymentQuote({
           ...a.intent,
           chainId: a.chainId,
-          ...(a.chainId === 10 ? { sourceChainId: 8453 } : {}),
+          ...(a.chainId !== 84532 ? { sourceChainId: a.chainId === 10 ? 8453 : 84532 } : {}),
         });
-      return a.chainId === 10
+      return a.chainId !== 84532
         ? api.crossPaymentBuild({ quoteId: a.quoteId, stage: a.stage ?? "initial" })
         : api.paymentBuild({
             quoteId: a.quoteId,
@@ -1010,8 +1010,8 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .optional(),
           crossChain: z
             .object({
-              sourceChainId: z.literal(8453),
-              chainId: z.literal(10),
+              sourceChainId: z.union([z.literal(8453), z.literal(84532)]),
+              chainId: z.union([z.literal(10), z.literal(11155420)]),
               sender: evm,
               recipient: evm,
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
