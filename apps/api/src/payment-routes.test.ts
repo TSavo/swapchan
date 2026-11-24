@@ -20,10 +20,12 @@ function setup(failure: "relay" | "simulation" | "none" | "delegate", freshWeth?
         result = "0x10";
         break;
       case "pimlico_getUserOperationGasPrice":
-        result = { standard: { maxFeePerGas: "0x10", maxPriorityFeePerGas: "0x1" } };
+        result = { standard: { maxFeePerGas: "0x7026f0", maxPriorityFeePerGas: "0x100590" } };
         break;
       case "pimlico_getTokenQuotes":
-        result = { quotes: [{ token: c.usdc, paymaster: c.paymaster, exchangeRate: "0x10" }] };
+        result = {
+          quotes: [{ token: c.usdc, paymaster: c.paymaster, exchangeRate: "0x77359400" }],
+        };
         break;
       case "eth_getCode":
         if (params[0].toLowerCase() === c.delegate.toLowerCase()) {
@@ -82,6 +84,20 @@ function setup(failure: "relay" | "simulation" | "none" | "delegate", freshWeth?
   return { app, account, post, quote, sendCount: () => sendCount };
 }
 describe("payment build and relay", () => {
+  it("selects the quoted token gas cap for each payment mode", async () => {
+    for (const [balance, mode] of [
+      [undefined, "delegatedUsdc"],
+      [10500n, "swapOrSetup"],
+    ] as const) {
+      const h = setup("none", balance);
+      const gas = await (await h.post("/gas-quote", { chainId: 84532 })).json();
+      expect(BigInt(gas.maxGasMicroUsdc.delegatedUsdc)).toBeLessThan(
+        BigInt(gas.maxGasMicroUsdc.swapOrSetup),
+      );
+      expect(gas).toMatchObject({ token: c.usdc, paymaster: c.paymaster, decimals: 6 });
+      expect((await h.quote()).maxGasMicroUsdc).toBe(gas.maxGasMicroUsdc[mode]);
+    }
+  });
   it("withholds the signing request when the approved address has different runtime code", async () => {
     const h = setup("delegate");
     const { quoteId } = await h.quote();

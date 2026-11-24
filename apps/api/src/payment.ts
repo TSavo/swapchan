@@ -61,7 +61,57 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
   }
   const chain = (m: string, p: unknown[]) => rpc("https://sepolia.base.org", m, p);
   const pm = (m: string, p: unknown[]) => rpc("https://public.pimlico.io/v2/84532/rpc", m, p);
+  async function quoteGasInUsdc() {
+    const [pricing, tokenPricing] = await Promise.all([
+      pm("pimlico_getUserOperationGasPrice", []),
+      pm("pimlico_getTokenQuotes", [{ tokens: [usdc] }, entry, "0x14a34"]),
+    ]);
+    const fees = z
+      .object({ standard: z.object({ maxFeePerGas: hex, maxPriorityFeePerGas: hex }) })
+      .parse(pricing).standard;
+    const quotes = z
+      .object({
+        quotes: z.array(z.object({ token: EvmAddress, paymaster: EvmAddress, exchangeRate: hex })),
+      })
+      .parse(tokenPricing).quotes;
+    const quote = quotes.find(
+      (t) =>
+        t.token.toLowerCase() === usdc.toLowerCase() &&
+        t.paymaster.toLowerCase() === paymaster.toLowerCase(),
+    );
+    if (!quote || !BigInt(quote.exchangeRate) || !BigInt(fees.maxFeePerGas))
+      throw new Error("missing gas quote");
+    const gasCap = (gas: bigint) =>
+      (gas * BigInt(fees.maxFeePerGas) * BigInt(quote.exchangeRate) * 12n + 10n ** 19n - 1n) /
+        10n ** 19n +
+      100n;
+    return {
+      chainId: 84532,
+      token: usdc,
+      symbol: "USDC",
+      decimals: 6,
+      paymaster,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      maxGasMicroUsdc: {
+        delegatedUsdc: gasCap(425000n).toString(),
+        swapOrSetup: gasCap(955000n).toString(),
+      },
+      ...fees,
+    };
+  }
   const app = new Hono();
+  app.post("/gas-quote", async (c) => {
+    const body = z
+      .object({ chainId: z.literal(84532) })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "invalid_gas_quote_request" }, 400);
+    try {
+      return c.json(await quoteGasInUsdc());
+    } catch {
+      return c.json({ error: "gas_quote_unavailable" }, 503);
+    }
+  });
   app.post("/delegation", async (c) => {
     const body = z
       .object({
@@ -83,11 +133,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     if (!parsed.success) return c.json({ error: "invalid_payment" }, 400);
     const { sender, amountMicroUsdc } = parsed.data;
     try {
-      const [block, pricing, tokenPricing] = await Promise.all([
-        chain("eth_blockNumber", []),
-        pm("pimlico_getUserOperationGasPrice", []),
-        pm("pimlico_getTokenQuotes", [{ tokens: [usdc] }, entry, "0x14a34"]),
-      ]);
+      const [block, gasQuote] = await Promise.all([chain("eth_blockNumber", []), quoteGasInUsdc()]);
       const blockNumber = hex.parse(block);
       const call = async (to: string, data: Hex) =>
         hex.parse(await chain("eth_call", [{ to, data }, blockNumber])) as Hex;
@@ -106,32 +152,12 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
         String(code).toLowerCase() !== "0xef0100" + delegate.slice(2).toLowerCase()
       )
         return c.json({ error: "unsupported_account_code" }, 422);
-      const fees = z
-        .object({ standard: z.object({ maxFeePerGas: hex, maxPriorityFeePerGas: hex }) })
-        .parse(pricing).standard;
-      const quotes = z
-        .object({
-          quotes: z.array(
-            z.object({ token: EvmAddress, paymaster: EvmAddress, exchangeRate: hex }),
-          ),
-        })
-        .parse(tokenPricing).quotes;
-      const quote = quotes.find(
-        (t) =>
-          t.token.toLowerCase() === usdc.toLowerCase() &&
-          t.paymaster.toLowerCase() === paymaster.toLowerCase(),
-      );
-      if (!quote || !BigInt(quote.exchangeRate) || !BigInt(fees.maxFeePerGas))
-        throw new Error("missing gas quote");
-      const gasCap = (gas: bigint) =>
-        (gas * BigInt(fees.maxFeePerGas) * BigInt(quote.exchangeRate) * 12n + 10n ** 19n - 1n) /
-          10n ** 19n +
-        100n;
       const payout = BigInt(amountMicroUsdc);
+      const directCap = BigInt(gasQuote.maxGasMicroUsdc.delegatedUsdc);
       const gas =
-        code !== "0x" && BigInt(usd) >= payout + gasCap(425000n)
-          ? gasCap(425000n)
-          : gasCap(955000n);
+        code !== "0x" && BigInt(usd) >= payout + directCap
+          ? directCap
+          : BigInt(gasQuote.maxGasMicroUsdc.swapOrSetup);
       const missing = payout + gas - BigInt(usd);
       let maxWeth = 0n;
       if (missing > 0n) {
@@ -157,7 +183,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
       const result = {
         ...parsed.data,
         blockNumber,
-        expiresAt: Math.floor(Date.now() / 1000) + 60,
+        expiresAt: gasQuote.expiresAt,
         delegate,
         paymaster,
         requiresDelegation: code === "0x",
@@ -171,7 +197,8 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
         maxGasMicroUsdc: gas.toString(),
         maxWethWei: maxWeth.toString(),
         swapOutputMicroUsdc: (missing > 0n ? missing : 0n).toString(),
-        ...fees,
+        maxFeePerGas: gasQuote.maxFeePerGas,
+        maxPriorityFeePerGas: gasQuote.maxPriorityFeePerGas,
       };
       const quoteId = randomUUID();
       for (const [id, old] of issued) {

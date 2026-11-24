@@ -102,6 +102,7 @@ describe("swapchan mcp over streamable http", () => {
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
         "quote_payment",
+        "quote_gas_in_token",
         "build_7702_bundle",
         "submit_payment",
         "payment_status",

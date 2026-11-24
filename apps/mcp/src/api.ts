@@ -146,6 +146,12 @@ export class SwapChanApi {
       body: JSON.stringify(body),
     });
   }
+  paymentGasQuote(body: { chainId: 84532 }) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/gas-quote", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   paymentBuild(body: Record<string, unknown>) {
     return this.req(z.record(z.string(), z.unknown()), "/payments/build", {
       method: "POST",
