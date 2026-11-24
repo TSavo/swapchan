@@ -571,6 +571,7 @@ export function paymentRoutes(
           return c.json(
             {
               error: "delegation_required",
+              delegation: checked,
               authorization: { chainId: 84532, address: delegate, nonce: pending.toString() },
             },
             409,
@@ -637,6 +638,7 @@ export function paymentRoutes(
         userOperation: op,
         userOpHash: digest,
         typedData: jsonSigningRequest(typed),
+        delegation: checked,
         simulation: { gas: estimate },
       });
     } catch (e) {
@@ -687,6 +689,7 @@ export function paymentRoutes(
       if (q.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
       return c.json({
         status: "verified",
+        delegation,
         quoteId,
         typedData: jsonSigningRequest(typed),
         userOpHash,

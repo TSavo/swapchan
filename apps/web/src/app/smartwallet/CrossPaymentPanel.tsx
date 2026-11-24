@@ -6,6 +6,7 @@ import {
   checkAcrossAtomicOrigin,
   checkAcrossDeposit,
   paymentContracts,
+  paymentDelegationNotice,
 } from "@swapchan/shared";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
@@ -604,6 +605,13 @@ export function CrossPaymentPanel({
                     Your wallet supports atomic calls. Review its final network fee in the wallet.
                   </p>
                 )}
+                <details>
+                  <summary>Delegated contract and revocation</summary>
+                  <p>
+                    {paymentContracts.delegate}. {paymentDelegationNotice.permission}{" "}
+                    {paymentDelegationNotice.revoke}
+                  </p>
+                </details>
                 <button disabled={busy} onClick={() => run(() => sign(true))}>
                   {atomicWallet ? "Review atomic wallet batch" : "Sign atomic approval and deposit"}
                 </button>

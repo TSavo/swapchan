@@ -9,6 +9,12 @@ export const paymentContracts = {
   entry: "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
 } as const;
 const { weth, usdc, router, paymaster } = paymentContracts;
+export const paymentDelegationNotice = {
+  permission:
+    "Simple7702Account can execute authorized calls from this account. The delegation stays active after this payment.",
+  revoke:
+    "To clear it, sign a Base Sepolia authorization for the zero address and include it in a set-code transaction. After inclusion, check that the account code is empty.",
+} as const;
 const routerAbi = parseAbi([
   "function exactOutputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountOut,uint256 amountInMaximum,uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountIn)",
 ]);

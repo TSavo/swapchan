@@ -1,5 +1,10 @@
 "use client";
-import { type PaymentQuote, paymentContracts, paymentSignatureRequest } from "@swapchan/shared";
+import {
+  type PaymentQuote,
+  paymentContracts,
+  paymentDelegationNotice,
+  paymentSignatureRequest,
+} from "@swapchan/shared";
 import { useEffect, useRef, useState } from "react";
 import {
   type Address,
@@ -314,8 +319,7 @@ export function PaymentPanel({
             {q.requiresDelegation && (
               <label>
                 First payment: import the signed Block Tools delegation for Base Sepolia, nonce{" "}
-                {q.authorizationNonce}, delegate {paymentContracts.delegate}. Delegation persists
-                until you authorize the zero address to revoke it.
+                {q.authorizationNonce}, delegate {paymentContracts.delegate}.
                 <textarea
                   aria-label="Signed delegation authorization"
                   className="w-full rounded bg-black/30 p-2"
@@ -324,6 +328,13 @@ export function PaymentPanel({
                 />
               </label>
             )}
+            <details open={q.requiresDelegation}>
+              <summary>{q.requiresDelegation ? "New" : "Existing"} account delegation</summary>
+              <p>{paymentContracts.delegate}</p>
+              <p>
+                {paymentDelegationNotice.permission} {paymentDelegationNotice.revoke}
+              </p>
+            </details>
           </>
         )}
         <button type="button" disabled={busy || !!pending} onClick={() => void act()}>

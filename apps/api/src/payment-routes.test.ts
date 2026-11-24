@@ -129,10 +129,16 @@ describe("payment build and relay", () => {
   it("independently verifies a built operation and rejects changed bytes before signing", async () => {
     const h = setup("none");
     const { quoteId } = await h.quote();
-    const { userOperation, userOpHash } = await (await h.post("/build", { quoteId })).json();
+    const { userOperation, userOpHash, delegation } = await (
+      await h.post("/build", { quoteId })
+    ).json();
+    expect(delegation.proposed).toMatchObject({
+      known: true,
+      howToRevoke: expect.stringContaining("zero address"),
+    });
     expect(
       await (await h.post("/verify", { quoteId, userOperation, userOpHash })).json(),
-    ).toMatchObject({ status: "verified", userOpHash, amountMicroUsdc: "1" });
+    ).toMatchObject({ status: "verified", userOpHash, amountMicroUsdc: "1", delegation });
     expect(
       (
         await h.post("/verify", {
@@ -177,7 +183,12 @@ describe("payment build and relay", () => {
       accountType: "delegated",
       existing: { known: true },
       proposed: { known: true },
-      revocation: { chainId: 84532, nonce: "0", address: "0x" + "0".repeat(40) },
+      revocation: {
+        chainId: 84532,
+        nonce: "0",
+        selfSponsoredNonce: "1",
+        address: "0x" + "0".repeat(40),
+      },
     });
   });
   it("uses the available WETH for slippage when it covers the exact output", async () => {

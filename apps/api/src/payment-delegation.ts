@@ -1,4 +1,4 @@
-import { paymentContracts } from "@swapchan/shared";
+import { paymentContracts, paymentDelegationNotice } from "@swapchan/shared";
 import { type Hex, keccak256, zeroAddress } from "viem";
 import { z } from "zod";
 
@@ -39,6 +39,12 @@ export async function inspectDelegation(rpc: Rpc, sender: string, proposedDelega
       address,
       codeHash,
       known,
+      ...(known
+        ? {
+            permission: paymentDelegationNotice.permission,
+            howToRevoke: paymentDelegationNotice.revoke,
+          }
+        : {}),
       sessionKeyScope: known ? "No session key is issued by the Swapchan payment flow." : "Unknown",
     };
   }
@@ -62,8 +68,10 @@ export async function inspectDelegation(rpc: Rpc, sender: string, proposedDelega
           chainId: 84532,
           address: zeroAddress,
           nonce,
+          selfSponsoredNonce: String(BigInt(nonce) + 1n),
           instruction:
-            "Refresh the nonce before signing. Include the signed authorization in a set-code transaction to clear delegation.",
+            "Refresh the account nonce before signing. With a separate transaction sender use the account nonce. When this account sends the transaction, use the transaction nonce plus one for the authorization. " +
+            paymentDelegationNotice.revoke,
         }
       : null,
   };
