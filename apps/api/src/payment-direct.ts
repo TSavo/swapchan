@@ -1,7 +1,7 @@
 import { acrossRoute, EvmAddress } from "@swapchan/shared";
 import { decodeEventLog, encodeFunctionData, erc20Abi, type Hex, toEventSelector } from "viem";
 import { z } from "zod";
-import { estimateOriginFees } from "./payment-origin-fees.js";
+import { estimateOriginFees, receiptFees } from "./payment-origin-fees.js";
 
 export const destinationIntent = z
   .object({
@@ -117,6 +117,9 @@ export async function directReceipt(i: z.infer<typeof directReceiptInput>, rpc: 
       blockHash: word,
       blockNumber: quantity,
       status: quantity,
+      gasUsed: quantity.optional(),
+      effectiveGasPrice: quantity.optional(),
+      l1Fee: quantity.optional(),
       from: address,
       to: address,
       logs: z.array(z.object({ address, data: z.string(), topics: z.array(word) })),
@@ -134,15 +137,21 @@ export async function directReceipt(i: z.infer<typeof directReceiptInput>, rpc: 
   )
     throw Error("Unexpected receipt");
   const mined = z
-    .object({ blockHash: word, input: z.string(), value: quantity })
+    .object({ hash: word, blockHash: word, input: z.string(), value: quantity })
     .parse(await rpc("eth_getTransactionByHash", [i.transactionHash]));
   if (
+    !same(mined.hash, i.transactionHash) ||
     !same(mined.blockHash, r.blockHash) ||
     !same(mined.input, tx.data) ||
     BigInt(mined.value) !== 0n
   )
     throw Error("Transaction differs from intent");
-  if (r.status === "0x0") return { status: "reverted", transactionHash: i.transactionHash };
+  const observed = {
+    transactionHash: i.transactionHash,
+    blockNumber: r.blockNumber,
+    fees: receiptFees(r),
+  };
+  if (r.status === "0x0") return { status: "reverted", ...observed };
   const logs = r.logs.filter(
     (l) =>
       same(l.address, tx.to) &&
@@ -167,7 +176,7 @@ export async function directReceipt(i: z.infer<typeof directReceiptInput>, rpc: 
     .parse(await rpc("eth_getBlockByNumber", ["finalized", false]));
   return {
     status: BigInt(finalized.number) >= BigInt(r.blockNumber) ? "settled" : "awaiting_finality",
-    transactionHash: i.transactionHash,
+    ...observed,
     paidMicroUsdc: i.amountMicroUsdc,
   };
 }

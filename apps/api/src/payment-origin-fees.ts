@@ -15,6 +15,21 @@ const uint256 = z
   .regex(/^0x[0-9a-f]{64}$/i)
   .transform(BigInt);
 
+/** Report only fee components that the mined OP Stack receipt exposes. */
+export function receiptFees(receipt: {
+  gasUsed?: string | undefined;
+  effectiveGasPrice?: string | undefined;
+  l1Fee?: string | undefined;
+}) {
+  return {
+    executionWei:
+      receipt.gasUsed && receipt.effectiveGasPrice
+        ? String(BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice))
+        : undefined,
+    l1DataWei: receipt.l1Fee ? String(BigInt(receipt.l1Fee)) : undefined,
+  };
+}
+
 /** Estimate OP Stack origin charges for the exact sequence that successfully simulated. */
 export async function estimateOriginFees(
   rpc: (method: string, params: unknown[]) => Promise<unknown>,

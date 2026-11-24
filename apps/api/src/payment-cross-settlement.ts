@@ -2,6 +2,7 @@ import { acrossRoute, EvmAddress } from "@swapchan/shared";
 import { decodeEventLog, erc20Abi, type Hex, pad, parseAbi, toEventSelector, zeroHash } from "viem";
 import { z } from "zod";
 import { crossPaymentInput } from "./payment-cross-chain.js";
+import { receiptFees } from "./payment-origin-fees.js";
 
 const hash = z
   .string()
@@ -84,17 +85,15 @@ export async function crossSettlement(
     delta(origin.r, route.sourceToken, route.pool) !== d.inputAmount
   )
     throw Error("Origin deposit differs from payment intent");
+  const fees = receiptFees(origin.r);
   const progress = {
     originHash: intent.originHash,
     depositId: String(d.depositId),
     fillDeadline: d.fillDeadline,
     originFinalized: origin.final,
     spentMicroUsdc: String(d.inputAmount),
-    depositExecutionFeeWei:
-      origin.r.gasUsed && origin.r.effectiveGasPrice
-        ? String(BigInt(origin.r.gasUsed) * BigInt(origin.r.effectiveGasPrice))
-        : undefined,
-    depositL1DataFeeWei: origin.r.l1Fee ? String(BigInt(origin.r.l1Fee)) : undefined,
+    depositExecutionFeeWei: fees.executionWei,
+    depositL1DataFeeWei: fees.l1DataWei,
   };
   let fillHash = intent.fillHash;
   if (!fillHash) {

@@ -82,6 +82,29 @@ try {
       }),
     );
   console.log("payment_status", JSON.stringify(receipt));
+  const directHash = "0x73c067802b2b58184f1fdef6d86c780d5b6d52e51021f67f4f9a4141031886f0";
+  const direct = z
+    .object({
+      status: z.literal("settled"),
+      transactionHash: z.literal(directHash),
+      paidMicroUsdc: z.literal("1494646"),
+      fees: z.object({
+        executionWei: z.literal("57691280687"),
+        l1DataWei: z.literal("2713792278"),
+      }),
+    })
+    .parse(
+      await call("payment_status", {
+        direct: {
+          chainId: 10,
+          sender: "0xa72b99b0c32b59050d5cedb3f3e6c8605e350c83",
+          recipient: "0xc8fa2a53394ecf73488aedbf308312dd3ea18032",
+          amountMicroUsdc: "1494646",
+          transactionHash: directHash,
+        },
+      }),
+    );
+  console.log("payment_status", JSON.stringify(direct));
   const testDeposit = z
     .object({
       depositId: z.literal("1003766"),

@@ -48,7 +48,7 @@ it("requires the exact destination transfer, funded ETH and successful simulatio
     expect(quote.sourceWallet.requiredApprovalMicroUsdc).toBe("0");
   }
 });
-it.each(["settled", "awaiting_finality", "bad_event", "wrong_calldata"])(
+it.each(["settled", "awaiting_finality", "bad_event", "bad_hash", "wrong_calldata"])(
   "independently reconciles direct receipts (%s)",
   async (kind) => {
     const promise = directReceipt({ ...i, transactionHash }, async (method, p) => {
@@ -57,7 +57,12 @@ it.each(["settled", "awaiting_finality", "bad_event", "wrong_calldata"])(
           ? { number: kind === "awaiting_finality" ? "0x1" : "0x3" }
           : { hash: blockHash };
       if (method === "eth_getTransactionByHash")
-        return { input: kind === "wrong_calldata" ? "0x" : data, value: "0x0", blockHash };
+        return {
+          hash: kind === "bad_hash" ? blockHash : transactionHash,
+          input: kind === "wrong_calldata" ? "0x" : data,
+          value: "0x0",
+          blockHash,
+        };
       return {
         status: "0x1",
         from: i.sender,
@@ -65,6 +70,9 @@ it.each(["settled", "awaiting_finality", "bad_event", "wrong_calldata"])(
         blockHash,
         transactionHash,
         blockNumber: "0x2",
+        gasUsed: "0xa",
+        effectiveGasPrice: "0x3",
+        l1Fee: "0x0",
         logs: [
           {
             address: token,
@@ -80,7 +88,12 @@ it.each(["settled", "awaiting_finality", "bad_event", "wrong_calldata"])(
     });
     if (kind.startsWith("bad") || kind === "wrong_calldata")
       await expect(promise).rejects.toThrow();
-    else await expect(promise).resolves.toMatchObject({ status: kind, paidMicroUsdc: "1" });
+    else
+      await expect(promise).resolves.toMatchObject({
+        status: kind,
+        paidMicroUsdc: "1",
+        fees: { executionWei: "30", l1DataWei: "0" },
+      });
   },
 );
 it("includes origin gas in ranking and leaves a price-dependent choice open without a rate", () => {

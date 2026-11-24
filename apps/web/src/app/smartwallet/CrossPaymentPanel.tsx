@@ -342,6 +342,7 @@ export function CrossPaymentPanel({
         status: string;
         paidMicroUsdc?: string;
         transactionHash?: Hex;
+        fees?: { executionWei?: string; l1DataWei?: string };
       }>("direct/status", { ...intent, transactionHash: hash });
       if (
         result.status === "settled" &&
@@ -353,11 +354,22 @@ export function CrossPaymentPanel({
           chainId: route.destination,
           hash,
           paidMicroUsdc: result.paidMicroUsdc,
+          fees: result.fees,
         });
-      setMessage(
+      const summary =
         result.status === "settled"
           ? "The recipient’s USDC transfer is finalized."
-          : "Waiting for destination finality.",
+          : "Waiting for destination finality.";
+      setMessage(
+        [
+          summary,
+          result.fees?.executionWei &&
+            `Execution fee ${formatEther(BigInt(result.fees.executionWei))} ETH.`,
+          result.fees?.l1DataWei &&
+            `L1 data fee ${formatEther(BigInt(result.fees.l1DataWei))} ETH.`,
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
       return;
     }
