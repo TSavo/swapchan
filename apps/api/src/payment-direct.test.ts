@@ -88,6 +88,8 @@ it("includes origin gas in ranking and leaves a price-dependent choice open with
     quoteId: id,
     execution: "unsigned_origin_steps",
     maxInputMicroUsdc: usdc,
+    inputMicroUsdc: usdc,
+    sourceWallet: { balanceMicroUsdc: usdc, nativeBalanceWei: wei },
     originGas: { estimate: { totalWei: wei } },
   });
   const rows = [

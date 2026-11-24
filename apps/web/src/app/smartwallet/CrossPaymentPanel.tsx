@@ -33,6 +33,7 @@ type Quote = Pick<Proposal, "recipient" | "amountMicroUsdc"> & {
   provider?: string;
   atomicOrigin?: { delegate: string; estimatedFeeWei: string } | null;
   fundingFeeWei?: string | null;
+  fundingShortfall?: { microUsdc: string; estimatedWei: string | null };
   estimatedTotalMicroUsdc?: string | null;
   maxInputMicroUsdc: string;
   sourceWallet: {
@@ -155,6 +156,7 @@ export function CrossPaymentPanel({
       setMessage("Review the available funding routes and their costs.");
   }
   const q = review?.quote;
+  const estimatedFeeWei = q?.fundingFeeWei ?? q?.originGas.estimate?.totalWei;
   const direct = q?.provider === "direct_transfer";
   const origin = direct ? destination : bridgeOrigin;
   const signingChain = direct ? route.destination : route.origin;
@@ -469,13 +471,21 @@ export function CrossPaymentPanel({
       {q && (
         <p>
           Maximum source spend {usdc(q.maxInputMicroUsdc)} USDC. Estimated {origin} gas{" "}
-          {q.originGas.estimate
-            ? formatEther(BigInt(q.originGas.estimate.totalWei)) + " ETH"
-            : "unavailable"}
-          .{" "}
+          {estimatedFeeWei ? formatEther(BigInt(estimatedFeeWei)) + " ETH" : "unavailable"}.{" "}
           {direct
             ? "The transfer settles on this chain."
             : "Destination settlement requires a separate fill."}
+        </p>
+      )}
+      {q?.execution === "quote_only" && q.fundingShortfall && (
+        <p>
+          {BigInt(q.fundingShortfall.microUsdc) > 0n &&
+            `Source balance is short by ${usdc(q.fundingShortfall.microUsdc)} USDC on ${origin}. `}
+          {q.fundingShortfall.estimatedWei === null
+            ? "A verified gas estimate is unavailable."
+            : BigInt(q.fundingShortfall.estimatedWei) > 0n
+              ? `Estimated gas shortfall on ${origin}: ${formatEther(BigInt(q.fundingShortfall.estimatedWei))} ETH.`
+              : "The estimated gas is covered."}
         </p>
       )}
       {review?.approvalHash && (

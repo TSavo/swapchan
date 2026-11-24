@@ -158,6 +158,7 @@ export async function quoteCrossPayment(
     }
   }
   let atomicOrigin: null | { delegate: string; estimatedFeeWei: string } = null;
+  let atomicEstimateWei: string | null = null;
   let atomicTx: null | { from: Hex; to: Hex; data: Hex } = null;
   if (route.origin === 84532 && calls.length === 2 && originSimulation.status === "succeeded") {
     try {
@@ -203,6 +204,7 @@ export async function quoteCrossPayment(
             const fee = await estimateOriginFees(sourceRpc, 84532, block, intent.sender, [
               { to: intent.sender, data, gas },
             ]);
+            atomicEstimateWei = fee.totalWei;
             if (BigInt(fee.totalWei) <= native) {
               atomicTx = transaction;
               atomicOrigin = { delegate: paymentContracts.delegate, estimatedFeeWei: fee.totalWei };
@@ -244,6 +246,7 @@ export async function quoteCrossPayment(
       token: "ETH",
       includedInMaxInput: false,
       estimate: feeEstimate,
+      atomicEstimateWei,
       estimatedShortfallWei: feeEstimate
         ? (BigInt(feeEstimate.totalWei) > native
             ? BigInt(feeEstimate.totalWei) - native

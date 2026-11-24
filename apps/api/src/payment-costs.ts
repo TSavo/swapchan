@@ -3,7 +3,9 @@ export type FundingQuote = {
   execution: string;
   atomicOrigin?: { estimatedFeeWei: string } | null;
   maxInputMicroUsdc: string;
-  originGas: { estimate: { totalWei: string } | null };
+  inputMicroUsdc: string;
+  sourceWallet: { balanceMicroUsdc: string; nativeBalanceWei: string };
+  originGas: { estimate: { totalWei: string } | null; atomicEstimateWei?: string | null };
 };
 /** Compare fees and exact payout in integer USDC units, preserving both native costs on the quote. */
 export function comparePaymentCosts<T extends FundingQuote>(
@@ -13,7 +15,7 @@ export function comparePaymentCosts<T extends FundingQuote>(
   const scale = 10n ** 18n;
   function fee(q: T) {
     const split = q.originGas.estimate?.totalWei;
-    const batch = q.atomicOrigin?.estimatedFeeWei;
+    const batch = q.atomicOrigin?.estimatedFeeWei ?? q.originGas.atomicEstimateWei;
     if (
       batch &&
       (!split || q.execution === "unsigned_atomic_origin" || BigInt(batch) < BigInt(split))
@@ -29,7 +31,20 @@ export function comparePaymentCosts<T extends FundingQuote>(
       microUsdcPerEth && fundingFeeWei
         ? (costNumerator(q, microUsdcPerEth) + scale - 1n) / scale
         : null;
-    return { ...q, fundingFeeWei, estimatedTotalMicroUsdc: total?.toString() ?? null };
+    const tokenGap = BigInt(q.inputMicroUsdc) - BigInt(q.sourceWallet.balanceMicroUsdc);
+    const gasGap =
+      fundingFeeWei === null
+        ? null
+        : BigInt(fundingFeeWei) - BigInt(q.sourceWallet.nativeBalanceWei);
+    return {
+      ...q,
+      fundingFeeWei,
+      fundingShortfall: {
+        microUsdc: String(tokenGap > 0n ? tokenGap : 0n),
+        estimatedWei: gasGap === null ? null : String(gasGap > 0n ? gasGap : 0n),
+      },
+      estimatedTotalMicroUsdc: total?.toString() ?? null,
+    };
   });
   const eligible = rows.filter((q) => q.execution !== "quote_only" && q.fundingFeeWei);
   const preferred =

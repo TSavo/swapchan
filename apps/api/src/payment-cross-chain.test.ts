@@ -215,6 +215,30 @@ it.each(["none", "verified", "changed", "revert"] as const)(
     }
   },
 );
+it("quotes the lower simulated gas shortfall without enabling an unfunded batch", async () => {
+  const a = app(sepolia, BigInt(sepolia.inputAmount), 0n, false, false, "0x1", "verified");
+  const comparison = await (
+    await post(a, "/quote", {
+      sender: intent.sender,
+      recipient: intent.recipient,
+      amountMicroUsdc: intent.amountMicroUsdc,
+      chainId: 11155420,
+    })
+  ).json();
+  const q = comparison.routes.find((route: { provider: string }) => route.provider === "across");
+  expect(q.execution).toBe("quote_only");
+  expect(q.atomicOrigin).toBeNull();
+  expect(q.fundingFeeWei).toBe(q.originGas.atomicEstimateWei);
+  expect(BigInt(q.fundingFeeWei)).toBeLessThan(BigInt(q.originGas.estimate.totalWei));
+  expect(q.fundingShortfall).toEqual({
+    microUsdc: "0",
+    estimatedWei: String(BigInt(q.fundingFeeWei) - 1n),
+  });
+  expect(comparison.recommendedQuoteId).toBeNull();
+  expect(
+    (await post(a, "/cross-chain/build", { quoteId: q.quoteId, stage: "atomic_origin" })).status,
+  ).toBe(422);
+});
 it("offers only the atomic path when the wallet can afford one batch but cannot afford two transactions", async () => {
   const a = app(sepolia, BigInt(sepolia.inputAmount), 0n, false, false, "0xbbb", "verified");
   const q = await (
