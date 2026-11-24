@@ -353,6 +353,8 @@ export function CrossPaymentPanel({
       paidMicroUsdc?: string;
       originFinalized?: boolean;
       destinationFinalized?: boolean;
+      depositExecutionFeeWei?: string;
+      depositL1DataFeeWei?: string;
       fillDeadline?: number;
     }>("cross-chain/status", {
       ...intent,
@@ -398,6 +400,13 @@ export function CrossPaymentPanel({
     setMessage(
       (details[result.status as keyof typeof details] ?? result.status) +
         deadline +
+        (result.spentMicroUsdc ? " Source deposit " + usdc(result.spentMicroUsdc) + " USDC." : "") +
+        (result.depositExecutionFeeWei
+          ? " Deposit execution fee " + formatEther(BigInt(result.depositExecutionFeeWei)) + " ETH."
+          : "") +
+        (result.depositL1DataFeeWei
+          ? " Deposit L1 data fee " + formatEther(BigInt(result.depositL1DataFeeWei)) + " ETH."
+          : "") +
         (result.fillHash ? " Destination transaction " + result.fillHash : ""),
     );
   }

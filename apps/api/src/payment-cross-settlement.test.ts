@@ -80,6 +80,14 @@ it("reconciles the historical Base deposit with the finalized Optimism payout", 
 });
 it("waits for finality on both chains", async () =>
   expect(await verify(sample, false)).toMatchObject({ status: "awaiting_finality" }));
+it("reads deposit execution and L1 data fees independently from the origin receipt", async () => {
+  const receipts = structuredClone(sample);
+  Object.assign(receipts.origin, { gasUsed: "0x100", effectiveGasPrice: "0x10", l1Fee: "0x2a" });
+  expect(await verify(receipts)).toMatchObject({
+    depositExecutionFeeWei: "4096",
+    depositL1DataFeeWei: "42",
+  });
+});
 it("locates the intended fill within a relayer batch and rejects duplicate matches", async () => {
   const batch = structuredClone(sample);
   const anotherFill = structuredClone(batch.destination.logs[0]!);

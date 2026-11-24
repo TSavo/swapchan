@@ -17,6 +17,9 @@ const receipt = z.object({
   blockHash: hash,
   blockNumber: height,
   status: z.literal("0x1"),
+  gasUsed: height.optional(),
+  effectiveGasPrice: height.optional(),
+  l1Fee: height.optional(),
   logs: z.array(z.object({ address: EvmAddress, data, topics: z.array(hash) })),
 });
 export const settlementInput = crossPaymentInput.safeExtend({
@@ -87,6 +90,11 @@ export async function crossSettlement(
     fillDeadline: d.fillDeadline,
     originFinalized: origin.final,
     spentMicroUsdc: String(d.inputAmount),
+    depositExecutionFeeWei:
+      origin.r.gasUsed && origin.r.effectiveGasPrice
+        ? String(BigInt(origin.r.gasUsed) * BigInt(origin.r.effectiveGasPrice))
+        : undefined,
+    depositL1DataFeeWei: origin.r.l1Fee ? String(BigInt(origin.r.l1Fee)) : undefined,
   };
   let fillHash = intent.fillHash;
   if (!fillHash) {
