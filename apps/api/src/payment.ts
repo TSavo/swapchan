@@ -756,6 +756,15 @@ export function paymentRoutes(
         await chain("eth_getTransactionReceipt", [r.receipt.transactionHash]),
       );
       const result = reconcilePayment(saved.quote, digest, r, canonical);
+      const finalizedBlock = await chain("eth_getBlockByNumber", ["finalized", false]);
+      const inclusionBlock = await chain("eth_getBlockByNumber", [canonical.blockNumber, false]);
+      const inclusion = z.object({ hash: sigWord }).parse(inclusionBlock);
+      if (inclusion.hash.toLowerCase() !== canonical.blockHash.toLowerCase())
+        throw Error("Payment receipt is no longer on the canonical chain");
+      const finalized =
+        BigInt(z.object({ number: hex }).parse(finalizedBlock).number) >=
+        BigInt(canonical.blockNumber);
+      if (!finalized) return c.json({ ...result, status: "awaiting_finality", finalized });
       const dataAllowance = encodeFunctionData({
         abi: erc20Abi,
         functionName: "allowance",
@@ -767,7 +776,12 @@ export function paymentRoutes(
       ])
         .then((x) => BigInt(hex.parse(x)).toString())
         .catch(() => null);
-      return c.json({ ...result, paymasterAllowanceAfterBlockMicroUsdc: remaining, paymaster });
+      return c.json({
+        ...result,
+        finalized,
+        paymasterAllowanceAfterBlockMicroUsdc: remaining,
+        paymaster,
+      });
     } catch {
       return c.json({ error: "settlement_unverified", userOpHash: digest }, 502);
     }

@@ -119,6 +119,7 @@ export function PaymentPanel({
     let stopped = false,
       timer: ReturnType<typeof setTimeout>;
     async function poll() {
+      let interval = 3000;
       try {
         const r = await request<{
           status: string;
@@ -152,10 +153,16 @@ export function PaymentPanel({
         }
         if (r.status === "submission_unconfirmed")
           setMsg("Submission is unconfirmed. Checking for a receipt…");
+        if (r.status === "awaiting_finality") {
+          interval = 15000;
+          setMsg("Payment included on Base Sepolia. Waiting for chain finality.");
+          if (r.transactionHash && /^0x[0-9a-f]{64}$/i.test(r.transactionHash))
+            setReceipt(r.transactionHash);
+        }
       } catch (e) {
         if (!stopped) setMsg(e instanceof Error ? e.message : "Waiting for settlement");
       }
-      if (!stopped) timer = setTimeout(poll, 3000);
+      if (!stopped) timer = setTimeout(poll, interval);
     }
     void poll();
     return () => {

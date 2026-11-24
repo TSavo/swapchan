@@ -34,6 +34,8 @@ flowchart LR
 
 ## Milestone 1 — one same-chain payment
 
+SmartWallet shows the receipt when the UserOperation is included. It reports the result to chat after the receipt block matches Base Sepolia's canonical block at that height and the finalized head has reached it. During this interval, the API returns `awaiting_finality` and SmartWallet keeps tracking the operation across reloads.
+
 **Release gates.** The experimental SmartWallet payment UI is hidden by default. Test deployments explicitly set `SWAPCHAN_TESTNET_PAYMENTS=1` for the API and `NEXT_PUBLIC_SWAPCHAN_TESTNET_PAYMENTS=1` at web build time. The standalone panel also requires a Base Sepolia wallet connection. Mainnet payment builds are disabled even with both flags set. Plain Optimism USDC sends use the existing send tool. Deploying the test feature requires merging and packaging [Block Tools #108](https://github.com/TSavo/blocktools/pull/108). Keep production disabled until its wallet and payment path have independent acceptance evidence.
 
 The API server persists unexpired quotes and simulated bundles in `payments.db` under `SWAPCHAN_DATA_DIR` (default for payment storage is `~/.swapchan`). The ERC-20 paymaster collects its fee after account execution, so its unused USDC allowance can outlive the payment. SmartWallet displays the current allowance and offers a separate zero-approval transaction using Base Sepolia ETH. A sender with zero ETH needs gas for this cleanup. Receipt status also reports allowance at the receipt block when the RPC can supply it.
