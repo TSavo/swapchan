@@ -53,6 +53,12 @@ const input = z
     "invalid recipient",
   );
 const hex = z.string().regex(/^0x[0-9a-f]+$/i);
+function jsonSigningRequest(typed: ReturnType<typeof paymentSignatureRequest>) {
+  const message = Object.fromEntries(
+    typed.types.PackedUserOperation.map(({ name }) => [name, String(typed.message[name])]),
+  );
+  return { ...typed, message };
+}
 export function paymentRoutes(
   f: typeof fetch,
   receipts = openPaymentStore(),
@@ -624,16 +630,13 @@ export function paymentRoutes(
       });
       const digest = hashTypedData(typed);
       builds.set(parsed.data.quoteId, { op, digest, quote: q });
-      const packed = Object.fromEntries(
-        typed.types.PackedUserOperation.map(({ name }) => [name, String(typed.message[name])]),
-      );
       return c.json({
         quoteId: parsed.data.quoteId,
         quote: q,
         entryPoint: entry,
         userOperation: op,
         userOpHash: digest,
-        typedData: { ...typed, message: packed },
+        typedData: jsonSigningRequest(typed),
         simulation: { gas: estimate },
       });
     } catch (e) {
@@ -661,7 +664,7 @@ export function paymentRoutes(
     if (userOpHash !== built.digest || !isDeepStrictEqual(userOperation, built.op))
       return c.json({ error: "operation_differs_from_build" }, 422);
     try {
-      paymentSignatureRequest(q, userOperation, userOpHash, auth);
+      const typed = paymentSignatureRequest(q, userOperation, userOpHash, auth);
       const delegation = await inspectDelegation(chain, q.sender, delegate);
       if (
         !delegation.proposed ||
@@ -684,6 +687,8 @@ export function paymentRoutes(
       if (q.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
       return c.json({
         status: "verified",
+        quoteId,
+        typedData: jsonSigningRequest(typed),
         userOpHash,
         entryPoint: entry,
         delegate,

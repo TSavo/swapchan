@@ -86,6 +86,10 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8788/mcp --transport 
 `server.json` (schema 2025-12-11, validated) publishes the remote as `io.github.TSavo/swapchan` via `mcp-publisher publish`.
 Hosted at `https://mcp.swapchan.com/mcp`.
 
+## Payment review
+
+For a Base Sepolia payment, call `pay` with the intent, review the returned limits, then call `pay` with the same destination chain and the chosen `quoteId`. This second call builds the operation and runs `verify_bundle`'s checks against the exact operation and delegation. It returns the verifier's EIP-712 signing data and the verified payout, sender, recipient, fee limits and expiry. The connected wallet signs after approval.
+
 ## Tests
 
 Run `pnpm --filter @swapchan/mcp e2e:payments` against a running MCP server and API to check the live payment flow. Set `MCP_URL` if the server uses a different URL from `http://127.0.0.1:8788/mcp`, and set `MCP_KEY` if it requires authentication. The check compares both Optimism Sepolia funding routes through `pay` and `quote_payment`. It verifies a historical finalized Base-to-Optimism transfer and reports the current settlement state of the roadmap's testnet deposit. It uses public wallet addresses and requires no signing key.

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { NATIVE_TOKEN } from "@swapchan/shared";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SwapChanApi } from "./api.js";
 import { RateLimiter } from "./auth.js";
 import { loadConfig } from "./config.js";
@@ -51,6 +51,46 @@ const ethToUsdc = {
 };
 
 describe("swapchan mcp over streamable http", () => {
+  it("returns signing data only from a fresh verification of the exact payment build", async () => {
+    const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
+    const userOpHash = "0x" + "11".repeat(32);
+    const userOperation = { nonce: "0x1" };
+    const build = vi
+      .spyOn(SwapChanApi.prototype, "paymentBuild")
+      .mockResolvedValue({ quoteId, userOperation, userOpHash, typedData: { source: "build" } });
+    const verified = {
+      status: "verified",
+      quoteId,
+      userOpHash,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      typedData: { source: "verification" },
+    };
+    const verify = vi.spyOn(SwapChanApi.prototype, "verifyBundle").mockResolvedValue(verified);
+    const c = await connect();
+    const pay = () => c.callTool({ name: "pay", arguments: { chainId: 84532, quoteId } });
+    try {
+      expect(data(await pay())).toMatchObject({
+        typedData: verified.typedData,
+        verification: { status: "verified", userOpHash },
+      });
+      expect(verify).toHaveBeenCalledWith({ quoteId, userOpHash, userOperation });
+      for (const change of [
+        { status: "failed" },
+        { expiresAt: 0 },
+        { userOpHash: "different" },
+        { typedData: null },
+      ]) {
+        verify.mockResolvedValueOnce({ ...verified, ...change });
+        const refused = await pay();
+        expect(refused.isError).toBe(true);
+        expect(text(refused)).not.toContain("typedData");
+      }
+    } finally {
+      build.mockRestore();
+      verify.mockRestore();
+      await c.close();
+    }
+  });
   it("rejects a mainnet pay build before using a quote ID from any network", async () => {
     const client = await connect();
     try {

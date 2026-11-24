@@ -1030,12 +1030,31 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           chainId: a.chainId,
         });
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
-      return a.chainId !== 84532
-        ? api.crossPaymentBuild({ quoteId: a.quoteId, stage: a.stage ?? "initial" })
-        : api.paymentBuild({
-            quoteId: a.quoteId,
-            ...(a.authorization ? { authorization: a.authorization } : {}),
-          });
+      if (a.chainId !== 84532)
+        return api.crossPaymentBuild({ quoteId: a.quoteId, stage: a.stage ?? "initial" });
+      const args = {
+        quoteId: a.quoteId,
+        ...(a.authorization ? { authorization: a.authorization } : {}),
+      };
+      const built = await api.paymentBuild(args);
+      if (built.quoteId !== a.quoteId || !built.userOperation || !built.userOpHash)
+        throw new UserError("Payment build differs from the reviewed quote.");
+      const verification = await api.verifyBundle({
+        ...args,
+        userOperation: built.userOperation,
+        userOpHash: built.userOpHash,
+      });
+      if (
+        verification.status !== "verified" ||
+        verification.quoteId !== a.quoteId ||
+        verification.userOpHash !== built.userOpHash ||
+        typeof verification.expiresAt !== "number" ||
+        verification.expiresAt <= Date.now() / 1000 ||
+        !verification.typedData
+      )
+        throw new UserError("Bundle verification failed. Request a fresh payment review.");
+      const { typedData, ...checks } = verification;
+      return { ...built, typedData, verification: checks };
     }),
   );
   server.registerTool(
