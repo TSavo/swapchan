@@ -858,6 +858,21 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     );
 
   server.registerTool(
+    "check_7702_delegation",
+    {
+      title: "Inspect Base Sepolia account delegation",
+      description:
+        "Inspect existing and proposed delegation at one block, compare the delegate address and runtime hash to the tested implementation, and return revocation details.",
+      inputSchema: z.object({
+        chainId: z.literal(84532),
+        sender: evm,
+        proposedDelegate: evm.optional(),
+      }),
+      annotations: ro,
+    },
+    safe(async (a) => api.checkDelegation(a)),
+  );
+  server.registerTool(
     "quote_payment",
     {
       title: "Quote an exact Base Sepolia USDC payment",

@@ -19,6 +19,7 @@ import {
 import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
+import { inspectDelegation } from "./payment-delegation.js";
 import { chainReceipt, operationReceipt, reconcilePayment } from "./payment-receipt.js";
 import { openPaymentStore } from "./payment-store.js";
 
@@ -61,6 +62,22 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
   const chain = (m: string, p: unknown[]) => rpc("https://sepolia.base.org", m, p);
   const pm = (m: string, p: unknown[]) => rpc("https://public.pimlico.io/v2/84532/rpc", m, p);
   const app = new Hono();
+  app.post("/delegation", async (c) => {
+    const body = z
+      .object({
+        chainId: z.literal(84532),
+        sender: EvmAddress,
+        proposedDelegate: EvmAddress.optional(),
+      })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "invalid_delegation_request" }, 400);
+    try {
+      return c.json(await inspectDelegation(chain, body.data.sender, body.data.proposedDelegate));
+    } catch {
+      return c.json({ error: "delegation_check_unavailable" }, 503);
+    }
+  });
   app.post("/quote", async (c) => {
     const parsed = input.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid_payment" }, 400);
@@ -192,7 +209,9 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     if (!q || q.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
     try {
       const auth = parsed.data.authorization;
-      const code = await chain("eth_getCode", [q.sender, "latest"]);
+      const checked = await inspectDelegation(chain, q.sender, delegate);
+      if (!checked.proposed || !("known" in checked.proposed) || !checked.proposed.known)
+        return c.json({ error: "unverified_delegate_runtime" }, 422);
       const nonceData = encodeFunctionData({
         abi: parseAbi(["function getNonce(address,uint192) view returns(uint256)"]),
         functionName: "getNonce",
@@ -220,7 +239,8 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
           "0x302f9159d5987680933b56019340d483d5ad02ac7f20d74021d3b587a0077b0b2388e782c5690c9c391c5877f4edadabdf7751dfee5c2dd90e4cded0f6e091181c",
       };
       if (q.requiresDelegation) {
-        if (code !== "0x") return c.json({ error: "delegation_changed" }, 409);
+        if (checked.accountType !== "undelegated")
+          return c.json({ error: "delegation_changed" }, 409);
         const pending = BigInt(
           hex.parse(await chain("eth_getTransactionCount", [q.sender, "pending"])),
         );
@@ -249,10 +269,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
             yParity: "0x" + auth.yParity.toString(16),
           },
         });
-      } else if (
-        auth ||
-        String(code).toLowerCase() !== "0xef0100" + delegate.slice(2).toLowerCase()
-      )
+      } else if (auth || !checked.existing?.known)
         return c.json({ error: "delegation_changed" }, 409);
       const context = [entry, "0x14a34", { token: usdc }];
       for (const method of ["pm_getPaymasterStubData", "pm_getPaymasterData"]) {

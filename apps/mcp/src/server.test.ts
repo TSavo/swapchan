@@ -123,6 +123,7 @@ describe("swapchan mcp over streamable http", () => {
         "token_risk",
         "get_wallet_balances",
         "check_approvals",
+        "check_7702_delegation",
         "build_revoke_tx",
         "explain_transaction",
         "get_gas",

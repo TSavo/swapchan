@@ -1,10 +1,15 @@
+import { readFileSync } from "node:fs";
 import { paymentContracts as c, paymentGasLimits } from "@swapchan/shared";
 import { type Hex, toHex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { paymentRoutes } from "./payment.js";
 
-function setup(failure: "relay" | "simulation" | "none", freshWeth?: bigint) {
+const runtime = readFileSync(
+  new URL("./fixtures/base-sepolia-simple7702.hex", import.meta.url),
+  "utf8",
+).trim();
+function setup(failure: "relay" | "simulation" | "none" | "delegate", freshWeth?: bigint) {
   const account = privateKeyToAccount(generatePrivateKey());
   let sendCount = 0;
   const fetchRpc: typeof fetch = async (_, init) => {
@@ -21,6 +26,10 @@ function setup(failure: "relay" | "simulation" | "none", freshWeth?: bigint) {
         result = { quotes: [{ token: c.usdc, paymaster: c.paymaster, exchangeRate: "0x10" }] };
         break;
       case "eth_getCode":
+        if (params[0].toLowerCase() === c.delegate.toLowerCase()) {
+          result = failure === "delegate" ? "0x6000" : runtime;
+          break;
+        }
         result = freshWeth === undefined ? "0xef0100" + c.delegate.slice(2) : "0x";
         break;
       case "eth_getTransactionCount":
@@ -73,6 +82,28 @@ function setup(failure: "relay" | "simulation" | "none", freshWeth?: bigint) {
   return { app, account, post, quote, sendCount: () => sendCount };
 }
 describe("payment build and relay", () => {
+  it("withholds the signing request when the approved address has different runtime code", async () => {
+    const h = setup("delegate");
+    const { quoteId } = await h.quote();
+    expect(await (await h.post("/build", { quoteId })).json()).toEqual({
+      error: "unverified_delegate_runtime",
+    });
+    expect(h.sendCount()).toBe(0);
+  });
+  it("reports the active delegate, verified runtime and chain-specific revocation nonce", async () => {
+    const h = setup("none");
+    const result = await h.post("/delegation", {
+      sender: h.account.address,
+      chainId: 84532,
+      proposedDelegate: c.delegate,
+    });
+    expect(await result.json()).toMatchObject({
+      accountType: "delegated",
+      existing: { known: true },
+      proposed: { known: true },
+      revocation: { chainId: 84532, nonce: "0", address: "0x" + "0".repeat(40) },
+    });
+  });
   it("uses the available WETH for slippage when it covers the exact output", async () => {
     expect(await setup("none", 10010n).quote()).toMatchObject({
       maxWethWei: "10010",

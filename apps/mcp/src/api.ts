@@ -140,6 +140,12 @@ export class SwapChanApi {
       body: JSON.stringify(body),
     });
   }
+  checkDelegation(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/delegation", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   paymentBuild(body: Record<string, unknown>) {
     return this.req(z.record(z.string(), z.unknown()), "/payments/build", {
       method: "POST",
