@@ -80,6 +80,14 @@ it("reconciles the historical Base deposit with the finalized Optimism payout", 
 });
 it("waits for finality on both chains", async () =>
   expect(await verify(sample, false)).toMatchObject({ status: "awaiting_finality" }));
+it("locates the intended fill within a relayer batch and rejects duplicate matches", async () => {
+  const batch = structuredClone(sample);
+  const anotherFill = structuredClone(batch.destination.logs[0]!);
+  batch.destination.logs.push(anotherFill);
+  await expect(verify(batch)).rejects.toThrow("Ambiguous");
+  anotherFill.topics[2] = "0x" + "0".repeat(64);
+  expect(await verify(batch)).toMatchObject({ status: "settled", depositId: "6488685" });
+});
 it("requires the reviewed source cap", async () =>
   expect(verify(sample, true, "13442406")).rejects.toThrow());
 it.each(["transfer", "fill", "origin hash", "deposit id"])(

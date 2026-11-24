@@ -49,6 +49,7 @@ type Step = {
   tx: Tx;
   hash?: Hex;
   batchId?: Hex;
+  fillHash?: Hex;
 };
 type Comparison = {
   routes: Quote[];
@@ -76,12 +77,14 @@ export function CrossPaymentPanel({
   const lock = useRef(false);
   const [message, setMessage] = useState("");
   const [recovery, setRecovery] = useState("");
+  const [destinationHash, setDestinationHash] = useState("");
   const config = useConfig();
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
   useEffect(() => {
     try {
       const raw = localStorage.getItem(key);
+      setDestinationHash("");
       setReview(raw ? JSON.parse(raw) : null);
       setReady(true);
     } catch {
@@ -277,7 +280,7 @@ export function CrossPaymentPanel({
       throw e;
     }
   }
-  async function check() {
+  async function check(candidateFillHash?: Hex) {
     if (!review?.step || !q || !matches(q)) return;
     const { step } = review;
     let hash = step.hash ?? (recovery as Hex);
@@ -355,8 +358,15 @@ export function CrossPaymentPanel({
       ...intent,
       sourceChainId: route.origin,
       originHash: hash,
+      fillHash: candidateFillHash ?? step.fillHash,
       maxInputMicroUsdc: q.maxInputMicroUsdc,
     });
+    if (
+      result.fillHash &&
+      result.fillHash !== step.fillHash &&
+      (result.status === "settled" || result.status === "awaiting_finality")
+    )
+      save({ ...review, step: { ...step, hash, fillHash: result.fillHash } });
     if (result.status === "settled" && result.fillHash) {
       await report(proposal.actionId, {
         status: "confirmed",
@@ -374,7 +384,7 @@ export function CrossPaymentPanel({
       fill_deadline_passed:
         "The destination chain has passed the fill deadline. A fill or refund still needs a verified receipt.",
       awaiting_verified_fill: "Waiting for the recipient’s USDC on the destination chain.",
-      awaiting_destination_receipt: "Across reported a fill. Waiting for its on-chain receipt.",
+      awaiting_destination_receipt: "Waiting for the destination transaction receipt.",
       awaiting_finality: "The destination transfer matches. Waiting for chain finality.",
       settled: "The exact destination payout is finalized.",
       recovery_reported:
@@ -487,6 +497,26 @@ export function CrossPaymentPanel({
           <button disabled={busy} onClick={() => run(check)}>
             Check transaction status
           </button>
+          {review.step.hash &&
+            (review.step.action === "deposit" || review.step.action === "atomic_origin") && (
+              <details>
+                <summary>Verify a destination transaction</summary>
+                <label>
+                  {destination} fill transaction hash
+                  <input
+                    value={destinationHash}
+                    onChange={(event) => setDestinationHash(event.target.value)}
+                    spellCheck={false}
+                  />
+                </label>
+                <button
+                  disabled={busy || !/^0x[a-f0-9]{64}$/i.test(destinationHash.trim())}
+                  onClick={() => run(() => check(destinationHash.trim() as Hex))}
+                >
+                  Verify fill receipt
+                </button>
+              </details>
+            )}
         </>
       ) : (
         <div className="flex flex-wrap gap-3">

@@ -133,11 +133,13 @@ export async function crossSettlement(
   if (!dest) return { ...progress, status: "awaiting_destination_receipt", fillHash };
   const fills = logs(dest.r, route.destinationPool)
     .filter((l) => l.topics[0] === toEventSelector(abi[1]))
-    .map((l) => decodeEventLog({ abi: [abi[1]], ...l }));
+    .map((l) => decodeEventLog({ abi: [abi[1]], ...l }))
+    .filter(
+      ({ args }) => args.depositId === d.depositId && args.originChainId === BigInt(route.origin),
+    );
   if (fills.length !== 1) throw Error("Ambiguous or missing destination fill");
   const fill = fills[0]!.args;
   if (
-    fill.originChainId !== BigInt(route.origin) ||
     fill.messageHash !== zeroHash ||
     fill.relayExecutionInfo.updatedRecipient !== d.recipient ||
     fill.relayExecutionInfo.updatedOutputAmount !== d.outputAmount ||
