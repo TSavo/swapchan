@@ -9,13 +9,26 @@ const intent = {
   recipient: "0xa11F5DA00D9a0E9b809E94c4cAe1efa36E8ff50b",
   amountMicroUsdc: "1000000",
 };
-function quote(result: typeof sample, balance = 0n, allowance = 0n, depositReverts = false) {
+function quote(
+  result: typeof sample,
+  balance = 0n,
+  allowance = 0n,
+  depositReverts = false,
+  feeUnavailable = false,
+) {
   vi.spyOn(Date, "now").mockReturnValue((sample.quoteExpiryTimestamp - 100) * 1000);
   return paymentRoutes(async (url, init) => {
     if (String(url) === "https://mainnet.base.org") {
       const { method, params } = JSON.parse(String(init?.body));
       if (method === "eth_blockNumber") return Response.json({ result: "0xabc" });
+      if (method === "eth_gasPrice") return Response.json({ result: "0xa" });
+      if (method === "eth_maxPriorityFeePerGas") return Response.json({ result: "0x1" });
       expect(params.at(-1)).toBe("0xabc");
+      if (method === "eth_getTransactionCount") return Response.json({ result: "0x3" });
+      if (method === "eth_call" && params[0].to === "0x420000000000000000000000000000000000000F") {
+        if (feeUnavailable) return Response.json({ error: { message: "oracle unavailable" } });
+        return Response.json({ result: "0x" + "2".padStart(64, "0") });
+      }
       if (method === "eth_simulateV1") {
         const calls = params[0].blockStateCalls[0].calls;
         expect(calls.at(-1)).toMatchObject({
@@ -91,9 +104,17 @@ it("requires the full approval amount only when the existing allowance is insuff
   ] as const) {
     expect(await (await quote(sample, amount, existing)).json()).toMatchObject({
       originSimulation: { status: "succeeded" },
+      originGas: { estimate: { totalWei: required === "0" ? "2564" : "5128" } },
       sourceWallet: { depositShortfallMicroUsdc: "0", requiredApprovalMicroUsdc: required },
     });
   }
+});
+it("keeps unknown fees separate from a successful origin simulation", async () => {
+  const r = await quote(sample, BigInt(sample.inputAmount), 0n, false, true);
+  expect(await r.json()).toMatchObject({
+    originSimulation: { status: "succeeded" },
+    originGas: { estimate: null, estimatedShortfallWei: null },
+  });
 });
 it("reports a reverted deposit even when the preceding approval succeeds", async () => {
   expect(await (await quote(sample, BigInt(sample.inputAmount), 0n, true)).json()).toMatchObject({

@@ -1,6 +1,7 @@
 import { EvmAddress } from "@swapchan/shared";
 import { decodeFunctionData, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
 import { z } from "zod";
+import { estimateOriginFees } from "./payment-origin-fees.js";
 import { getJson } from "./providers/types.js";
 
 const sourceToken = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -105,9 +106,10 @@ export async function quoteCrossPayment(
     sourceRpc("eth_getBalance", [intent.sender, block]).then((v) => BigInt(quantity.parse(v))),
   ]);
   let originSimulation: { status: string; gasUsed?: string[] };
+  let feeEstimate: Awaited<ReturnType<typeof estimateOriginFees>> | null = null;
   if (balance < amountIn) originSimulation = { status: "insufficient_usdc" };
   else {
-    const calls = [];
+    const calls: { from: Hex; to: Hex; data: Hex }[] = [];
     if (allowance < amountIn)
       calls.push({
         from: intent.sender,
@@ -118,7 +120,7 @@ export async function quoteCrossPayment(
           args: [pool, amountIn],
         }),
       });
-    calls.push({ from: intent.sender, to: pool, data: q.swapTx.data });
+    calls.push({ from: intent.sender, to: pool, data: q.swapTx.data as Hex });
     try {
       const simulation = z
         .array(
@@ -151,6 +153,13 @@ export async function quoteCrossPayment(
         status: success ? "succeeded" : "reverted",
         gasUsed: results.map((r) => BigInt(r.gasUsed).toString()),
       };
+      if (success)
+        feeEstimate = await estimateOriginFees(
+          sourceRpc,
+          block,
+          intent.sender,
+          calls.map((call, index) => ({ ...call, gas: BigInt(results[index]!.gasUsed) })),
+        ).catch(() => null);
     } catch {
       originSimulation = { status: "unavailable" };
     }
@@ -175,7 +184,17 @@ export async function quoteCrossPayment(
       allowanceMicroUsdc: allowance.toString(),
       requiredApprovalMicroUsdc: allowance < amountIn ? amountIn.toString() : "0",
     },
-    originGas: { token: "ETH", includedInMaxInput: false },
+    originGas: {
+      token: "ETH",
+      includedInMaxInput: false,
+      estimate: feeEstimate,
+      estimatedShortfallWei: feeEstimate
+        ? (BigInt(feeEstimate.totalWei) > native
+            ? BigInt(feeEstimate.totalWei) - native
+            : 0n
+          ).toString()
+        : null,
+    },
     originSimulation,
     expectedFillSeconds: q.expectedFillTime,
     expiresAt: Math.min(q.quoteExpiryTimestamp, args[9]),
