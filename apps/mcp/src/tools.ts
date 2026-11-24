@@ -334,6 +334,41 @@ async function summarize(api: SwapChanApi, q: Quote) {
   };
 }
 
+async function compareExecutionModels(api: SwapChanApi, quotes: Quote[]) {
+  const representatives = await Promise.all(
+    [true, false].map(async (solver) => {
+      const q = quotes.find((q) => (q.execution === "order") === solver);
+      if (!q) return null;
+      const row = await summarize(api, q);
+      return {
+        ...row,
+        authorization: solver
+          ? "Sign the order for solver execution. Token approval may require a separate transaction."
+          : "Sign the source transaction. Token approval may require a separate transaction.",
+        settlement: solver
+          ? "A solver must fill the signed order before expiry."
+          : row.crossChain
+            ? "Verify a separate destination fill after the source transaction."
+            : "Verify the on-chain transaction receipt.",
+      };
+    }),
+  );
+  const [solver, transaction] = representatives;
+  const priced = solver?.netUsd != null && transaction?.netUsd != null;
+  return {
+    bestSolverOrder: solver ?? null,
+    bestTransaction: transaction ?? null,
+    bestPricedModel: priced
+      ? solver.netUsd === transaction.netUsd
+        ? "tie"
+        : solver.netUsd! > transaction.netUsd!
+          ? "solver_order"
+          : "transaction"
+      : null,
+    solverAdvantageNetUsd: priced ? solver.netUsd! - transaction.netUsd! : null,
+  };
+}
+
 /** Builds one McpServer instance with all SwapChan tools. Cheap; called per HTTP request. */
 export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
   const server = new McpServer(
@@ -554,8 +589,12 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                 ? -1
                 : 0;
           });
+          const routes = await Promise.all(quotes.slice(0, a.limit).map((q) => summarize(api, q)));
+          const comparisonDetails =
+            comparison === "compare_intents" ? await compareExecutionModels(api, quotes) : null;
           return {
-            routes: await Promise.all(quotes.slice(0, a.limit).map((q) => summarize(api, q))),
+            routes,
+            ...(comparisonDetails ? { comparison: comparisonDetails } : {}),
             totalFound: quotes.length,
             providerErrors: errors,
             note: "Ranked by netUsd = toAmount priced by SwapChan (same price for every route) - gasUsd; unpriced routes follow, by raw toAmount.",
@@ -888,7 +927,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote an exact USDC payment",
       description:
-        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism or Optimism Sepolia omit sourceChainId to compare a direct transfer with an Across bridge by available USDC and estimated ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
+        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare a direct transfer with an Across bridge by available USDC and estimated ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z.object({
         chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
         sourceChainId: z

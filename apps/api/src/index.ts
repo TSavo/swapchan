@@ -109,6 +109,7 @@ export function defaultProviders(
 }
 
 export interface AppOptions {
+  paymentStoreFile?: string;
   env?: NodeJS.ProcessEnv;
   simulator?: Simulator | null;
   /** On-chain ERC-20 metadata reader for pasted (unlisted) addresses. */
@@ -444,7 +445,11 @@ export function createApp(
     "/payments",
     paymentRoutes(
       opts.scannerFetch ?? fetch,
-      openPaymentStore(env.SWAPCHAN_DATA_DIR ? `${env.SWAPCHAN_DATA_DIR}/payments.db` : ":memory:"),
+      openPaymentStore(
+        opts.paymentStoreFile ??
+          (env.SWAPCHAN_DATA_DIR ? `${env.SWAPCHAN_DATA_DIR}/payments.db` : ":memory:"),
+      ),
+      env.SWAPCHAN_TESTNET_PAYMENTS === "1",
     ),
   );
   // pure blocktools developer tools on public input (no body logging, size-capped, per-client rate limit)

@@ -34,7 +34,6 @@ import {
 } from "./payment-direct.js";
 import { chainReceipt, operationReceipt, reconcilePayment } from "./payment-receipt.js";
 import { openPaymentStore } from "./payment-store.js";
-import { llamaPricer, ZERO_ADDRESS } from "./pricing.js";
 
 const { weth, usdc, paymaster, entry, delegate } = paymentContracts;
 const quoter = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27";
@@ -54,15 +53,22 @@ const input = z
     "invalid recipient",
   );
 const hex = z.string().regex(/^0x[0-9a-f]+$/i);
-export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
-  const issued = new Map<string, PaymentQuote>();
+export function paymentRoutes(
+  f: typeof fetch,
+  receipts = openPaymentStore(),
+  testnetEnabled = false,
+) {
+  const issued = receipts.cache<PaymentQuote>("same-chain", (q) => q.expiresAt);
   type CrossQuote = Awaited<ReturnType<typeof quoteCrossPayment>>["quote"];
-  const crossQuotes = new Map<
-    string,
-    { intent: z.infer<typeof crossPaymentInput>; review: CrossQuote }
-  >();
+  const crossQuotes = receipts.cache<{
+    intent: z.infer<typeof crossPaymentInput>;
+    review: CrossQuote;
+  }>("across", (v) => v.review.expiresAt);
   type RpcOp = Record<string, string | Record<string, string>>;
-  const builds = new Map<string, { op: RpcOp; digest: Hex; quote: PaymentQuote }>();
+  const builds = receipts.cache<{ op: RpcOp; digest: Hex; quote: PaymentQuote }>(
+    "bundle",
+    (v) => v.quote.expiresAt,
+  );
   async function rpc(url: string, method: string, params: unknown[]) {
     const response = await f(url, {
       method: "POST",
@@ -118,6 +124,17 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     };
   }
   const app = new Hono();
+  app.use("*", async (c, next) => {
+    if (
+      !testnetEnabled &&
+      c.req.method === "POST" &&
+      ["/build", "/verify", "/submit", "/cross-chain/build"].some((path) =>
+        c.req.path.endsWith(path),
+      )
+    )
+      return c.json({ error: "testnet_payments_disabled" }, 403);
+    await next();
+  });
   const bridgeRpc = {
     8453: "https://mainnet.base.org",
     10: "https://mainnet.optimism.io",
@@ -128,42 +145,27 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     quoteCrossPayment(f, intent, (m, p) => rpc(bridgeRpc[intent.sourceChainId], m, p));
   const inspectDirect = (i: z.infer<typeof destinationIntent>) =>
     quoteDirect(i, (m, p) => rpc(bridgeRpc[i.chainId], m, p));
-  const directQuotes = new Map<
-    string,
-    {
-      intent: z.infer<typeof destinationIntent>;
-      review: Awaited<ReturnType<typeof quoteDirect>>["quote"];
-    }
-  >();
-  function retain<T extends { review: { expiresAt: number } }>(cache: Map<string, T>, entry: T) {
-    const now = Date.now() / 1000;
-    for (const [id, item] of cache) {
-      if (item.review.expiresAt <= now) cache.delete(id);
-    }
-    if (cache.size >= 2048) cache.delete(cache.keys().next().value!);
+  const directQuotes = receipts.cache<{
+    intent: z.infer<typeof destinationIntent>;
+    review: Awaited<ReturnType<typeof quoteDirect>>["quote"];
+  }>("direct", (v) => v.review.expiresAt);
+  function retain<T>(cache: { set(id: string, entry: T): void }, entry: T) {
     const id = randomUUID();
     cache.set(id, entry);
     return id;
   }
   async function issueCross(i: z.infer<typeof crossPaymentInput>) {
     const { quote } = await inspectCrossPayment(i);
+    if (i.chainId === 10 || !testnetEnabled) quote.execution = "quote_only";
     quote.expiresAt = Math.min(quote.expiresAt, Math.floor(Date.now() / 1000) + 120);
     return { ...quote, quoteId: retain(crossQuotes, { intent: i, review: quote }) };
   }
   async function issueDirect(i: z.infer<typeof destinationIntent>) {
     const { quote } = await inspectDirect(i);
+    if (i.chainId === 10 || !testnetEnabled) quote.execution = "quote_only";
     return { ...quote, quoteId: retain(directQuotes, { intent: i, review: quote }) };
   }
-  const pricer = llamaPricer(f);
-  async function conversion(id: 10 | 11155420) {
-    if (id === 10) {
-      const [eth, usd] = await Promise.all([
-        pricer.token(id, ZERO_ADDRESS),
-        pricer.token(id, acrossRoute(id).destinationToken),
-      ]);
-      const rate = ((eth?.priceUsd ?? 0) / (usd?.priceUsd ?? 0)) * 1e6;
-      return Number.isSafeInteger(Math.ceil(rate)) && rate > 0 ? BigInt(Math.ceil(rate)) : null;
-    }
+  async function testnetGasConversion() {
     const data = encodeFunctionData({
       abi,
       functionName: "quoteExactOutputSingle",
@@ -195,6 +197,8 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     if (!body.success) return c.json({ error: "invalid_build_request" }, 400);
     const local = directQuotes.get(body.data.quoteId);
     if (local) {
+      if (local.intent.chainId === 10)
+        return c.json({ error: "mainnet_payment_build_disabled" }, 403);
       if (local.review.expiresAt <= Date.now() / 1000)
         return c.json({ error: "quote_expired" }, 410);
       if (
@@ -228,6 +232,8 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
     const saved = crossQuotes.get(body.data.quoteId);
     if (!saved || saved.review.expiresAt <= Date.now() / 1000)
       return c.json({ error: "quote_expired" }, 410);
+    if (saved.intent.chainId === 10)
+      return c.json({ error: "mainnet_payment_build_disabled" }, 403);
     const reviewedGas = saved.review.originGas.estimate;
     if (!reviewedGas || saved.review.originGas.estimatedShortfallWei !== "0")
       return c.json({ error: "funded_quote_required" }, 422);
@@ -330,6 +336,18 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
           return c.json({ error: "verified_cross_chain_quote_unavailable" }, 503);
         }
       }
+      if (i.chainId === 10) {
+        try {
+          const direct = await issueDirect(i);
+          return c.json({
+            ...comparePaymentCosts([direct], null),
+            unavailableSourceChainIds: [],
+            gasConversionSource: null,
+          });
+        } catch {
+          return c.json({ error: "direct_quote_unavailable" }, 503);
+        }
+      }
       const [direct, bridge] = await Promise.allSettled([issueDirect(i), issueCross(cross)]);
       type Candidate =
         | Awaited<ReturnType<typeof issueDirect>>
@@ -346,7 +364,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
       if (!candidates.length) return c.json({ error: "no_verified_quotes" }, 503);
       const rate =
         candidates.filter((c) => c.execution === "unsigned_origin_steps").length > 1
-          ? await conversion(i.chainId).catch(() => null)
+          ? await testnetGasConversion().catch(() => null)
           : null;
       return c.json({
         ...comparePaymentCosts(
@@ -354,11 +372,7 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
           rate,
         ),
         unavailableSourceChainIds,
-        gasConversionSource: rate
-          ? i.chainId === 10
-            ? "DefiLlama ETH/USDC reference"
-            : "Base Sepolia WETH/USDC pool reference"
-          : null,
+        gasConversionSource: rate ? "Base Sepolia WETH/USDC pool reference" : null,
       });
     }
     if (raw?.sourceChainId !== undefined)
@@ -435,11 +449,6 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
         maxPriorityFeePerGas: gasQuote.maxPriorityFeePerGas,
       };
       const quoteId = randomUUID();
-      for (const [id, old] of issued) {
-        if (old.expiresAt > Date.now() / 1000 && issued.size < 2048) break;
-        issued.delete(id);
-        builds.delete(id);
-      }
       issued.set(quoteId, result);
       return c.json({ ...result, quoteId });
     } catch {
@@ -720,7 +729,19 @@ export function paymentRoutes(f: typeof fetch, receipts = openPaymentStore()) {
       const canonical = chainReceipt.parse(
         await chain("eth_getTransactionReceipt", [r.receipt.transactionHash]),
       );
-      return c.json(reconcilePayment(saved.quote, digest, r, canonical));
+      const result = reconcilePayment(saved.quote, digest, r, canonical);
+      const dataAllowance = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [saved.quote.sender, paymaster],
+      });
+      const remaining = await chain("eth_call", [
+        { to: usdc, data: dataAllowance },
+        { blockHash: canonical.blockHash, requireCanonical: true },
+      ])
+        .then((x) => BigInt(hex.parse(x)).toString())
+        .catch(() => null);
+      return c.json({ ...result, paymasterAllowanceAfterBlockMicroUsdc: remaining, paymaster });
     } catch {
       return c.json({ error: "settlement_unverified", userOpHash: digest }, 502);
     }

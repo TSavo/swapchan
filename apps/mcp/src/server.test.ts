@@ -481,6 +481,11 @@ describe("swapchan mcp over streamable http", () => {
           arguments: { ...ethToUsdc, alsoToChainIds: [8453] },
         }),
       );
+      if (name === "compare_intents") {
+        expect(r.comparison.bestSolverOrder.provider).toBe("cow");
+        expect(r.comparison.bestTransaction.provider).toBe("0x");
+        expect(r.comparison.bestPricedModel).toBe("transaction");
+      } else expect(r.comparison).toBeUndefined();
       expect(r.totalFound).toBe(4);
       expect(r.routes.map((x: { provider: string }) => x.provider)).toEqual([
         "0x",

@@ -3,13 +3,21 @@ import { type PaymentQuote, paymentContracts, paymentSignatureRequest } from "@s
 import { useEffect, useRef, useState } from "react";
 import {
   type Address,
+  erc20Abi,
   formatUnits,
   type Hex,
   isAddress,
   parseUnits,
   type SignedAuthorization,
 } from "viem";
-import { useSignTypedData, useSwitchChain } from "wagmi";
+import {
+  useConfig,
+  useReadContract,
+  useSignTypedData,
+  useSwitchChain,
+  useWriteContract,
+} from "wagmi";
+import { simulateContract, waitForTransactionReceipt } from "wagmi/actions";
 import { PaymentRequestError, paymentRequest as request } from "@/lib/paymentRequest";
 
 type Review = PaymentQuote & { quoteId: string; authorizationNonce?: string };
@@ -66,6 +74,44 @@ export function PaymentPanel({
       /* Storage can be disabled in private browsing. */
     }
   }, [trackingKey]);
+  const config = useConfig();
+  const { writeContractAsync } = useWriteContract();
+  const allowance = useReadContract({
+    chainId: 84532,
+    address: paymentContracts.usdc,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: [sender, paymentContracts.paymaster],
+    query: { refetchInterval: 15000 },
+  });
+  async function clearAllowance() {
+    if (lock.current) return;
+    lock.current = true;
+    setBusy(true);
+    try {
+      if (chainId !== 84532) await switchChainAsync({ chainId: 84532 });
+      const { request: revoke } = await simulateContract(config, {
+        chainId: 84532,
+        account: sender,
+        address: paymentContracts.usdc,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [paymentContracts.paymaster, 0n],
+      });
+      const hash = await writeContractAsync({ ...revoke, chainId: 84532 });
+      setMsg("Waiting for approval revocation " + hash);
+      const receipt = await waitForTransactionReceipt(config, { chainId: 84532, hash });
+      const current = await allowance.refetch();
+      if (receipt.status !== "success" || current.data !== 0n)
+        throw Error("Could not verify a zero paymaster allowance.");
+      setMsg("Paymaster approval cleared. Receipt " + hash);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Revocation failed");
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }
   const { signTypedDataAsync } = useSignTypedData(),
     { switchChainAsync } = useSwitchChain();
   useEffect(() => {
@@ -276,6 +322,20 @@ export function PaymentPanel({
         <button type="button" disabled={busy || !!pending} onClick={() => void act()}>
           {busy ? "Working…" : q ? "Review and sign in wallet" : "Get payment quote"}
         </button>
+        {q && (
+          <p>
+            The paymaster collects its fee after the batch. Any unused USDC allowance persists until
+            replaced or revoked.
+          </p>
+        )}
+        {allowance.data !== undefined && allowance.data > 0n && (
+          <p>
+            Current paymaster allowance {formatUnits(allowance.data, 6)} USDC.{" "}
+            <button disabled={busy || !!pending} onClick={() => void clearAllowance()}>
+              Revoke approval with Base Sepolia ETH
+            </button>
+          </p>
+        )}
         {msg && <p role="status">{msg}</p>}
         {actionId && report && !pending && (
           <button

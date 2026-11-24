@@ -1,15 +1,22 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { paymentContracts as c, paymentGasLimits } from "@swapchan/shared";
 import { type Hex, toHex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { paymentRoutes } from "./payment.js";
+import { openPaymentStore } from "./payment-store.js";
 
 const runtime = readFileSync(
   new URL("./fixtures/base-sepolia-simple7702.hex", import.meta.url),
   "utf8",
 ).trim();
-function setup(failure: "relay" | "simulation" | "none" | "delegate", freshWeth?: bigint) {
+function setup(
+  failure: "relay" | "simulation" | "none" | "delegate",
+  freshWeth?: bigint,
+  store?: ReturnType<typeof openPaymentStore>,
+) {
   const account = privateKeyToAccount(generatePrivateKey());
   let sendCount = 0;
   const fetchRpc: typeof fetch = async (_, init) => {
@@ -67,7 +74,7 @@ function setup(failure: "relay" | "simulation" | "none" | "delegate", freshWeth?
     }
     return Response.json({ jsonrpc: "2.0", id: 1, result });
   };
-  const app = paymentRoutes(fetchRpc);
+  const app = paymentRoutes(fetchRpc, store, true);
   const post = (path: string, body: unknown) =>
     app.request(path, {
       method: "POST",
@@ -81,9 +88,44 @@ function setup(failure: "relay" | "simulation" | "none" | "delegate", freshWeth?
       recipient: c.router,
       amountMicroUsdc: "1",
     }).then((r) => r.json());
-  return { app, account, post, quote, sendCount: () => sendCount };
+  return { app, account, post, quote, fetchRpc, sendCount: () => sendCount };
 }
 describe("payment build and relay", () => {
+  it("retains the reviewed quote and the exact simulated bundle across two restarts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "payment-restart-"));
+    const file = join(dir, "payments.db");
+    let store = openPaymentStore(file);
+    try {
+      const h = setup("none", undefined, store);
+      const { quoteId } = await h.quote();
+      store.close();
+      store = openPaymentStore(file);
+      const post = (path: string, body: unknown) =>
+        paymentRoutes(h.fetchRpc, store, true).request(path, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+      const { userOpHash, userOperation } = await (await post("/build", { quoteId })).json();
+      expect(userOpHash).toMatch(/^0x[0-9a-f]{64}$/);
+      store.close();
+      store = openPaymentStore(file);
+      expect(
+        await (await post("/verify", { quoteId, userOpHash, userOperation })).json(),
+      ).toMatchObject({ status: "verified", userOpHash });
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it.each(["/cross-chain/build", "/build", "/submit", "/verify"])(
+    "keeps %s disabled by default",
+    async (path) => {
+      const app = paymentRoutes(() => {
+        throw Error("Unexpected RPC");
+      });
+      expect((await app.request(path, { method: "POST", body: "{}" })).status).toBe(403);
+    },
+  );
   it("independently verifies a built operation and rejects changed bytes before signing", async () => {
     const h = setup("none");
     const { quoteId } = await h.quote();

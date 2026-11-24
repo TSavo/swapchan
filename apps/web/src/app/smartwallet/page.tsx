@@ -71,11 +71,14 @@ function coalesceActivity(lines: Line[]): (Line & { count: number })[] {
   return out;
 }
 
+const testPayments = process.env.NEXT_PUBLIC_SWAPCHAN_TESTNET_PAYMENTS === "1";
 const isActionable = (a: ProposedAction) =>
   // sign_message is no longer offered by the agent (an old stored one is shown but not actionable).
   // onramp (card on-ramp) is gated off until MoonPay signature validation is resolved on their side —
   // re-add "|| a.type === 'onramp'" here (and in the api's isActionable) to turn it back on.
-  a.type === "review_payment" || a.type === "sign_and_send" || a.type === "switch_chain";
+  (testPayments && a.type === "review_payment" && a.chainId !== 10) ||
+  a.type === "sign_and_send" ||
+  a.type === "switch_chain";
 
 export default function SmartWalletPage() {
   const config = useConfig();
@@ -452,7 +455,7 @@ export default function SmartWalletPage() {
         .sw-md h1, .sw-md h2, .sw-md h3 { font-weight: 700; margin: 0.4rem 0 0.2rem; }
       `}</style>
 
-      {pending?.type !== "review_payment" && (
+      {testPayments && chainId === 84532 && pending?.type !== "review_payment" && (
         <PaymentPanel key={address} sender={address} chainId={chainId} />
       )}
       {confirmAutoSend && (

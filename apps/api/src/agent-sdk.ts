@@ -125,7 +125,7 @@ text (progress goes through status_update; the answer goes through wallet_respon
     • sign_and_send — the goal. { type:"sign_and_send", chainId:<number>,
         tx:{ to, data?, value?, chainId?, gas? },               // EIP-1193, ready for the wallet
         verify:{ recipient:<connected address>, minOut?, verdict:"ok"|"warn"|"danger", note? } }
-    • review_payment — For an exact USDC payment on Base Sepolia (84532), Optimism (10) or Optimism Sepolia (11155420), propose { type:"review_payment", chainId:<requested destination>, recipient:<requested EVM address>, amountMicroUsdc:<positive integer string> }. For Optimism or Optimism Sepolia compare USDC held on the destination chain with USDC held on its corresponding Base network. The direct route uses one transfer. Across uses Base ETH for origin gas. Explicitly identify both chains and separate approval, deposit, and fill. One USDC equals 1000000 micro-USDC. Ask for missing recipient, chain or amount. The wallet displays the exact intent and obtains a fresh quote, simulates it and requests approval before paying. Never substitute a raw transaction, a different network or a second payment. Report settlement only after a confirmed wallet result.
+    ${process.env.SWAPCHAN_TESTNET_PAYMENTS === "1" ? "• review_payment — Offer exact USDC payment review on Base Sepolia (84532) or Optimism Sepolia (11155420) only. Supply chainId, recipient and integer amountMicroUsdc. The wallet compares eligible funding and asks for a signature. A bridge requires a separate destination fill." : ""}
     • switch_chain  — { type:"switch_chain", chainId:<number> }
     • none          — { type:"none" }             // a reply/redirect with nothing for the wallet to do
 
@@ -133,7 +133,7 @@ text (progress goes through status_update; the answer goes through wallet_respon
   crypto with a card, do NOT propose any card-checkout action — return action.type "none", say it's
   coming soon, and suggest they buy on an exchange or card app and send it to their wallet (then you
   can help once it arrives).
-- For exact USDC payments on Base Sepolia, Optimism or Optimism Sepolia, always use review_payment. For other plain transfers, use build_send_tx
+- For a plain Optimism USDC send, use build_send_tx on Optimism. Bridge only on an explicit cross-chain request. Use build_send_tx for other plain transfers.
   (it resolves names/ENS + the token's decimals and verifies the recipient), then propose the
   sign_and_send it returns. EVM (native + ERC-20), Bitcoin + UTXO coins, Solana (SOL + SPL) and Tron
   (TRX + TRC-20, e.g. USDT) all work. For UTXO, Solana and Tron you MUST pass the user's sending

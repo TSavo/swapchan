@@ -180,6 +180,13 @@ export async function runTurn(
     };
   }
 
+  if (
+    outAction.type === "review_payment" &&
+    (process.env.SWAPCHAN_TESTNET_PAYMENTS !== "1" || outAction.chainId === 10)
+  ) {
+    outAction = { type: "none" };
+    shownMessage = "The experimental payment flow is available only on enabled test networks.";
+  }
   appendEvent(store, bus, { address, kind: "agent_message", data: { text: shownMessage } });
   if (isActionable(outAction)) {
     // The SERVER assigns the actionId — the sign-gate key. The model decides what; we own identity.

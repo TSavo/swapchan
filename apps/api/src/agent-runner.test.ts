@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AgentOrchestrator, type Respond, runTurn } from "./agent-runner.js";
 import { appendEvent, SessionBus } from "./session-bus.js";
 import { openSessionStore, type SessionEvent } from "./sessions.js";
@@ -25,7 +25,12 @@ describe("runTurn", () => {
       message: "Review your payment.",
       action,
     }));
-    await runTurn(store, bus, A, respond);
+    vi.stubEnv("SWAPCHAN_TESTNET_PAYMENTS", "1");
+    try {
+      await runTurn(store, bus, A, respond);
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(store.all(A).find((e) => e.kind === "action_proposed")?.data).toMatchObject({
       action: { ...action, actionId: expect.any(String) },
     });
