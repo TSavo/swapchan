@@ -176,6 +176,8 @@ export default function SmartWalletPage() {
         const action = d.action as ProposedAction | undefined;
         if (action && isActionable(action)) setPending(action);
       } else if (e.kind === "wallet_result") {
+        if (typeof d.paymentSummary === "string")
+          setLines((ls) => [...ls, { id: e.id, role: "chain", text: String(d.paymentSummary) }]);
         const aid = String(d.action_id ?? "");
         if (aid) {
           resolvedRef.current.add(aid); // mark handled synchronously (defeats reload replay-fire)

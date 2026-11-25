@@ -76,4 +76,15 @@ describe("canonical repeat-payment receipt", () => {
       reconcilePayment(quote, operation.userOpHash, operation, { ...receipt, logs }),
     ).toThrow();
   });
+  it("requires the recipient's net USDC gain to match the requested payout", () => {
+    const logs = [...receipt.logs];
+    const payout = logs[1]!;
+    logs.splice(2, 0, {
+      ...payout,
+      topics: [payout.topics[0]!, payout.topics[2]!, "0x" + "00".repeat(32)],
+    });
+    expect(() =>
+      reconcilePayment(quote, operation.userOpHash, operation, { ...receipt, logs }),
+    ).toThrow();
+  });
 });

@@ -1,5 +1,5 @@
 import { paymentContracts as contracts, type PaymentQuote } from "@swapchan/shared";
-import { toEventSelector } from "viem";
+import { encodeFunctionData, erc20Abi, toEventSelector } from "viem";
 import { z } from "zod";
 
 const hash = z.string().regex(/^0x[0-9a-f]{64}$/i);
@@ -29,6 +29,35 @@ export const chainReceipt = z.object({
   logs: z.array(log),
 });
 const transfer = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+export async function paymentBlockBalances(
+  rpc: (method: string, params: unknown[]) => Promise<unknown>,
+  q: Pick<PaymentQuote, "sender" | "recipient">,
+  blockHash: string,
+) {
+  const block = { blockHash, requireCanonical: true };
+  const token = (contract: string, holder: PaymentQuote["sender"]) =>
+    rpc("eth_call", [
+      {
+        to: contract,
+        data: encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [holder] }),
+      },
+      block,
+    ]).then((v) => BigInt(hash.parse(v)).toString());
+  const [senderEthWei, senderWethWei, senderMicroUsdc, recipientMicroUsdc] = await Promise.all([
+    rpc("eth_getBalance", [q.sender, block]).then((v) =>
+      BigInt(
+        z
+          .string()
+          .regex(/^0x[0-9a-f]+$/i)
+          .parse(v),
+      ).toString(),
+    ),
+    token(contracts.weth, q.sender),
+    token(contracts.usdc, q.sender),
+    token(contracts.usdc, q.recipient),
+  ]);
+  return { blockHash, senderEthWei, senderWethWei, senderMicroUsdc, recipientMicroUsdc };
+}
 const beforeExecution = "0xbb47ee3e183a558b1a2ff0874b079f3fc5478b7454eacf2bfc5af2ff5878f972";
 const userOperationEvent = "0x49628fd1471006c1482da88028e9ce4dbb080b815c9b0344d39e5a8e6ec1419f";
 const paymasterCharge = "0x7a270f29ae17e8e2304ff1245deb50c3b6206bca82928d904f3e284d35c5ffd2";
@@ -86,6 +115,7 @@ export function reconcilePayment(
   if (start < 0) throw new Error("operation log boundary missing");
   let charged: bigint | undefined;
   let wrappedNative = 0n;
+  let recipientDelta = 0n;
   let paid = 0n,
     fee = 0n,
     spent = 0n,
@@ -114,6 +144,8 @@ export function reconcilePayment(
       amount = BigInt(l.data);
     if (l.address === contracts.weth.toLowerCase() && from === sender) spent += amount;
     if (l.address !== contracts.usdc.toLowerCase()) continue;
+    if (to === recipient) recipientDelta += amount;
+    if (from === recipient) recipientDelta -= amount;
     if (to === sender) received += amount;
     if (from === sender) {
       if (to === recipient) paid += amount;
@@ -122,6 +154,7 @@ export function reconcilePayment(
   }
   if (
     paid !== BigInt(q.amountMicroUsdc) ||
+    recipientDelta !== paid ||
     wrappedNative !== BigInt(q.wrapNativeWei ?? "0") ||
     fee <= 0n ||
     fee !== charged ||

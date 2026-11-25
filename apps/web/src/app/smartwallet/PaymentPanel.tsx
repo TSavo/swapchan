@@ -25,6 +25,12 @@ import {
 import { simulateContract, waitForTransactionReceipt } from "wagmi/actions";
 import { PaymentRequestError, paymentRequest as request } from "@/lib/paymentRequest";
 
+type BlockBalance = {
+  senderEthWei: string;
+  senderWethWei: string;
+  senderMicroUsdc: string;
+  recipientMicroUsdc: string;
+};
 type Review = PaymentQuote & {
   quoteId: string;
   authorizationNonce?: string;
@@ -174,9 +180,22 @@ export function PaymentPanel({
           transactionHash?: string;
           gasChargedMicroUsdc: string;
           paidMicroUsdc: string;
+          spentWethWei?: string;
+          wrappedNativeWei?: string;
+          blockBalances?: { before: BlockBalance; after: BlockBalance } | null;
         }>("status/" + pending);
         if (stopped) return;
         if (r.status === "settled" || r.status === "failed") {
+          let summary =
+            r.status === "failed"
+              ? "Payment reverted."
+              : `Paid ${formatUnits(BigInt(r.paidMicroUsdc), 6)} USDC. Gas charged: ${formatUnits(BigInt(r.gasChargedMicroUsdc), 6)} USDC.`;
+          if (r.blockBalances) {
+            const { before, after } = r.blockBalances;
+            const change = (key: keyof BlockBalance, decimals: number) =>
+              `${formatUnits(BigInt(before[key]), decimals)} → ${formatUnits(BigInt(after[key]), decimals)}`;
+            summary += ` Balances from the previous block to the receipt block: sender ETH ${change("senderEthWei", 18)}, WETH ${change("senderWethWei", 18)}, USDC ${change("senderMicroUsdc", 6)}. Recipient USDC ${change("recipientMicroUsdc", 6)}.`;
+          }
           if (actionId && report)
             await report(actionId, {
               status: r.status === "settled" ? "confirmed" : "reverted",
@@ -185,12 +204,12 @@ export function PaymentPanel({
               userOpHash: pending,
               paidMicroUsdc: r.paidMicroUsdc,
               gasChargedMicroUsdc: r.gasChargedMicroUsdc,
+              spentWethWei: r.spentWethWei,
+              wrappedNativeWei: r.wrappedNativeWei,
+              blockBalances: r.blockBalances,
+              paymentSummary: summary,
             });
-          setMsg(
-            r.status === "failed"
-              ? "Payment reverted."
-              : `Paid ${formatUnits(BigInt(r.paidMicroUsdc), 6)} USDC. Gas charged: ${formatUnits(BigInt(r.gasChargedMicroUsdc), 6)} USDC.`,
-          );
+          setMsg(summary);
           if (r.transactionHash && /^0x[0-9a-f]{64}$/i.test(r.transactionHash))
             setReceipt(r.transactionHash);
           setPending("");

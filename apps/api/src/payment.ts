@@ -32,7 +32,12 @@ import {
   directReceiptInput,
   quoteDirect,
 } from "./payment-direct.js";
-import { chainReceipt, operationReceipt, reconcilePayment } from "./payment-receipt.js";
+import {
+  chainReceipt,
+  operationReceipt,
+  paymentBlockBalances,
+  reconcilePayment,
+} from "./payment-receipt.js";
 import { openPaymentStore } from "./payment-store.js";
 
 const { weth, usdc, paymaster, entry, delegate } = paymentContracts;
@@ -821,7 +826,9 @@ export function paymentRoutes(
       const result = reconcilePayment(saved.quote, digest, r, canonical);
       const finalizedBlock = await chain("eth_getBlockByNumber", ["finalized", false]);
       const inclusionBlock = await chain("eth_getBlockByNumber", [canonical.blockNumber, false]);
-      const inclusion = z.object({ hash: sigWord }).parse(inclusionBlock);
+      const inclusion = z
+        .object({ hash: sigWord, parentHash: sigWord.optional() })
+        .parse(inclusionBlock);
       if (inclusion.hash.toLowerCase() !== canonical.blockHash.toLowerCase())
         throw Error("Payment receipt is no longer on the canonical chain");
       const finalized =
@@ -833,16 +840,30 @@ export function paymentRoutes(
         functionName: "allowance",
         args: [saved.quote.sender, paymaster],
       });
-      const remaining = await chain("eth_call", [
+      const remaining = chain("eth_call", [
         { to: usdc, data: dataAllowance },
         { blockHash: canonical.blockHash, requireCanonical: true },
       ])
         .then((x) => BigInt(hex.parse(x)).toString())
         .catch(() => null);
+      const balances =
+        inclusion.parentHash && result.status === "settled"
+          ? Promise.all([
+              paymentBlockBalances(chain, saved.quote, inclusion.parentHash),
+              paymentBlockBalances(chain, saved.quote, inclusion.hash),
+            ])
+              .then(([before, after]) => ({ before, after }))
+              .catch(() => null)
+          : null;
+      const [paymasterAllowanceAfterBlockMicroUsdc, blockBalances] = await Promise.all([
+        remaining,
+        balances,
+      ]);
       return c.json({
         ...result,
         finalized,
-        paymasterAllowanceAfterBlockMicroUsdc: remaining,
+        paymasterAllowanceAfterBlockMicroUsdc,
+        blockBalances,
         paymaster,
       });
     } catch {
