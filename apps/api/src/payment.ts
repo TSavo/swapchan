@@ -22,6 +22,7 @@ import {
 import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
+import { quoteCirclePayment } from "./payment-circle.js";
 import { comparePaymentCosts, recommendedPaymentStage } from "./payment-costs.js";
 import { crossPaymentInput, quoteCrossPayment } from "./payment-cross-chain.js";
 import { crossSettlement, settlementInput } from "./payment-cross-settlement.js";
@@ -167,6 +168,10 @@ export function paymentRoutes(
     intent: z.infer<typeof destinationIntent>;
     review: Awaited<ReturnType<typeof quoteDirect>>["quote"];
   }>("direct", (v) => v.review.expiresAt);
+  const circleQuotes = receipts.cache<Awaited<ReturnType<typeof quoteCirclePayment>>>(
+    "circle-cctp",
+    (quote) => quote.expiresAt,
+  );
   function retain<T>(cache: { set(id: string, entry: T): void }, entry: T) {
     const id = randomUUID();
     cache.set(id, entry);
@@ -391,6 +396,8 @@ export function paymentRoutes(
     if (q) return c.json({ ...q, quoteId: id });
     const route = directQuotes.get(id) ?? crossQuotes.get(id);
     if (route) return c.json({ ...route.review, quoteId: id });
+    const circle = circleQuotes.get(id);
+    if (circle) return c.json({ ...circle, quoteId: id });
     const saved = comparisons.get(id);
     return saved
       ? c.json({ ...saved.data, reviewId: id })
@@ -398,6 +405,23 @@ export function paymentRoutes(
   });
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
+    if (raw?.provider === "circle_cctp") {
+      const parsed = crossPaymentInput
+        .safeExtend({
+          provider: z.literal("circle_cctp"),
+          chainId: z.literal(11155420),
+          sourceChainId: z.literal(84532),
+        })
+        .safeParse(raw);
+      if (!parsed.success) return c.json({ error: "unsupported_circle_payment" }, 400);
+      try {
+        const { provider, ...intent } = parsed.data;
+        const quote = await quoteCirclePayment(f, chain, intent);
+        return c.json({ ...quote, quoteId: retain(circleQuotes, quote) });
+      } catch {
+        return c.json({ error: "circle_quote_unavailable" }, 503);
+      }
+    }
     if (raw?.chainId === 10 || raw?.chainId === 11155420) {
       const { sourceChainId, ...rest } = raw;
       const parsed = destinationIntent.safeParse(rest);

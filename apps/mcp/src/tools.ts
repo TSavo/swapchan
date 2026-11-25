@@ -976,6 +976,12 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .union([z.literal(8453), z.literal(84532), z.literal(10), z.literal(11155420)])
             .optional(),
           sender: evm.optional(),
+          provider: z
+            .literal("circle_cctp")
+            .optional()
+            .describe(
+              "Quote Circle forwarding from Base Sepolia (84532) to Optimism Sepolia (11155420). Fees are paid up front in source USDC. Quote only.",
+            ),
           recipient: evm.optional(),
           amountMicroUsdc: z
             .string()

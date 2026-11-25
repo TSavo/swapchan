@@ -240,6 +240,8 @@ On Base Sepolia, MCP can build one unsigned ERC-4337 payment operation for a del
 
 The remaining cross-chain milestone is an exact USDC payout on the destination. An origin deposit alone leaves the payment pending. Verify the destination transfer and finality before reporting settlement.
 
+MCP `quote_payment` accepts `provider: "circle_cctp"` for Base Sepolia to Optimism Sepolia. Circle quotes its destination forwarding fee separately in source USDC. For a 0.000001 USDC payout, the funded account simulated approval and burn at Base Sepolia block 63,504,526 with a 0.063355 USDC forwarding fee and 0.000010338545172823 ETH estimated origin gas. This route has quote and simulation evidence. A destination mint receipt remains open. [Circle upfront fees](https://developers.circle.com/cctp/concepts/upfront-fees)
+
 ### Agent-safe execution
 
 The safety layer is largely built for one transaction. `verify_tx`, `simulate_swap`, `contract_approve_call`, and verification before signing should stay mandatory, and be extended to the bundle: same expected recipient and minOut checks, plus 'is this delegate allowlisted?', 'is the approval exact and inside the batch?', and 'what the paymaster will pull'. `signing_guide` already mentions EIP-7702 session keys only as an advanced option; default remains human sign-off on every signature, now one signature instead of several.
