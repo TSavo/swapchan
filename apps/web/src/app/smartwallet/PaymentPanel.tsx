@@ -29,7 +29,7 @@ type Review = PaymentQuote & {
   quoteId: string;
   authorizationNonce?: string;
   execution?: "quote_only" | "sponsored_payment";
-  sourceWallet?: { balanceMicroUsdc: string; balanceWethWei: string };
+  sourceWallet?: { balanceMicroUsdc: string; balanceWethWei: string; balanceNativeWei?: string };
   fundingShortfall?: {
     additionalWethWei: string;
     additionalMicroUsdcForDirectPayment: string;
@@ -362,7 +362,16 @@ export function PaymentPanel({
             {q.sourceWallet && (
               <p>
                 Available on Base Sepolia: {formatUnits(BigInt(q.sourceWallet.balanceMicroUsdc), 6)}{" "}
-                USDC and {formatUnits(BigInt(q.sourceWallet.balanceWethWei), 18)} WETH.
+                USDC, {formatUnits(BigInt(q.sourceWallet.balanceWethWei), 18)} WETH
+                {q.sourceWallet.balanceNativeWei !== undefined &&
+                  ` and ${formatUnits(BigInt(q.sourceWallet.balanceNativeWei), 18)} ETH`}
+                .
+              </p>
+            )}
+            {BigInt(q.wrapNativeWei ?? "0") > 0n && (
+              <p>
+                This payment wraps {formatUnits(BigInt(q.wrapNativeWei!), 18)} ETH from your wallet
+                before the swap. Any unused WETH stays in your wallet. Gas is charged in USDC.
               </p>
             )}
             {q.fundingShortfall && (

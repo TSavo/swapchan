@@ -24,6 +24,12 @@ function calls(quote: PaymentQuote) {
   return decodeFunctionData({ abi: batchAbi, data: paymentBatch(quote) }).args[0];
 }
 describe("exact Base Sepolia payments", () => {
+  it("wraps only the reviewed native amount into the wallet's WETH before the swap", () => {
+    const [wrap, ...rest] = calls({ ...q, wrapNativeWei: "12000" });
+    expect(wrap).toEqual({ target: contracts.weth, value: 12000n, data: "0xd0e30db0" });
+    expect(rest).toEqual(calls(q));
+    expect(() => calls({ ...q, wrapNativeWei: "20001" })).toThrow("exceeds");
+  });
   it("caps the router input, clears remaining allowance, pays the exact recipient, and bounds gas collection", () => {
     const batch = calls(q);
     expect(batch.map((c) => c.value)).toEqual([0n, 0n, 0n, 0n, 0n]);

@@ -16,6 +16,7 @@ function setup(
   failure: "relay" | "simulation" | "none" | "delegate",
   freshWeth?: bigint,
   store?: ReturnType<typeof openPaymentStore>,
+  native = 0n,
 ) {
   const account = privateKeyToAccount(generatePrivateKey());
   let sendCount = 0;
@@ -23,6 +24,9 @@ function setup(
     const { method, params } = JSON.parse(String(init?.body));
     let result: unknown;
     switch (method) {
+      case "eth_getBalance":
+        result = toHex(native);
+        break;
       case "eth_blockNumber":
         result = "0x10";
         break;
@@ -192,6 +196,13 @@ describe("payment build and relay", () => {
     });
   });
   it("uses the available WETH for slippage when it covers the exact output", async () => {
+    const nativeFunded = setup("none", 9000n, undefined, 1050n);
+    expect(await nativeFunded.quote()).toMatchObject({
+      execution: "sponsored_payment",
+      maxWethWei: "10050",
+      wrapNativeWei: "1050",
+      fundingShortfall: null,
+    });
     expect(await setup("none", 10010n).quote()).toMatchObject({
       maxWethWei: "10010",
       requiresDelegation: true,

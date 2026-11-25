@@ -1,4 +1,5 @@
 import { paymentContracts as contracts, type PaymentQuote } from "@swapchan/shared";
+import { toEventSelector } from "viem";
 import { z } from "zod";
 
 const hash = z.string().regex(/^0x[0-9a-f]{64}$/i);
@@ -84,11 +85,18 @@ export function reconcilePayment(
   }
   if (start < 0) throw new Error("operation log boundary missing");
   let charged: bigint | undefined;
+  let wrappedNative = 0n;
   let paid = 0n,
     fee = 0n,
     spent = 0n,
     received = 0n;
   for (const l of entryLogs.slice(start + 1, end)) {
+    if (
+      l.address === contracts.weth.toLowerCase() &&
+      l.topics[0] === toEventSelector("Deposit(address,uint256)") &&
+      l.topics[1]?.slice(-40) === sender.slice(2)
+    )
+      wrappedNative += BigInt(l.data);
     if (l.address === r.paymaster && l.topics[0] === paymasterCharge) {
       if (
         charged !== undefined ||
@@ -114,6 +122,7 @@ export function reconcilePayment(
   }
   if (
     paid !== BigInt(q.amountMicroUsdc) ||
+    wrappedNative !== BigInt(q.wrapNativeWei ?? "0") ||
     fee <= 0n ||
     fee !== charged ||
     fee > BigInt(q.maxGasMicroUsdc) ||
@@ -128,6 +137,7 @@ export function reconcilePayment(
     paidMicroUsdc: String(paid),
     gasChargedMicroUsdc: String(fee),
     spentWethWei: String(spent),
+    wrappedNativeWei: String(wrappedNative),
     receivedFromSwapMicroUsdc: String(received),
   };
 }

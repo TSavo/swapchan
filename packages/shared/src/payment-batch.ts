@@ -29,6 +29,7 @@ export type PaymentQuote = {
   expiresAt: number;
   maxGasMicroUsdc: string;
   maxWethWei: string;
+  wrapNativeWei?: string;
   swapOutputMicroUsdc: string;
   requiresDelegation: boolean;
   maxFeePerGas: string;
@@ -55,8 +56,19 @@ export function paymentBatch(q: PaymentQuote) {
     );
   const spend = BigInt(q.maxWethWei),
     output = BigInt(q.swapOutputMicroUsdc);
+  const wrap = BigInt(q.wrapNativeWei ?? "0");
+  if (wrap < 0n || wrap > spend) throw Error("Native wrap exceeds the reviewed WETH spend");
   if ((spend === 0n) !== (output === 0n)) throw new Error("inconsistent swap limits");
   if (output) {
+    if (wrap > 0n)
+      calls.push({
+        target: weth,
+        value: wrap,
+        data: encodeFunctionData({
+          abi: parseAbi(["function deposit() payable"]),
+          functionName: "deposit",
+        }),
+      });
     approve(weth, router, spend);
     add(
       router,

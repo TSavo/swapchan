@@ -445,10 +445,11 @@ export function paymentRoutes(
         functionName: "balanceOf",
         args: [sender],
       });
-      const [usd, wrapped, code] = await Promise.all([
+      const [usd, wrapped, code, native] = await Promise.all([
         call(usdc, balanceData),
         call(weth, balanceData),
         chain("eth_getCode", [sender, blockNumber]),
+        chain("eth_getBalance", [sender, blockNumber]).then((value) => BigInt(hex.parse(value))),
       ]);
       if (
         code !== "0x" &&
@@ -464,6 +465,7 @@ export function paymentRoutes(
       const missing = payout + gas - BigInt(usd);
       let maxWeth = 0n;
       let wethGap = 0n;
+      let wrapNative = 0n;
       if (missing > 0n) {
         const data = encodeFunctionData({
           abi,
@@ -480,8 +482,11 @@ export function paymentRoutes(
         if (!needed) throw new Error("no route");
         maxWeth = (needed * 101n + 99n) / 100n;
         const available = BigInt(wrapped);
-        if (available < needed) wethGap = needed - available;
-        else if (available < maxWeth) maxWeth = available;
+        if (available + native < needed) wethGap = needed - available - native;
+        else if (available < needed) {
+          maxWeth = maxWeth < available + native ? maxWeth : available + native;
+          wrapNative = maxWeth - available;
+        } else if (available < maxWeth) maxWeth = available;
       }
       const result = {
         ...parsed.data,
@@ -489,6 +494,7 @@ export function paymentRoutes(
         sourceWallet: {
           balanceMicroUsdc: BigInt(usd).toString(),
           balanceWethWei: BigInt(wrapped).toString(),
+          balanceNativeWei: native.toString(),
         },
         fundingShortfall:
           wethGap > 0n
@@ -515,6 +521,7 @@ export function paymentRoutes(
           : {}),
         maxGasMicroUsdc: gas.toString(),
         maxWethWei: maxWeth.toString(),
+        wrapNativeWei: wrapNative.toString(),
         swapOutputMicroUsdc: (missing > 0n ? missing : 0n).toString(),
         maxFeePerGas: gasQuote.maxFeePerGas,
         maxPriorityFeePerGas: gasQuote.maxPriorityFeePerGas,
@@ -740,6 +747,7 @@ export function paymentRoutes(
         recipient: q.recipient,
         amountMicroUsdc: q.amountMicroUsdc,
         maxWethWei: q.maxWethWei,
+        wrapNativeWei: q.wrapNativeWei ?? "0",
         maxGasMicroUsdc: q.maxGasMicroUsdc,
         expiresAt: q.expiresAt,
         simulation: { gas },
