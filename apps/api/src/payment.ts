@@ -43,6 +43,7 @@ import {
   paymentBlockBalances,
   reconcilePayment,
 } from "./payment-receipt.js";
+import { quoteSolanaPayment, solanaPaymentInput } from "./payment-solana.js";
 import { openPaymentStore } from "./payment-store.js";
 
 const { weth, usdc, paymaster, entry, delegate } = paymentContracts;
@@ -486,6 +487,39 @@ export function paymentRoutes(
       ? c.json({ ...saved.data, reviewId: id })
       : c.json({ error: "quote_expired" }, 410);
   });
+  async function swapFunding(
+    missing: bigint,
+    available: bigint,
+    native: bigint,
+    call: (to: string, data: Hex) => Promise<Hex>,
+  ) {
+    let maxWeth = 0n;
+    let wethGap = 0n;
+    let wrapNative = 0n;
+    if (missing > 0n) {
+      const data = encodeFunctionData({
+        abi,
+        functionName: "quoteExactOutputSingle",
+        args: [
+          { tokenIn: weth, tokenOut: usdc, amount: missing, fee: 3000, sqrtPriceLimitX96: 0n },
+        ],
+      });
+      const [needed] = decodeFunctionResult({
+        abi,
+        functionName: "quoteExactOutputSingle",
+        data: await call(quoter, data),
+      });
+      if (!needed) throw new Error("no route");
+      maxWeth = (needed * 101n + 99n) / 100n;
+
+      if (available + native < needed) wethGap = needed - available - native;
+      else if (available < needed) {
+        maxWeth = maxWeth < available + native ? maxWeth : available + native;
+        wrapNative = maxWeth - available;
+      } else if (available < maxWeth) maxWeth = available;
+    }
+    return { maxWeth, wethGap, wrapNative };
+  }
   async function sponsoredCircleEstimate(quote: Awaited<ReturnType<typeof quoteCirclePayment>>) {
     const { review, intent } = quote;
     const block = review.sourceWallet.blockNumber;
@@ -494,9 +528,9 @@ export function paymentRoutes(
       typeof code !== "string" ||
       code.toLowerCase() !== "0xef0100" + delegate.slice(2).toLowerCase()
     )
-      return { status: "known_delegation_required" };
+      return { status: "known_delegation_required" as const };
     const delegation = await inspectDelegation(chain, intent.sender, delegate);
-    if (!delegation.existing?.known) return { status: "unverified_delegate" };
+    if (!delegation.existing?.known) return { status: "unverified_delegate" as const };
     const gas = await quoteGasInUsdc();
     const burn = quote.calls[quote.calls.length - 1]!;
     const maxGasMicroUsdc = gas.maxGasMicroUsdc.circle;
@@ -507,11 +541,29 @@ export function paymentRoutes(
       requiredMicroUsdc: String(required),
       expiresAt: Math.min(review.expiresAt, gas.expiresAt),
     };
-    if (required > balance)
+    const call = async (to: string, data: Hex) =>
+      hex.parse(await chain("eth_call", [{ to, data }, block])) as Hex;
+    const missing = required > balance ? required - balance : 0n;
+    const wrapped = missing
+      ? BigInt(
+          await call(
+            weth,
+            encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [intent.sender] }),
+          ),
+        )
+      : 0n;
+    const { maxWeth, wethGap, wrapNative } = await swapFunding(
+      missing,
+      wrapped,
+      BigInt(review.sourceWallet.nativeBalanceWei),
+      call,
+    );
+    if (wethGap)
       return {
         ...budget,
-        status: "insufficient_usdc",
-        shortfallMicroUsdc: String(required - balance),
+        status: "insufficient_funds" as const,
+        shortfallMicroUsdc: String(missing),
+        additionalWethWei: String(wethGap),
       };
     const payment: PaymentQuote = {
       sender: intent.sender,
@@ -519,8 +571,9 @@ export function paymentRoutes(
       amountMicroUsdc: intent.amountMicroUsdc,
       chainId: 84532,
       requiresDelegation: false,
-      maxWethWei: "0",
-      swapOutputMicroUsdc: "0",
+      maxWethWei: String(maxWeth),
+      wrapNativeWei: String(wrapNative),
+      swapOutputMicroUsdc: String(missing),
       expiresAt: budget.expiresAt,
       maxGasMicroUsdc,
       maxFeePerGas: gas.maxFeePerGas,
@@ -552,7 +605,10 @@ export function paymentRoutes(
     if (budget.expiresAt <= Date.now() / 1000) throw Error("Sponsored estimate expired");
     return {
       ...budget,
-      status: "simulated",
+      status: "simulated" as const,
+      maxWethWei: payment.maxWethWei,
+      wrapNativeWei: payment.wrapNativeWei,
+      swapOutputMicroUsdc: payment.swapOutputMicroUsdc,
       quoteId: retain(issued, payment),
       destinationChainId: 11155420,
       gas: estimate,
@@ -564,13 +620,24 @@ export function paymentRoutes(
     const quote = await quoteCirclePayment(f, chain, intent);
     if (!testnetEnabled) quote.review.execution = "quote_only";
     const sponsoredOrigin = testnetEnabled
-      ? await sponsoredCircleEstimate(quote).catch(() => ({ status: "estimate_unavailable" }))
+      ? await sponsoredCircleEstimate(quote).catch(() => ({
+          status: "estimate_unavailable" as const,
+        }))
       : undefined;
     const saved = { ...quote, review: { ...quote.review, sponsoredOrigin } };
     return { ...saved.review, quoteId: retain(circleQuotes, saved) };
   }
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
+    if (raw?.sourceChainId === 792703809) {
+      const parsed = solanaPaymentInput.safeParse(raw);
+      if (!parsed.success) return c.json({ error: "invalid_solana_payment" }, 400);
+      try {
+        return c.json(await quoteSolanaPayment(f, parsed.data));
+      } catch {
+        return c.json({ error: "solana_balances_unavailable" }, 503);
+      }
+    }
     if (raw?.provider === "circle_cctp") {
       const parsed = crossPaymentInput
         .safeExtend({
@@ -628,7 +695,28 @@ export function paymentRoutes(
         | Awaited<ReturnType<typeof issueDirect>>
         | Awaited<ReturnType<typeof issueCross>>
         | Awaited<ReturnType<typeof issueCircle>>;
-      const candidates: Candidate[] = [];
+      const candidates: (Candidate & { maxWethWei?: string })[] = [];
+      if (circle.status === "fulfilled") {
+        const route = circle.value;
+        const sponsor = route.sponsoredOrigin;
+        if (sponsor?.status === "simulated") {
+          // USDC sourced by the swap is already represented by its maximum WETH input.
+          const walletUsdc = String(
+            BigInt(sponsor.requiredMicroUsdc) - BigInt(sponsor.swapOutputMicroUsdc),
+          );
+          candidates.push({
+            ...route,
+            quoteId: sponsor.quoteId,
+            expiresAt: sponsor.expiresAt,
+            execution: "sponsored_circle",
+            maxInputMicroUsdc: walletUsdc,
+            inputMicroUsdc: walletUsdc,
+            maxWethWei: sponsor.maxWethWei,
+            originGas: { ...route.originGas, estimate: null, atomicEstimateWei: null },
+            atomicOrigin: null,
+          });
+        }
+      }
       const unavailableProviders: string[] = [];
       for (const [result, provider] of [
         [direct, "direct_transfer"],
@@ -644,7 +732,7 @@ export function paymentRoutes(
         (id) => !candidates.some((q) => q.sourceChainId === id),
       );
       if (!candidates.length) return c.json({ error: "no_verified_quotes" }, 503);
-      const rate = candidates.some((c) => c.originGas.estimate)
+      const rate = candidates.some((c) => c.originGas.estimate || BigInt(c.maxWethWei ?? "0"))
         ? await testnetGasConversion().catch(() => null)
         : null;
       const comparison = {
@@ -696,31 +784,12 @@ export function paymentRoutes(
           ? directCap
           : BigInt(gasQuote.maxGasMicroUsdc.swapOrSetup);
       const missing = payout + gas - BigInt(usd);
-      let maxWeth = 0n;
-      let wethGap = 0n;
-      let wrapNative = 0n;
-      if (missing > 0n) {
-        const data = encodeFunctionData({
-          abi,
-          functionName: "quoteExactOutputSingle",
-          args: [
-            { tokenIn: weth, tokenOut: usdc, amount: missing, fee: 3000, sqrtPriceLimitX96: 0n },
-          ],
-        });
-        const [needed] = decodeFunctionResult({
-          abi,
-          functionName: "quoteExactOutputSingle",
-          data: await call(quoter, data),
-        });
-        if (!needed) throw new Error("no route");
-        maxWeth = (needed * 101n + 99n) / 100n;
-        const available = BigInt(wrapped);
-        if (available + native < needed) wethGap = needed - available - native;
-        else if (available < needed) {
-          maxWeth = maxWeth < available + native ? maxWeth : available + native;
-          wrapNative = maxWeth - available;
-        } else if (available < maxWeth) maxWeth = available;
-      }
+      const { maxWeth, wethGap, wrapNative } = await swapFunding(
+        missing,
+        BigInt(wrapped),
+        native,
+        call,
+      );
       const result = {
         ...parsed.data,
         execution: wethGap > 0n ? ("quote_only" as const) : ("sponsored_payment" as const),
@@ -1078,11 +1147,15 @@ export function paymentRoutes(
           {
             blockHash: canonical.blockHash,
             logs: result.operationLogs,
+            receivedFromSwapMicroUsdc: result.receivedFromSwapMicroUsdc,
             gasChargedMicroUsdc: result.gasChargedMicroUsdc,
           },
         );
         return c.json({
           ...settlement,
+          spentWethWei: result.spentWethWei,
+          wrappedNativeWei: result.wrappedNativeWei,
+          receivedFromSwapMicroUsdc: result.receivedFromSwapMicroUsdc,
           userOpHash: digest,
           gasChargedMicroUsdc: result.gasChargedMicroUsdc,
         });

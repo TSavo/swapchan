@@ -81,7 +81,12 @@ export async function circleStatus(
   i: z.infer<typeof circleStatusInput>,
   rpc: Rpc,
   f: typeof fetch,
-  sponsored?: { blockHash: string; gasChargedMicroUsdc: string; logs: unknown[] },
+  sponsored?: {
+    blockHash: string;
+    gasChargedMicroUsdc: string;
+    receivedFromSwapMicroUsdc: string;
+    logs: unknown[];
+  },
 ) {
   async function canonical(chain: 84532 | 11155420, tx: Hex) {
     const raw = await rpc(chain, "eth_getTransactionReceipt", [tx]);
@@ -158,7 +163,8 @@ export async function circleStatus(
   if (origin.r.status === "0x0") return { ...base, status: "burn_reverted" };
   const spent =
     -transfers(origin.r, acrossTestRoute.sourceToken, i.sender) -
-    BigInt(sponsored?.gasChargedMicroUsdc ?? "0");
+    BigInt(sponsored?.gasChargedMicroUsdc ?? "0") +
+    BigInt(sponsored?.receivedFromSwapMicroUsdc ?? "0");
   const sent = origin.r.logs.filter(
     (l) => l.address.toLowerCase() === transmitter && l.topics[0] === toEventSelector(events[0]),
   );

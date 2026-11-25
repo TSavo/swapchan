@@ -966,7 +966,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote an exact USDC payment",
       description:
-        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
+        "Amounts are integer micro-USDC. For a read-only Solana SOL or USDC funding quote use sourceChainId 792703809, the Solana sender, and destination chainId 10. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z
         .object({
           savedId: z
@@ -977,9 +977,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             ),
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]).optional(),
           sourceChainId: z
-            .union([z.literal(8453), z.literal(84532), z.literal(10), z.literal(11155420)])
+            .union([
+              z.literal(8453),
+              z.literal(84532),
+              z.literal(10),
+              z.literal(11155420),
+              z.literal(792703809),
+            ])
             .optional(),
-          sender: evm.optional(),
+          sender: z.union([evm, z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)]).optional(),
           provider: z
             .literal("circle_cctp")
             .optional()
@@ -1050,13 +1056,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. Inspect routes, fundingShortfall and recommendedQuoteId. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
+        "For read-only Solana funding quotes use sourceChainId 792703809, the Solana sender and destination chainId 10. Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. Inspect routes, fundingShortfall and recommendedQuoteId. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
       inputSchema: z
         .object({
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
           intent: z
             .object({
-              sender: evm,
+              sender: z.union([evm, z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)]),
               recipient: evm,
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
               provider: z
@@ -1066,7 +1072,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                   "Use Circle forwarding with sourceChainId 84532 and destination chainId 11155420.",
                 ),
               sourceChainId: z
-                .union([z.literal(84532), z.literal(11155420), z.literal(10)])
+                .union([z.literal(84532), z.literal(11155420), z.literal(10), z.literal(792703809)])
                 .optional()
                 .describe(
                   "Quote only this source chain. Omit to compare supported funding routes.",
@@ -1110,18 +1116,19 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             : {}),
         });
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
-      if (a.stage === "sponsored_origin") {
+      let sponsored = false;
+      if (a.chainId === 11155420 && (!a.stage || a.stage === "sponsored_origin")) {
         const review = await api.savedPaymentQuote(a.quoteId!);
-        const sponsored = z
+        sponsored = z
           .object({
             chainId: z.literal(84532),
             circle: z.object({ destinationChainId: z.literal(11155420) }),
           })
-          .safeParse(review);
-        if (!sponsored.success || a.chainId !== 11155420)
+          .safeParse(review).success;
+        if (!sponsored && a.stage === "sponsored_origin")
           throw new UserError("Expected a sponsored Circle quote for Optimism Sepolia.");
       }
-      if (a.chainId !== 84532 && a.stage !== "sponsored_origin") {
+      if (a.chainId !== 84532 && !sponsored) {
         const built = await api.crossPaymentBuild({
           quoteId: a.quoteId,
           ...(a.stage ? { stage: a.stage } : {}),
@@ -1168,8 +1175,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       };
       const built = await api.paymentBuild(args);
       if (
-        (a.stage !== "sponsored_origin" &&
-          z.object({ circle: z.object({}) }).safeParse(built.quote).success) ||
+        (!sponsored && z.object({ circle: z.object({}) }).safeParse(built.quote).success) ||
         built.quoteId !== a.quoteId ||
         !built.userOperation ||
         !built.userOpHash

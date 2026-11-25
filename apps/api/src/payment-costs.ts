@@ -1,6 +1,7 @@
 export type FundingQuote = {
   quoteId: string;
   execution: string;
+  maxWethWei?: string;
   atomicOrigin?: { estimatedFeeWei: string } | null;
   maxInputMicroUsdc: string;
   inputMicroUsdc: string;
@@ -10,6 +11,7 @@ export type FundingQuote = {
 export function recommendedPaymentStage(
   q: Pick<FundingQuote, "execution" | "atomicOrigin" | "originGas">,
 ) {
+  if (q.execution === "sponsored_circle") return "sponsored_origin";
   if (q.execution === "quote_only") return null;
   const batch = q.atomicOrigin?.estimatedFeeWei;
   const split = q.originGas.estimate?.totalWei;
@@ -29,6 +31,7 @@ export function comparePaymentCosts<T extends FundingQuote>(
   function fee(q: T) {
     const split = q.originGas.estimate?.totalWei;
     const stage = recommendedPaymentStage(q);
+    if (stage === "sponsored_origin") return "0";
     if (stage === "atomic_origin") return q.atomicOrigin!.estimatedFeeWei;
     if (stage === "initial") return split ?? null;
     const batch = q.atomicOrigin?.estimatedFeeWei ?? q.originGas.atomicEstimateWei;
@@ -40,13 +43,15 @@ export function comparePaymentCosts<T extends FundingQuote>(
     return split ?? null;
   }
   const costNumerator = (q: T, rate: bigint) =>
-    BigInt(q.maxInputMicroUsdc) * scale + BigInt(fee(q)!) * rate;
+    BigInt(q.maxInputMicroUsdc) * scale + (BigInt(fee(q)!) + BigInt(q.maxWethWei ?? "0")) * rate;
   const rows = quotes.map((q) => {
     const fundingFeeWei = fee(q);
     const total =
       microUsdcPerEth && fundingFeeWei
         ? (costNumerator(q, microUsdcPerEth) + scale - 1n) / scale
-        : null;
+        : fundingFeeWei === "0" && !BigInt(q.maxWethWei ?? "0")
+          ? BigInt(q.maxInputMicroUsdc)
+          : null;
     const tokenGap = BigInt(q.inputMicroUsdc) - BigInt(q.sourceWallet.balanceMicroUsdc);
     const gasGap =
       fundingFeeWei === null
@@ -73,7 +78,8 @@ export function comparePaymentCosts<T extends FundingQuote>(
               return costNumerator(q, microUsdcPerEth) <= costNumerator(other, microUsdcPerEth);
             return (
               BigInt(q.maxInputMicroUsdc) <= BigInt(other.maxInputMicroUsdc) &&
-              BigInt(q.fundingFeeWei!) <= BigInt(other.fundingFeeWei!)
+              BigInt(q.fundingFeeWei!) + BigInt(q.maxWethWei ?? "0") <=
+                BigInt(other.fundingFeeWei!) + BigInt(other.maxWethWei ?? "0")
             );
           }),
         );

@@ -158,15 +158,19 @@ export function reconcilePayment(
       !charged ||
       charged > BigInt(q.maxGasMicroUsdc) ||
       total !== charged + BigInt(q.circle.maxInputMicroUsdc) ||
-      spent ||
-      received ||
-      wrappedNative
+      spent > BigInt(q.maxWethWei) ||
+      received !== BigInt(q.swapOutputMicroUsdc) ||
+      (spent === 0n) !== (received === 0n) ||
+      wrappedNative !== BigInt(q.wrapNativeWei ?? "0")
     )
       throw Error("Sponsored Circle origin differs from quote");
     return {
       ...base,
       status: "origin_confirmed",
       gasChargedMicroUsdc: String(charged),
+      receivedFromSwapMicroUsdc: String(received),
+      spentWethWei: String(spent),
+      wrappedNativeWei: String(wrappedNative),
       operationLogs: entryLogs.slice(start + 1, end),
     };
   }
