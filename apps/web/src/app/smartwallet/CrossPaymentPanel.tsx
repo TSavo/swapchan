@@ -29,7 +29,13 @@ import {
 } from "@/lib/atomicWallet";
 import { paymentRequest } from "@/lib/paymentRequest";
 
-type Proposal = { chainId: number; actionId: string; recipient: string; amountMicroUsdc: string };
+type Proposal = {
+  chainId: number;
+  actionId: string;
+  recipient: string;
+  amountMicroUsdc: string;
+  paymentReviewId?: string;
+};
 type Quote = Pick<Proposal, "recipient" | "amountMicroUsdc"> & {
   sender: Address;
   sourceChainId: number;
@@ -88,16 +94,34 @@ export function CrossPaymentPanel({
   const config = useConfig();
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
+  const openChatReview = useEffectEvent((list: Comparison) => acceptQuote(list));
   useEffect(() => {
+    let active = true;
     try {
       const raw = localStorage.getItem(key);
       setDestinationHash("");
       setReview(raw ? JSON.parse(raw) : null);
-      setReady(true);
+      if (raw || !proposal.paymentReviewId) setReady(true);
+      else {
+        setReady(false);
+        paymentRequest<Comparison>("review/" + encodeURIComponent(proposal.paymentReviewId))
+          .then((list) => {
+            if (active && !localStorage.getItem(key)) openChatReview(list);
+          })
+          .catch(() => {
+            if (active) setMessage("The chat quote is unavailable. Get a fresh payment quote.");
+          })
+          .finally(() => {
+            if (active) setReady(true);
+          });
+      }
     } catch {
       setMessage("Payment history is unavailable in this browser.");
     }
-  }, [key]);
+    return () => {
+      active = false;
+    };
+  }, [key, proposal.paymentReviewId]);
   function save(value: Review) {
     localStorage.setItem(key, JSON.stringify(value));
     setReview(value);
@@ -142,10 +166,14 @@ export function CrossPaymentPanel({
   }
   async function quote() {
     const list = await paymentRequest<Comparison>("quote", intent);
+    acceptQuote(list);
+  }
+  function acceptQuote(list: Comparison) {
     if (
       !list.routes.length ||
       list.routes.some(
         (q) =>
+          q.expiresAt <= Date.now() / 1000 ||
           !matches(q) ||
           BigInt(q.sourceWallet.requiredApprovalMicroUsdc) > BigInt(q.maxInputMicroUsdc),
       )

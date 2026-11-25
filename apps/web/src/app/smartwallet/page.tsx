@@ -39,6 +39,7 @@ interface VerifySummary {
 type ModelAction =
   | {
       type: "review_payment";
+      paymentReviewId?: string;
       chainId: 84532 | 10 | 11155420;
       recipient: string;
       amountMicroUsdc: string;
@@ -719,7 +720,7 @@ export default function SmartWalletPage() {
             )}
             {pending.type === "review_payment" && pending.chainId === 84532 && (
               <PaymentPanel
-                key={pending.actionId}
+                key={address + pending.actionId}
                 sender={address}
                 chainId={chainId}
                 proposal={pending}

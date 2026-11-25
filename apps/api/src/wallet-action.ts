@@ -65,16 +65,20 @@ export type ModelAction = z.infer<typeof ModelAction>;
 export const WalletRespond = z.object({
   message: z.string(),
   action: ModelAction,
+  paymentReviewId: z.uuid().optional(),
 });
 export type WalletRespond = z.infer<typeof WalletRespond>;
 
 // What actually gets stored in an `action_proposed` event: the model action + the server's actionId.
-export type ProposedAction = ModelAction & { actionId: string };
+export type ProposedAction = ModelAction & { actionId: string; paymentReviewId?: string };
 
 /** Actions that require the user to do something in their wallet (and thus a sign-gate id). */
 export function isActionable(
   a: ModelAction,
-): a is Extract<ModelAction, { type: "sign_and_send" | "sign_message" | "switch_chain" }> {
+): a is Extract<
+  ModelAction,
+  { type: "sign_and_send" | "sign_message" | "switch_chain" | "review_payment" }
+> {
   // onramp (card on-ramp) is intentionally NOT actionable yet — MoonPay signature validation is
   // unresolved on their side, so we don't surface a card checkout. Re-add "onramp" here (and in the
   // web page's isActionable) to turn it back on once MoonPay validates. The schema keeps the literal.

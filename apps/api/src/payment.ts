@@ -351,6 +351,20 @@ export function paymentRoutes(
       return c.json({ error: "delegation_check_unavailable" }, 503);
     }
   });
+  const comparisons = receipts.cache<{ expiresAt: number; data: Record<string, unknown> }>(
+    "comparison",
+    (value) => value.expiresAt,
+  );
+  app.get("/review/:id", (c) => {
+    const id = c.req.param("id");
+    if (!testnetEnabled || !z.uuid().safeParse(id).success)
+      return c.json({ error: "review_unavailable" }, 404);
+    c.header("Cache-Control", "no-store");
+    const q = issued.get(id);
+    if (q) return c.json({ ...q, quoteId: id });
+    const saved = comparisons.get(id);
+    return saved ? c.json(saved.data) : c.json({ error: "quote_expired" }, 410);
+  });
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
     if (raw?.chainId === 10 || raw?.chainId === 11155420) {
@@ -398,14 +412,20 @@ export function paymentRoutes(
         candidates.filter((c) => c.execution !== "quote_only").length > 1
           ? await testnetGasConversion().catch(() => null)
           : null;
-      return c.json({
+      const comparison = {
         ...comparePaymentCosts(
           candidates.filter((c) => c.expiresAt > Date.now() / 1000),
           rate,
         ),
         unavailableSourceChainIds,
         gasConversionSource: rate ? "Base Sepolia WETH/USDC pool reference" : null,
+      };
+      if (!comparison.routes.length) return c.json({ error: "quote_expired" }, 410);
+      const reviewId = retain(comparisons, {
+        expiresAt: Math.min(...comparison.routes.map((q) => q.expiresAt)),
+        data: comparison,
       });
+      return c.json({ ...comparison, reviewId });
     }
     if (raw?.sourceChainId !== undefined)
       return c.json({ error: "unsupported_cross_chain_payment" }, 400);

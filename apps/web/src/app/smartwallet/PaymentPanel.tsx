@@ -51,7 +51,12 @@ export function PaymentPanel({
 }: {
   sender: Address;
   chainId: number | undefined;
-  proposal?: { actionId: string; recipient: string; amountMicroUsdc: string };
+  proposal?: {
+    actionId: string;
+    recipient: string;
+    amountMicroUsdc: string;
+    paymentReviewId?: string;
+  };
   report?: (id: string, data: Record<string, unknown>) => Promise<void>;
 }) {
   const [recipient, setRecipient] = useState(proposal?.recipient ?? ""),
@@ -66,6 +71,8 @@ export function PaymentPanel({
     [receipt, setReceipt] = useState("");
   const lock = useRef(false);
   const actionId = proposal?.actionId;
+  const reviewId = proposal?.paymentReviewId;
+  const [loadingReview, setLoadingReview] = useState(Boolean(reviewId));
   const trackingKey =
     `swapchan:payment:84532:${sender.toLowerCase()}` + (actionId ? ":" + actionId : "");
   useEffect(() => {
@@ -79,6 +86,33 @@ export function PaymentPanel({
       /* Storage can be disabled in private browsing. */
     }
   }, [trackingKey]);
+  useEffect(() => {
+    if (!reviewId || !proposal) return;
+    let active = true;
+    request<Review>("review/" + encodeURIComponent(reviewId))
+      .then((review) => {
+        if (!active) return;
+        if (
+          review.quoteId !== reviewId ||
+          review.chainId !== 84532 ||
+          review.sender.toLowerCase() !== sender.toLowerCase() ||
+          review.recipient.toLowerCase() !== proposal.recipient.toLowerCase() ||
+          review.amountMicroUsdc !== proposal.amountMicroUsdc ||
+          review.expiresAt <= Date.now() / 1000
+        )
+          throw Error("Payment review changed or expired.");
+        setQ(review);
+      })
+      .catch(() => {
+        if (active) setMsg("The chat quote is unavailable. Get a fresh payment quote.");
+      })
+      .finally(() => {
+        if (active) setLoadingReview(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [reviewId, proposal, sender]);
   const config = useConfig();
   const { writeContractAsync } = useWriteContract();
   const allowance = useReadContract({
@@ -337,7 +371,11 @@ export function PaymentPanel({
             </details>
           </>
         )}
-        <button type="button" disabled={busy || !!pending} onClick={() => void act()}>
+        <button
+          type="button"
+          disabled={loadingReview || busy || !!pending}
+          onClick={() => void act()}
+        >
           {busy ? "Working…" : q ? "Review and sign in wallet" : "Get payment quote"}
         </button>
         {q && (

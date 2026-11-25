@@ -188,7 +188,13 @@ export async function runTurn(
   appendEvent(store, bus, { address, kind: "agent_message", data: { text: shownMessage } });
   if (isActionable(outAction)) {
     // The SERVER assigns the actionId — the sign-gate key. The model decides what; we own identity.
-    const proposed: ProposedAction = { ...outAction, actionId: randomUUID() };
+    const proposed: ProposedAction = {
+      ...outAction,
+      actionId: randomUUID(),
+      ...(outAction.type === "review_payment" && parsed.data.paymentReviewId
+        ? { paymentReviewId: parsed.data.paymentReviewId }
+        : {}),
+    };
     appendEvent(store, bus, { address, kind: "action_proposed", data: { action: proposed } });
   }
 }

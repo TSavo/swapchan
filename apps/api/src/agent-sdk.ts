@@ -418,7 +418,13 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
                 ],
               };
             }
-            captured = args;
+            if (args.action.type === "review_payment") {
+              const ref = z.object({ reviewId: z.uuid() }).safeParse(paymentQuote);
+              const paymentReviewId = ref.success
+                ? ref.data.reviewId
+                : paymentQuoteRow.safeParse(paymentQuote).data?.quoteId;
+              captured = { ...args, paymentReviewId };
+            } else captured = args;
             return { content: [{ type: "text", text: "delivered to the wallet" }] };
           },
         ),
