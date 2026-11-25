@@ -10,6 +10,9 @@ import {
   isVmAddress,
   NATIVE_TOKEN,
   type NonEvmTx,
+  type PaymentQuote,
+  PaymentWalletMethods,
+  paymentSignatureRequest,
   playbook,
   playbookInstructions,
   type Quote,
@@ -21,7 +24,15 @@ import {
   UTXO_CHAIN_COUNT,
   vmOf,
 } from "@swapchan/shared";
-import { createPublicClient, erc20Abi, http, isAddress, type Address as ViemAddress } from "viem";
+import {
+  createPublicClient,
+  erc20Abi,
+  http,
+  isAddress,
+  type SignedAuthorization,
+  serializeTypedData,
+  type Address as ViemAddress,
+} from "viem";
 import { z } from "zod";
 import { ApiError, type SwapChanApi } from "./api.js";
 import { imageData, mascotsFor, SITE, SWAP_CHAN, swapUrl } from "./art.js";
@@ -1095,7 +1106,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "For one Optimism payment request across holdings, provide intent.fundingAddresses in place of sender and inspect recommended and sources. For a read-only native TRX quote use sourceChainId 728126428, a Tron sender and destination chainId 10. For a read-only Bitcoin funding quote use sourceChainId 8253038, a Bitcoin sender and destination chainId 10. For read-only Solana funding quotes use sourceChainId 792703809, the Solana sender and destination chainId 10. Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. Inspect routes, fundingShortfall and recommendedQuoteId. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
+        "For one Optimism payment request across holdings, provide intent.fundingAddresses in place of sender and inspect recommended and sources. For a read-only native TRX quote use sourceChainId 728126428, a Tron sender and destination chainId 10. For a read-only Bitcoin funding quote use sourceChainId 8253038, a Bitcoin sender and destination chainId 10. For read-only Solana funding quotes use sourceChainId 792703809, the Solana sender and destination chainId 10. Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. For Optimism Sepolia, pass the caller's walletMethodsByChain with the intent to compare compatible routes. After review, pass its reviewId and destination chain to build the recommended route. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
       inputSchema: z
         .object({
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
@@ -1140,6 +1151,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             })
             .strict()
             .optional(),
+          reviewId: z
+            .uuid()
+            .optional()
+            .describe("Build the recommended route from this saved Optimism Sepolia comparison."),
+          walletMethodsByChain: PaymentWalletMethods.optional().describe(
+            "Caller-supported signing methods by origin chain for an Optimism Sepolia comparison. Omitted chains are unavailable.",
+          ),
           quoteId: z.uuid().optional(),
           stage: z
             .enum(["initial", "after_approval", "atomic_origin", "sponsored_origin"])
@@ -1159,7 +1177,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         .strict()
         .refine(
           (a) =>
-            Boolean(a.intent) !== Boolean(a.quoteId) &&
+            [a.intent, a.reviewId, a.quoteId].filter(Boolean).length === 1 &&
+            (!a.reviewId || a.chainId === 11155420) &&
+            (!a.walletMethodsByChain ||
+              (!!a.intent &&
+                a.chainId === 11155420 &&
+                !a.intent.provider &&
+                (!a.intent.sourceChainId || a.intent.sourceChainId === 84532))) &&
             (!a.intent ||
               (a.intent.fundingAddresses
                 ? a.chainId === 10 &&
@@ -1178,32 +1202,70 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       if (a.intent)
         return api.paymentQuote({
           ...a.intent,
+          ...(a.walletMethodsByChain ? { walletMethodsByChain: a.walletMethodsByChain } : {}),
           chainId: a.chainId,
           ...(a.chainId === 11155420 && a.intent.sourceChainId === 84532 && !a.intent.provider
             ? { compareProviders: true }
             : {}),
         });
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
+      let quoteId = a.quoteId;
+      let stage = a.stage;
+      if (a.reviewId) {
+        const selected = z
+          .object({
+            reviewId: z.literal(a.reviewId),
+            recommendedQuoteId: z.uuid(),
+            routes: z.array(
+              z.object({
+                quoteId: z.uuid(),
+                chainId: z.literal(11155420),
+                walletCompatible: z.boolean().optional(),
+                execution: z.string(),
+                expiresAt: z.number(),
+                recommendedStage: z
+                  .enum(["initial", "atomic_origin", "sponsored_origin"])
+                  .nullable(),
+              }),
+            ),
+          })
+          .safeParse(await api.savedPaymentQuote(a.reviewId));
+        if (!selected.success)
+          throw new UserError("No recommended route in this saved comparison.");
+        const route = selected.data.routes.find(
+          (r) => r.quoteId === selected.data.recommendedQuoteId,
+        );
+        if (
+          !route ||
+          !route.recommendedStage ||
+          route.walletCompatible === false ||
+          route.execution === "quote_only" ||
+          route.expiresAt <= Date.now() / 1000
+        )
+          throw new UserError("The recommended route is unavailable. Request a fresh comparison.");
+        quoteId = route.quoteId;
+        stage = route.recommendedStage;
+      }
       let sponsored = false;
-      if (a.chainId === 11155420 && (!a.stage || a.stage === "sponsored_origin")) {
-        const review = await api.savedPaymentQuote(a.quoteId!);
+      if (a.chainId === 11155420 && (!stage || stage === "sponsored_origin")) {
+        const review = await api.savedPaymentQuote(quoteId!);
         sponsored = z
           .object({
             chainId: z.literal(84532),
             circle: z.object({ destinationChainId: z.literal(11155420) }),
           })
           .safeParse(review).success;
-        if (!sponsored && a.stage === "sponsored_origin")
+        if (!sponsored && stage === "sponsored_origin")
           throw new UserError("Expected a sponsored Circle quote for Optimism Sepolia.");
       }
       if (a.chainId !== 84532 && !sponsored) {
         const built = await api.crossPaymentBuild({
-          quoteId: a.quoteId,
-          ...(a.stage ? { stage: a.stage } : {}),
+          quoteId: quoteId,
+          ...(stage ? { stage: stage } : {}),
         });
         const result = z
           .object({
-            quoteId: z.literal(a.quoteId!),
+            quoteId: z.literal(quoteId!),
             action: z.enum(["transfer", "approve", "deposit", "atomic_origin", "burn"]),
             expiresAt: z
               .number()
@@ -1226,25 +1288,32 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         const sourceChainId = action === "transfer" ? a.chainId : 84532;
         if (
           unsignedTransaction.chainId !== sourceChainId ||
-          (a.stage === "after_approval" && action !== "deposit" && action !== "burn") ||
-          (a.stage === "atomic_origin" && action !== "atomic_origin") ||
-          (a.stage === "initial" && action === "atomic_origin")
+          (stage === "after_approval" && action !== "deposit" && action !== "burn") ||
+          (stage === "atomic_origin" && action !== "atomic_origin") ||
+          (stage === "initial" && action === "atomic_origin")
         )
           throw new UserError("Payment build returned an unexpected chain or action.");
         const next = checkPaymentRoute(
           await api.savedPaymentQuote(result.data.quoteId),
           result.data,
         );
-        return { ...result.data, next };
+        return {
+          ...result.data,
+          walletRequest: {
+            method: "eth_sendTransaction",
+            params: [{ ...unsignedTransaction, chainId: "0x" + sourceChainId.toString(16) }],
+          },
+          next,
+        };
       }
       const args = {
-        quoteId: a.quoteId,
+        quoteId: quoteId,
         ...(a.authorization ? { authorization: a.authorization } : {}),
       };
       const built = await api.paymentBuild(args);
       if (
         (!sponsored && z.object({ circle: z.object({}) }).safeParse(built.quote).success) ||
-        built.quoteId !== a.quoteId ||
+        built.quoteId !== quoteId ||
         !built.userOperation ||
         !built.userOpHash
       )
@@ -1256,15 +1325,40 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       });
       if (
         verification.status !== "verified" ||
-        verification.quoteId !== a.quoteId ||
+        verification.quoteId !== quoteId ||
         verification.userOpHash !== built.userOpHash ||
         typeof verification.expiresAt !== "number" ||
         verification.expiresAt <= Date.now() / 1000 ||
         !verification.typedData
       )
         throw new UserError("Bundle verification failed. Request a fresh payment review.");
-      const { typedData, ...checks } = verification;
-      return { ...built, typedData, verification: checks };
+      const saved = await api.savedPaymentQuote(quoteId!);
+      if (
+        saved.quoteId !== quoteId ||
+        saved.chainId !== 84532 ||
+        Boolean(saved.circle) !== sponsored ||
+        !isAddress(String(saved.sender))
+      )
+        throw new UserError("Saved signing intent differs from the payment.");
+      const local = paymentSignatureRequest(
+        saved as unknown as PaymentQuote,
+        built.userOperation,
+        String(built.userOpHash),
+        a.authorization as SignedAuthorization | undefined,
+      );
+      const payload = serializeTypedData(local);
+      const { typedData: verifiedTypedData, ...checks } = verification;
+      return {
+        ...built,
+        typedData: JSON.parse(payload),
+        verification: checks,
+        walletRequest: { method: "eth_signTypedData_v4", params: [saved.sender, payload] },
+        next: {
+          tool: "submit_payment",
+          arguments: { quoteId, userOpHash: built.userOpHash },
+          addWalletResultAt: "signature",
+        },
+      };
     }),
   );
   server.registerTool(

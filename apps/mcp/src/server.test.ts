@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SwapChanApi } from "./api.js";
 import { RateLimiter } from "./auth.js";
 import { loadConfig } from "./config.js";
+import circleBuild from "./fixtures/sponsored-circle-build.json" with { type: "json" };
 import { createHttpServer } from "./http.js";
 import { startMockApi, USDC } from "./mockApi.js";
 
@@ -88,11 +89,14 @@ describe("swapchan mcp over streamable http", () => {
   });
   it("returns signing data only from a fresh verification of the exact payment build", async () => {
     const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
-    const userOpHash = "0x" + "11".repeat(32);
-    const userOperation = { nonce: "0x1" };
+    const { userOpHash, userOperation } = circleBuild;
+    const quote = { ...circleBuild.quote, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+    const saved = vi
+      .spyOn(SwapChanApi.prototype, "savedPaymentQuote")
+      .mockResolvedValue({ ...quote, quoteId });
     const build = vi
       .spyOn(SwapChanApi.prototype, "paymentBuild")
-      .mockResolvedValue({ quoteId, userOperation, userOpHash, typedData: { source: "build" } });
+      .mockResolvedValue({ quoteId, userOperation, userOpHash, quote });
     const verified = {
       status: "verified",
       quoteId,
@@ -102,10 +106,15 @@ describe("swapchan mcp over streamable http", () => {
     };
     const verify = vi.spyOn(SwapChanApi.prototype, "verifyBundle").mockResolvedValue(verified);
     const c = await connect();
-    const pay = () => c.callTool({ name: "pay", arguments: { chainId: 84532, quoteId } });
+    const pay = () =>
+      c.callTool({
+        name: "pay",
+        arguments: { chainId: 11155420, quoteId, stage: "sponsored_origin" },
+      });
     try {
       expect(data(await pay())).toMatchObject({
-        typedData: verified.typedData,
+        walletRequest: { method: "eth_signTypedData_v4" },
+        typedData: { primaryType: "PackedUserOperation" },
         verification: { status: "verified", userOpHash },
       });
       expect(verify).toHaveBeenCalledWith({ quoteId, userOpHash, userOperation });
@@ -121,6 +130,7 @@ describe("swapchan mcp over streamable http", () => {
         expect(text(refused)).not.toContain("typedData");
       }
     } finally {
+      saved.mockRestore();
       build.mockRestore();
       verify.mockRestore();
       await c.close();
@@ -174,6 +184,7 @@ describe("swapchan mcp over streamable http", () => {
     try {
       expect(data(await pay())).toEqual({
         ...deposit,
+        walletRequest: { method: "eth_sendTransaction", params: [{ ...tx, chainId: "0x14a34" }] },
         next: {
           tool: "pay",
           after: "successful_approval_receipt",

@@ -7,6 +7,7 @@ import {
   circleMessenger,
   EvmAddress,
   type PaymentQuote,
+  PaymentWalletMethods,
   paymentBatch,
   paymentContracts,
   paymentGasLimits,
@@ -720,7 +721,14 @@ export function paymentRoutes(
       }
     }
     if (raw?.chainId === 10 || raw?.chainId === 11155420) {
-      const { sourceChainId, compareProviders, ...rest } = raw;
+      const { sourceChainId, compareProviders, walletMethodsByChain, ...rest } = raw;
+      const capabilities = PaymentWalletMethods.optional().safeParse(walletMethodsByChain);
+      if (
+        !capabilities.success ||
+        (walletMethodsByChain &&
+          (raw.chainId !== 11155420 || (sourceChainId !== undefined && !compareProviders)))
+      )
+        return c.json({ error: "invalid_wallet_methods_for_comparison" }, 400);
       if (
         compareProviders !== undefined &&
         !(compareProviders === true && raw.chainId === 11155420 && sourceChainId === 84532)
@@ -802,7 +810,26 @@ export function paymentRoutes(
         : null;
       const comparison = {
         ...comparePaymentCosts(
-          candidates.filter((c) => c.expiresAt > Date.now() / 1000),
+          candidates
+            .filter((c) => c.expiresAt > Date.now() / 1000)
+            .map((c) => {
+              const requiredWalletMethod =
+                c.execution === "sponsored_circle"
+                  ? ("eth_signTypedData_v4" as const)
+                  : ("eth_sendTransaction" as const);
+              const methods = capabilities.data;
+              const walletCompatible =
+                !methods ||
+                !!methods[String(c.sourceChainId) as keyof typeof methods]?.includes(
+                  requiredWalletMethod,
+                );
+              return {
+                ...c,
+                requiredWalletMethod,
+                walletCompatible,
+                execution: walletCompatible ? c.execution : "quote_only",
+              };
+            }),
           rate,
         ),
         unavailableSourceChainIds,

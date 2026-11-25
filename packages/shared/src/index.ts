@@ -372,3 +372,11 @@ export * from "./cow.js";
 export * from "./payment-batch.js";
 export * from "./payment-signing.js";
 export * from "./playbook.js";
+
+// Methods the calling wallet can actually use on each supported origin chain.
+export const PaymentWalletMethods = z
+  .object({
+    "84532": z.array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4"])).optional(),
+    "11155420": z.array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4"])).optional(),
+  })
+  .strict();
