@@ -17,6 +17,9 @@ const receipt = z.object({
   transactionHash: hash,
   blockHash: hash,
   blockNumber: height,
+  transactionIndex: height.optional(),
+  from: EvmAddress.optional(),
+  to: EvmAddress.nullish(),
   status: z.literal("0x1"),
   gasUsed: height.optional(),
   effectiveGasPrice: height.optional(),
@@ -25,6 +28,7 @@ const receipt = z.object({
 });
 export const settlementInput = crossPaymentInput.safeExtend({
   originHash: hash,
+  approvalHash: hash.optional(),
   fillHash: hash.optional(),
   maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
 });
@@ -87,7 +91,49 @@ export async function crossSettlement(
   )
     throw Error("Origin deposit differs from payment intent");
   const fees = receiptFees(origin.r);
+  const depositReceipt = origin.r;
+  // An optional approval reference can be stale after a requote. Attribute its fees
+  // only when the mined approval matches this deposit, independently of fill status.
+  async function readApproval(tx: Hex) {
+    if (tx === intent.originHash) return null;
+    const approval = await canonical(route.origin, tx);
+    if (
+      !approval ||
+      approval.r.from?.toLowerCase() !== intent.sender.toLowerCase() ||
+      approval.r.to?.toLowerCase() !== route.sourceToken.toLowerCase()
+    )
+      return null;
+    const earlier =
+      BigInt(approval.r.blockNumber) < BigInt(depositReceipt.blockNumber) ||
+      (approval.r.blockHash === depositReceipt.blockHash &&
+        approval.r.transactionIndex !== undefined &&
+        depositReceipt.transactionIndex !== undefined &&
+        BigInt(approval.r.transactionIndex) < BigInt(depositReceipt.transactionIndex));
+    if (!earlier) return null;
+    const events = logs(approval.r, route.sourceToken)
+      .filter((l) => l.topics[0] === toEventSelector("Approval(address,address,uint256)"))
+      .map((l) => decodeEventLog({ abi: erc20Abi, eventName: "Approval", ...l }).args);
+    const event = events[0];
+    if (
+      events.length !== 1 ||
+      !event ||
+      event.owner.toLowerCase() !== intent.sender.toLowerCase() ||
+      event.spender.toLowerCase() !== route.pool.toLowerCase() ||
+      event.value !== d.inputAmount
+    )
+      return null;
+    return {
+      transactionHash: tx,
+      approvedMicroUsdc: String(event.value),
+      finalized: approval.final,
+      fees: receiptFees(approval.r),
+    };
+  }
+  const approval = intent.approvalHash
+    ? await readApproval(intent.approvalHash).catch(() => null)
+    : undefined;
   const progress = {
+    ...(intent.approvalHash ? { approval } : {}),
     originHash: intent.originHash,
     depositId: String(d.depositId),
     fillDeadline: d.fillDeadline,

@@ -417,11 +417,16 @@ export function CrossPaymentPanel({
       destinationFinalized?: boolean;
       depositExecutionFeeWei?: string;
       depositL1DataFeeWei?: string;
+      approval?: {
+        transactionHash: Hex;
+        fees: { executionWei?: string; l1DataWei?: string };
+      } | null;
       fillDeadline?: number;
     }>("cross-chain/status", {
       ...intent,
       sourceChainId: route.origin,
       originHash: hash,
+      approvalHash: review.approvalHash,
       fillHash: candidateFillHash ?? step.fillHash,
       maxInputMicroUsdc: q.maxInputMicroUsdc,
     });
@@ -437,7 +442,10 @@ export function CrossPaymentPanel({
         chainId: route.destination,
         hash: result.fillHash,
         originHash: hash,
-        approvalHash: review.approvalHash,
+        approvalHash: result.approval?.transactionHash,
+        approvalFees: result.approval?.fees,
+        depositExecutionFeeWei: result.depositExecutionFeeWei,
+        depositL1DataFeeWei: result.depositL1DataFeeWei,
         spentMicroUsdc: result.spentMicroUsdc,
         paidMicroUsdc: result.paidMicroUsdc,
       });
@@ -465,6 +473,15 @@ export function CrossPaymentPanel({
         deadline +
         (result.refundHash ? " Reported refund transaction " + result.refundHash + "." : "") +
         (result.spentMicroUsdc ? " Source deposit " + usdc(result.spentMicroUsdc) + " USDC." : "") +
+        (result.approval === null ? " Separate approval receipt could not be matched." : "") +
+        (result.approval?.fees.executionWei
+          ? " Approval execution fee " +
+            formatEther(BigInt(result.approval.fees.executionWei)) +
+            " ETH."
+          : "") +
+        (result.approval?.fees.l1DataWei
+          ? " Approval L1 data fee " + formatEther(BigInt(result.approval.fees.l1DataWei)) + " ETH."
+          : "") +
         (result.depositExecutionFeeWei
           ? " Deposit execution fee " + formatEther(BigInt(result.depositExecutionFeeWei)) + " ETH."
           : "") +

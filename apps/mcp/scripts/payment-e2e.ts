@@ -110,6 +110,13 @@ try {
       depositId: z.literal("1003766"),
       originFinalized: z.literal(true),
       spentMicroUsdc: z.literal("185"),
+      approval: z.object({
+        approvedMicroUsdc: z.literal("185"),
+        finalized: z.literal(true),
+        fees: z.object({ executionWei: z.literal("332478000000"), l1DataWei: z.literal("92") }),
+      }),
+      depositExecutionFeeWei: z.literal("438582000000"),
+      depositL1DataFeeWei: z.literal("182"),
       status: z.enum([
         "awaiting_fill_index",
         "awaiting_verified_fill",
@@ -133,6 +140,7 @@ try {
           chainId: 11155420,
           amountMicroUsdc: "1",
           maxInputMicroUsdc: "185",
+          approvalHash: "0x86ea178d4c9affd976cf85f96897aefdf096c1ae9f6ae26dba05bed7420f10f5",
           originHash: "0x00b6d876a2049bac05056b234ce98c0b389b7fef5efdd51a11b039b6a44d3769",
         },
       }),
