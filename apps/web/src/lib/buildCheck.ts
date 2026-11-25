@@ -28,6 +28,12 @@ export function checkBuilt(built: BuildResponse, quote: Quote, taker: string): s
   const payout = r.recipient ?? taker;
   const crossChain = r.fromChainId !== r.toChainId;
   if (built.verified !== true) out.push("API did not verify this payload");
+  if (
+    built.fallbackFrom ||
+    (built.quoteId && built.quoteId !== quote.id) ||
+    (built.provider && built.provider !== quote.provider)
+  )
+    out.push("route changed after review");
   if (!built.payoutTo || !same(built.payoutTo, payout))
     out.push(`payout goes to ${built.payoutTo ?? "unknown"}, expected ${payout}`);
 

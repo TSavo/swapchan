@@ -633,7 +633,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           .string()
           .optional()
           .describe(
-            "Reuse a quoteId from get_quote/compare_routes (still re-quotes if it expired)",
+            "Build the selected quote from get_quote/compare_routes. If it expired, review a new quote.",
           ),
         allowForeignRecipient: z
           .boolean()
@@ -654,13 +654,20 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         },
       ) => {
         // Indicative quotes (no taker) are cheaper on provider rate limits; /build re-quotes with the taker.
-        const res = await api.quotes(await toRequest(api, a));
-        const pick =
-          (a.quoteId && res.quotes.find((q) => q.id === a.quoteId)) ||
-          (a.provider
+        const request = await toRequest(api, a, a.quoteId ? a.taker : undefined);
+        const res = await api.quotes({ ...request, ...(a.quoteId ? { quoteId: a.quoteId } : {}) });
+        const pick = a.quoteId
+          ? res.quotes.find((q) => q.id === a.quoteId)
+          : a.provider
             ? res.quotes.find((q) => q.provider.toLowerCase() === a.provider?.toLowerCase())
-            : undefined) ||
-          (a.provider ? undefined : (res.quotes.find((q) => q.id === res.best) ?? res.quotes[0]));
+            : (res.quotes.find((q) => q.id === res.best) ?? res.quotes[0]);
+        if (
+          a.quoteId &&
+          (!pick || (a.provider && pick.provider.toLowerCase() !== a.provider.toLowerCase()))
+        )
+          throw new UserError(
+            "The selected quote is unavailable or belongs to another provider. Review a new quote.",
+          );
         if (!pick)
           throw new UserError(
             a.provider
@@ -676,13 +683,20 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             "cross-VM route: pass recipient (the receiving address on the destination chain)",
           );
         const built = await api.build(pick.id, a.taker, a.recipient, a.allowForeignRecipient);
+        if (
+          built.fallbackFrom ||
+          (built.quoteId && built.quoteId !== pick.id) ||
+          (built.provider && built.provider !== pick.provider)
+        )
+          throw new UserError(
+            "The built route differs from the selected quote. Review a new quote.",
+          );
         // Server-side payload guard (router allowlist, recipient, minOut, approvals). Fail closed.
-        if (built.verified === false)
+        if (built.verified !== true)
           throw new UserError("API payload failed SwapChan verification; refusing to return it");
         const guard = {
           verified: built.verified ?? null,
           verification: built.verification ?? null,
-          ...(built.fallbackFrom ? { fallbackFrom: built.fallbackFrom } : {}),
           ...(built.payoutTo ? { payoutTo: built.payoutTo } : {}),
           ...(built.recipientIsTaker === false
             ? {

@@ -264,7 +264,31 @@ export function createApp(
     }
     return res;
   };
-  app.get("/quotes", async (c) => c.json(await quotes(c.req.query())));
+  const quoteExpired = (q: Quote) =>
+    (q.expiresAt < 1e12 ? q.expiresAt * 1000 : q.expiresAt) <= Date.now();
+  app.get("/quotes", async (c) => {
+    const { quoteId, ...query } = c.req.query();
+    if (quoteId === undefined) return c.json(await quotes(query));
+    const q = cache.get(quoteId);
+    if (!q || quoteExpired(q))
+      return c.json({ error: "Quote expired or unavailable. Review a new quote." }, 410);
+    const requested = gateUtxoRoute(QuoteRequest.parse(query));
+    const matchesAddress = (chain: number, a?: string, b?: string) =>
+      isEvmChain(chain) ? a?.toLowerCase() === b?.toLowerCase() : a === b;
+    const reviewed = q.request;
+    if (
+      reviewed.fromChainId !== requested.fromChainId ||
+      reviewed.toChainId !== requested.toChainId ||
+      reviewed.amount !== requested.amount ||
+      reviewed.slippageBps !== requested.slippageBps ||
+      !matchesAddress(reviewed.fromChainId, reviewed.fromToken, requested.fromToken) ||
+      !matchesAddress(reviewed.toChainId, reviewed.toToken, requested.toToken) ||
+      !matchesAddress(reviewed.toChainId, reviewed.recipient, requested.recipient) ||
+      (reviewed.taker && !matchesAddress(reviewed.fromChainId, reviewed.taker, requested.taker))
+    )
+      return c.json({ error: "Request differs from the reviewed quote. Review a new quote." }, 409);
+    return c.json({ quotes: [q], best: q.id, errors: [] });
+  });
   app.get("/quote", async (c) => {
     const res = await quotes(c.req.query());
     const best = res.quotes[0];
@@ -327,6 +351,7 @@ export function createApp(
     const body = z
       .object({
         quoteId: z.string(),
+        strictRoute: z.boolean().optional(),
         taker: Address,
         recipient: Address.optional(),
         allowForeignRecipient: z.boolean().optional(),
@@ -336,6 +361,8 @@ export function createApp(
     const q = cache.get(quoteId);
     const p = q && providers.find((x) => x.name === q.provider);
     if (!q || !p) return c.json({ error: "unknown or expired quote" }, 404);
+    if (body.strictRoute && quoteExpired(q))
+      return c.json({ error: "Quote expired. Review a new quote." }, 410);
     const pin = payoutFor(q.request, taker, body.recipient, body.allowForeignRecipient === true);
     if ("error" in pin) return c.json({ error: pin.error, verified: false }, 400);
     let recipient = pin.recipient;
@@ -354,7 +381,7 @@ export function createApp(
     // best route from the same /quotes call. Nothing unverified is ever returned.
     const order = [
       q,
-      ...(siblings.get(quoteId) ?? [])
+      ...(body.strictRoute ? [] : (siblings.get(quoteId) ?? []))
         .map((id) => cache.get(id)!)
         .filter((x) => x && x.id !== q.id),
     ];
@@ -390,6 +417,8 @@ export function createApp(
       }
       if (simulator && out.execution === "tx" && isEvmChain(out.chainId))
         out = { ...out, simulation: await simulator(out, taker) };
+      if (body.strictRoute && quoteExpired(q))
+        return c.json({ error: "Quote expired during the build. Review a new quote." }, 410);
       return c.json(
         BuildResponse.parse({
           ...out,

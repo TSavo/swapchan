@@ -68,6 +68,33 @@ describe("api", () => {
     );
     expect(res.status).toBe(400);
   });
+  it("only reopens the selected unexpired quote for its reviewed request", async () => {
+    const chosen = { ...mk("chosen", "10", 1), expiresAt: Date.now() + 60_000 };
+    const app = createApp([fake(chosen), fake(mk("expired", "20", 2))], { pricer: null });
+    const query = new URLSearchParams({
+      fromChainId: "1",
+      toChainId: "1",
+      fromToken: USDC,
+      toToken: LINK,
+      amount: req.amount,
+    });
+    await app.request(`/quotes?${query}`);
+    query.set("quoteId", chosen.id);
+    expect(await (await app.request(`/quotes?${query}`)).json()).toMatchObject({
+      best: chosen.id,
+      quotes: [{ id: chosen.id }],
+    });
+    query.set("amount", "1");
+    expect((await app.request(`/quotes?${query}`)).status).toBe(409);
+    query.set("quoteId", "expired:1");
+    expect((await app.request(`/quotes?${query}`)).status).toBe(410);
+    const build = await app.request("/build", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ quoteId: "expired:1", taker: LINK, strictRoute: true }),
+    });
+    expect(build.status).toBe(410);
+  });
   it("normalizes a LI.FI response", async () => {
     const f = (async () =>
       Response.json({

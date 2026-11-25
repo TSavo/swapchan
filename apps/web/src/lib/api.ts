@@ -84,6 +84,7 @@ export const api = {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             quoteId: quote.id,
+            strictRoute: true,
             taker,
             ...(quote.request.recipient ? { recipient: quote.request.recipient } : {}),
           }),

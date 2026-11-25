@@ -108,7 +108,9 @@ export class SwapChanApi {
       throw e;
     }
   }
-  quotes(r: QuoteRequest & { partner?: string | undefined }): Promise<QuotesResponse> {
+  quotes(
+    r: QuoteRequest & { partner?: string | undefined; quoteId?: string },
+  ): Promise<QuotesResponse> {
     return this.req(QuotesResponse, `/quotes?${qs(r)}`);
   }
   build(
@@ -121,6 +123,7 @@ export class SwapChanApi {
       method: "POST",
       body: JSON.stringify({
         quoteId,
+        strictRoute: true,
         taker,
         ...(recipient ? { recipient } : {}),
         ...(allowForeignRecipient ? { allowForeignRecipient: true } : {}),

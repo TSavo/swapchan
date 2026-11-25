@@ -17,6 +17,8 @@ Base URL: `NEXT_PUBLIC_API_URL` (default `http://localhost:8787`). Errors: `{ "e
 | GET    | `/status`          | `StatusRequest`                            | `StatusResponse`                                                                                                                           |
 
 `taker` is required in `/quotes` if you want `quote.tx` populated; otherwise call `/build`.
+
+To reopen a reviewed route, include its `quoteId` and original swap parameters in `GET /quotes`. A changed request returns HTTP 409. An expired or missing quote returns HTTP 410. The web wallet and MCP swap builder pass `strictRoute: true` to `POST /build` so a failed verification or an expired quote requires a fresh review before signing.
 Ranking: `netUsd = toAmountUsd - gasUsd - feeUsd`; quotes with `netUsd=null` rank after priced ones by raw `toAmount` (only comparable within the same toToken).
 
 ## Additive v1 changes
