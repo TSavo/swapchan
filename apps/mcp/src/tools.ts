@@ -956,8 +956,8 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote Base Sepolia payment gas in USDC",
       description:
-        "Return live maximum USDC gas charges for a delegated direct USDC payment and for a WETH swap or first-time setup. Amounts are integer micro-USDC. The payment quote selects the applicable cap after inspecting the wallet.",
-      inputSchema: z.object({ chainId: z.literal(84532) }),
+        "Supply the sponsored payment quoteId to retrieve its reviewed USDC gas cap, paymaster, gas limits and expiry. Omit quoteId for live caps for delegated USDC, swap or setup, and Circle forwarding. Amounts are integer micro-USDC.",
+      inputSchema: z.object({ chainId: z.literal(84532), quoteId: z.uuid().optional() }),
       annotations: ro,
     },
     safe(async (a) => api.paymentGasQuote(a)),

@@ -143,6 +143,10 @@ export function paymentRoutes(
       (gas * BigInt(fees.maxFeePerGas) * BigInt(quote.exchangeRate) * 12n + 10n ** 19n - 1n) /
         10n ** 19n +
       100n;
+    const capFor = (direct: boolean, circle = false) =>
+      gasCap(
+        Object.values(paymentGasLimits(direct, circle)).reduce((total, limit) => total + limit, 0n),
+      ).toString();
     return {
       chainId: 84532,
       token: usdc,
@@ -151,11 +155,9 @@ export function paymentRoutes(
       paymaster,
       expiresAt: Math.floor(Date.now() / 1000) + 60,
       maxGasMicroUsdc: {
-        circle: gasCap(
-          Object.values(paymentGasLimits(false, true)).reduce((sum, n) => sum + n, 0n),
-        ).toString(),
+        circle: capFor(false, true),
         delegatedUsdc: gasCap(425000n).toString(),
-        swapOrSetup: gasCap(955000n).toString(),
+        swapOrSetup: capFor(false),
       },
       ...fees,
     };
@@ -488,10 +490,33 @@ export function paymentRoutes(
   });
   app.post("/gas-quote", async (c) => {
     const body = z
-      .object({ chainId: z.literal(84532) })
+      .object({ chainId: z.literal(84532), quoteId: z.uuid().optional() })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: "invalid_gas_quote_request" }, 400);
+    if (body.data.quoteId) {
+      const payment = issued.get(body.data.quoteId);
+      if (!payment) return c.json({ error: "sponsored_quote_missing_or_expired" }, 410);
+      const direct = !payment.circle && !payment.requiresDelegation && payment.maxWethWei === "0";
+      const limits = paymentGasLimits(direct, Boolean(payment.circle));
+      return c.json({
+        chainId: payment.chainId,
+        destinationChainId: payment.circle?.destinationChainId ?? payment.chainId,
+        quoteId: body.data.quoteId,
+        expiresAt: payment.expiresAt,
+        paymaster,
+        token: usdc,
+        symbol: "USDC",
+        decimals: 6,
+        mode: payment.circle ? "circle" : direct ? "delegatedUsdc" : "swapOrSetup",
+        maxGasMicroUsdc: payment.maxGasMicroUsdc,
+        maxFeePerGas: payment.maxFeePerGas,
+        maxPriorityFeePerGas: payment.maxPriorityFeePerGas,
+        gasLimits: Object.fromEntries(
+          Object.entries(limits).map(([field, value]) => [field, String(value)]),
+        ),
+      });
+    }
     try {
       return c.json(await quoteGasInUsdc());
     } catch {

@@ -165,7 +165,16 @@ describe("payment build and relay", () => {
         BigInt(gas.maxGasMicroUsdc.swapOrSetup),
       );
       expect(gas).toMatchObject({ token: c.usdc, paymaster: c.paymaster, decimals: 6 });
-      expect((await h.quote()).maxGasMicroUsdc).toBe(gas.maxGasMicroUsdc[mode]);
+      const quote = await h.quote();
+      expect(quote.maxGasMicroUsdc).toBe(gas.maxGasMicroUsdc[mode]);
+      expect(
+        await (await h.post("/gas-quote", { chainId: 84532, quoteId: quote.quoteId })).json(),
+      ).toMatchObject({
+        mode,
+        maxGasMicroUsdc: quote.maxGasMicroUsdc,
+        expiresAt: quote.expiresAt,
+        paymaster: c.paymaster,
+      });
     }
   });
   it("withholds the signing request when the approved address has different runtime code", async () => {
