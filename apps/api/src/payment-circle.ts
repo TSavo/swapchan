@@ -1,4 +1,8 @@
-import { acrossTestRoute } from "@swapchan/shared";
+import {
+  acrossTestRoute,
+  circleBurnAbi as burn,
+  circleMessenger as messenger,
+} from "@swapchan/shared";
 import {
   type Address,
   encodeFunctionData,
@@ -6,21 +10,13 @@ import {
   type Hex,
   keccak256,
   pad,
-  parseAbi,
   zeroHash,
 } from "viem";
 import { z } from "zod";
 import { estimateOriginFees } from "./payment-origin-fees.js";
 import { getJson } from "./providers/types.js";
 
-const messenger = "0x8745D906D67C346E5eb1aEEED38Eb87F34DF0C0A";
 const usdc = acrossTestRoute.sourceToken;
-const burn = parseAbi([
-  "function depositForBurnWithFees(uint256 amount,uint32 destinationDomain,bytes32 mintRecipient,address burnToken,bytes32 destinationCaller,(bytes signedQuote,address refundAddress) claim) payable",
-]);
-
-export { burn as circleBurnAbi, messenger as circleMessenger };
-
 const uint = z.string().regex(/^\d+$/);
 const hex = z.string().regex(/^0x[0-9a-f]+$/i);
 const quoteSchema = z.object({

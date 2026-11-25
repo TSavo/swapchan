@@ -1,19 +1,14 @@
-import { acrossTestRoute, EvmAddress } from "@swapchan/shared";
+import { acrossTestRoute, checkCircleBurn, circleMessenger, EvmAddress } from "@swapchan/shared";
 import {
   decodeEventLog,
-  decodeFunctionData,
   encodeFunctionData,
   erc20Abi,
   type Hex,
-  keccak256,
-  pad,
   parseAbi,
   slice,
   toEventSelector,
-  zeroHash,
 } from "viem";
 import { z } from "zod";
-import { circleBurnAbi, circleMessenger } from "./payment-circle.js";
 import { receiptFees } from "./payment-origin-fees.js";
 
 const hash = z
@@ -131,22 +126,10 @@ export async function circleStatus(
     tx.blockHash !== origin.r.blockHash ||
     origin.r.from.toLowerCase() !== i.sender.toLowerCase() ||
     origin.r.to.toLowerCase() !== circleMessenger.toLowerCase() ||
-    BigInt(tx.value) !== 0n ||
-    keccak256(tx.input) !== i.burnDataHash
+    BigInt(tx.value) !== 0n
   )
     throw Error("Unexpected Circle burn");
-  const {
-    args: [paid, domain, to, token, caller, claim],
-  } = decodeFunctionData({ abi: circleBurnAbi, data: tx.input });
-  if (
-    paid !== BigInt(i.amountMicroUsdc) ||
-    domain !== 2 ||
-    to !== pad(i.recipient).toLowerCase() ||
-    token.toLowerCase() !== acrossTestRoute.sourceToken.toLowerCase() ||
-    caller !== zeroHash ||
-    claim.refundAddress.toLowerCase() !== i.sender.toLowerCase()
-  )
-    throw Error("Burn differs from intent");
+  const paid = checkCircleBurn(tx.input, i);
   const base = {
     originHash: i.originHash,
     originFinalized: origin.finalized,

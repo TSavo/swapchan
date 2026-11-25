@@ -3,9 +3,11 @@ import {
   checkAcrossApproval,
   checkAcrossAtomicOrigin,
   checkAcrossDeposit,
+  checkCircleBurn,
+  circleMessenger,
   EvmAddress,
 } from "@swapchan/shared";
-import { encodeFunctionData, erc20Abi, type Hex, keccak256 } from "viem";
+import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { z } from "zod";
 
 const units = z.string().regex(/^\d+$/);
@@ -81,12 +83,9 @@ export function checkPaymentRoute(
   if (q.sourceChainId !== acrossTestRoute.origin) throw Error("Unexpected bridge route.");
   const cap = q.sourceWallet.requiredApprovalMicroUsdc;
   if (q.provider === "circle_cctp") {
-    const messenger = "0x8745D906D67C346E5eb1aEEED38Eb87F34DF0C0A";
-    if (
-      build.action === "burn" &&
-      tx.to.toLowerCase() === messenger.toLowerCase() &&
-      keccak256(tx.data) === q.burnDataHash
-    )
+    const messenger = circleMessenger;
+    if (build.action === "burn" && tx.to.toLowerCase() === messenger.toLowerCase()) {
+      checkCircleBurn(tx.data, { ...q, burnDataHash: q.burnDataHash });
       return {
         after: "successful_burn_receipt",
         tool: "payment_status",
@@ -101,6 +100,7 @@ export function checkPaymentRoute(
         },
         addTransactionHashAt: "circle.originHash",
       };
+    }
     const approvalData = encodeFunctionData({
       abi: erc20Abi,
       functionName: "approve",

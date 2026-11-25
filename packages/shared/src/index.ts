@@ -346,6 +346,7 @@ export const fromBaseUnits = (amount: bigint | string, decimals: number): string
 export * from "./across-payment.js";
 export * from "./broadcast.js";
 export * from "./chains.js";
+export * from "./circle-payment.js";
 export * from "./cow.js";
 export * from "./payment-batch.js";
 export * from "./payment-signing.js";
