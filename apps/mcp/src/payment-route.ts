@@ -53,6 +53,8 @@ export function checkPaymentRoute(
     (q.execution === "unsigned_atomic_origin" && build.action !== "atomic_origin")
   )
     throw Error("Payment build exceeds or differs from the saved quote.");
+  const { chainId, sender, recipient, amountMicroUsdc } = q;
+  const payment = { chainId, sender, recipient, amountMicroUsdc };
   if (build.action === "transfer") {
     const data = encodeFunctionData({
       abi: erc20Abi,
@@ -66,12 +68,36 @@ export function checkPaymentRoute(
       tx.data.toLowerCase() !== data.toLowerCase()
     )
       throw Error("USDC transfer differs from the saved payment.");
-    return;
+    return {
+      tool: "payment_status",
+      arguments: { direct: payment },
+      addTransactionHashAt: "direct.transactionHash",
+    };
   }
   if (q.provider !== "across" || q.sourceChainId !== acrossTestRoute.origin || !q.fillDeadline)
     throw Error("Unexpected bridge route.");
   const cap = q.sourceWallet.requiredApprovalMicroUsdc;
-  if (build.action === "approve") checkAcrossApproval(tx, cap, q.chainId);
-  else if (build.action === "atomic_origin") checkAcrossAtomicOrigin(tx, q, cap);
+  if (build.action === "approve") {
+    checkAcrossApproval(tx, cap, q.chainId);
+    return {
+      tool: "pay",
+      after: "successful_approval_receipt",
+      arguments: { chainId, quoteId: q.quoteId, stage: "after_approval" },
+    };
+  }
+  let reviewedDepositData = tx.data;
+  if (build.action === "atomic_origin") reviewedDepositData = checkAcrossAtomicOrigin(tx, q, cap);
   else checkAcrossDeposit(tx, q);
+  return {
+    tool: "payment_status",
+    arguments: {
+      crossChain: {
+        ...payment,
+        sourceChainId: q.sourceChainId,
+        maxInputMicroUsdc: q.maxInputMicroUsdc,
+        reviewedDepositData,
+      },
+    },
+    addTransactionHashAt: "crossChain.originHash",
+  };
 }

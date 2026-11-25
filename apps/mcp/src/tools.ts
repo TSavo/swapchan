@@ -1124,8 +1124,11 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           (a.stage === "initial" && action === "atomic_origin")
         )
           throw new UserError("Payment build returned an unexpected chain or action.");
-        checkPaymentRoute(await api.savedPaymentQuote(result.data.quoteId), result.data);
-        return result.data;
+        const next = checkPaymentRoute(
+          await api.savedPaymentQuote(result.data.quoteId),
+          result.data,
+        );
+        return { ...result.data, next };
       }
       const args = {
         quoteId: a.quoteId,

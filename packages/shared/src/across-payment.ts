@@ -137,4 +137,5 @@ export function checkAcrossAtomicOrigin(
     String(amountIn),
     intent.chainId,
   );
+  return deposit.data;
 }

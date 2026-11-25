@@ -172,7 +172,14 @@ describe("swapchan mcp over streamable http", () => {
         arguments: { chainId: 11155420, quoteId, stage: "initial" },
       });
     try {
-      expect(data(await pay())).toEqual(deposit);
+      expect(data(await pay())).toEqual({
+        ...deposit,
+        next: {
+          tool: "pay",
+          after: "successful_approval_receipt",
+          arguments: { chainId: 11155420, quoteId, stage: "after_approval" },
+        },
+      });
       for (const change of [
         { action: "atomic_origin" },
         { estimatedOriginFeeWei: "126" },
