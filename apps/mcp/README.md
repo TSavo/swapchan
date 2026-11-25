@@ -94,7 +94,7 @@ For a Base Sepolia payment, call `pay` with the intent, review the returned limi
 
 ## Exact USDC payments
 
-For an exact Optimism Sepolia payment (`chainId: 11155420`), omit `intent.sourceChainId` in `pay` to compare available funding routes. The default comparison prices a local USDC transfer, an Across deposit, and a Circle burn with destination forwarding. Set the source to `84532` for Across, or supply both `sourceChainId: 84532` and `provider: "circle_cctp"` for Circle. Set the source to `11155420` for a local transfer. An explicit source restricts the quote to that chain. A bridge result with `depositLimitIssue: "below_minimum"` is ineligible for execution.
+For an exact Optimism Sepolia payment (`chainId: 11155420`), omit `intent.sourceChainId` in `pay` to compare available funding routes. The default comparison prices a local USDC transfer, an Across deposit, and a Circle burn with destination forwarding. Set the source to `84532` to compare Across and Circle using Base Sepolia funds, or supply both `sourceChainId: 84532` and `provider: "circle_cctp"` for Circle. Set the source to `11155420` for a local transfer. An explicit source restricts the quote to that chain. A bridge result with `depositLimitIssue: "below_minimum"` is ineligible for execution.
 
 With Circle, the quoted USDC spend includes the exact payout and the forwarding fee. Origin gas is priced in Base Sepolia ETH. Build the selected quote with `pay`. If the build returns an approval, wait for its successful receipt before requesting the burn. After broadcasting the burn, add its hash to the returned `payment_status.circle` arguments. A settled response verifies the original burn and the recipient’s exact USDC gain on Optimism Sepolia after both blocks finalize.
 

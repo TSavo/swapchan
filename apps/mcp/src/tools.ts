@@ -1099,6 +1099,9 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         return api.paymentQuote({
           ...a.intent,
           chainId: a.chainId,
+          ...(a.chainId === 11155420 && a.intent.sourceChainId === 84532 && !a.intent.provider
+            ? { compareProviders: true }
+            : {}),
         });
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
       if (a.chainId !== 84532) {

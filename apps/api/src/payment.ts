@@ -481,12 +481,17 @@ export function paymentRoutes(
       }
     }
     if (raw?.chainId === 10 || raw?.chainId === 11155420) {
-      const { sourceChainId, ...rest } = raw;
+      const { sourceChainId, compareProviders, ...rest } = raw;
+      if (
+        compareProviders !== undefined &&
+        !(compareProviders === true && raw.chainId === 11155420 && sourceChainId === 84532)
+      )
+        return c.json({ error: "invalid_provider_comparison" }, 400);
       const parsed = destinationIntent.safeParse(rest);
       if (!parsed.success) return c.json({ error: "invalid_payment" }, 400);
       const i = parsed.data;
       const cross = { ...i, sourceChainId: acrossRoute(i.chainId).origin };
-      if (sourceChainId !== undefined) {
+      if (sourceChainId !== undefined && !compareProviders) {
         try {
           if (sourceChainId === i.chainId) return c.json(await issueDirect(i));
           if (sourceChainId === cross.sourceChainId) return c.json(await issueCross(cross));
@@ -508,7 +513,7 @@ export function paymentRoutes(
         }
       }
       const [direct, bridge, circle] = await Promise.allSettled([
-        issueDirect(i),
+        compareProviders ? null : issueDirect(i),
         issueCross(cross),
         issueCircle({ ...i, chainId: i.chainId, sourceChainId: 84532 }),
       ]);
@@ -523,17 +528,18 @@ export function paymentRoutes(
         [bridge, "across"],
         [circle, "circle_cctp"],
       ] as const) {
-        if (result.status === "fulfilled") candidates.push(result.value);
-        else unavailableProviders.push(provider);
+        if (result.status === "fulfilled") {
+          if (result.value) candidates.push(result.value);
+        } else unavailableProviders.push(provider);
       }
-      const unavailableSourceChainIds = [i.chainId, cross.sourceChainId].filter(
+      const sources = compareProviders ? [cross.sourceChainId] : [i.chainId, cross.sourceChainId];
+      const unavailableSourceChainIds = sources.filter(
         (id) => !candidates.some((q) => q.sourceChainId === id),
       );
       if (!candidates.length) return c.json({ error: "no_verified_quotes" }, 503);
-      const rate =
-        candidates.filter((c) => c.execution !== "quote_only").length > 1
-          ? await testnetGasConversion().catch(() => null)
-          : null;
+      const rate = candidates.some((c) => c.originGas.estimate)
+        ? await testnetGasConversion().catch(() => null)
+        : null;
       const comparison = {
         ...comparePaymentCosts(
           candidates.filter((c) => c.expiresAt > Date.now() / 1000),
