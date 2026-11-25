@@ -985,6 +985,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               z.literal(792703809),
             ])
             .optional(),
+          sourceMint: z
+            .string()
+            .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+            .optional()
+            .describe(
+              "Solana mint for an individual funding quote. Omit to discover SPL Token holdings.",
+            ),
           sender: z.union([evm, z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)]).optional(),
           provider: z
             .literal("circle_cctp")
@@ -1062,6 +1069,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
           intent: z
             .object({
+              sourceMint: z
+                .string()
+                .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+                .optional()
+                .describe(
+                  "Solana mint for an individual funding quote. Omit to discover SPL Token holdings.",
+                ),
               sender: z.union([evm, z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)]),
               recipient: evm,
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),

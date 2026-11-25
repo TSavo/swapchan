@@ -1,6 +1,8 @@
 import { base58 } from "@scure/base";
 import { acrossRoute, EvmAddress, SOLANA } from "@swapchan/shared";
 import { z } from "zod";
+import { checkSolanaRelayOrder } from "./payment-solana-order.js";
+import { simulateSolanaDeposit } from "./payment-solana-simulation.js";
 import { getJson } from "./providers/types.js";
 
 const native = "11111111111111111111111111111111";
@@ -21,6 +23,7 @@ export const solanaPaymentInput = z
     chainId: z.literal(10),
     sourceChainId: z.literal(SOLANA),
     sender: owner,
+    sourceMint: owner.optional(),
     recipient: EvmAddress,
     amountMicroUsdc: z.string().regex(/^[1-9]\d{0,37}$/),
   })
@@ -60,7 +63,9 @@ export async function quoteSolanaPayment(
     ),
     rpc("getTokenAccountsByOwner", [
       intent.sender,
-      { mint: usdc },
+      intent.sourceMint && intent.sourceMint !== native
+        ? { mint: intent.sourceMint }
+        : { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
       { encoding: "jsonParsed", commitment: "confirmed" },
     ]).then((r) =>
       z
@@ -72,10 +77,13 @@ export async function quoteSolanaPayment(
                   data: z.object({
                     parsed: z.object({
                       info: z.object({
-                        mint: z.literal(usdc),
+                        mint: owner,
                         owner: z.literal(intent.sender),
                         state: z.string(),
-                        tokenAmount: z.object({ amount: units }),
+                        tokenAmount: z.object({
+                          amount: units,
+                          decimals: z.number().int().min(0).max(255),
+                        }),
                       }),
                     }),
                   }),
@@ -85,24 +93,40 @@ export async function quoteSolanaPayment(
           }),
         })
         .parse(r)
-        .result.value.reduce((sum, a) => {
-          const info = a.account.data.parsed.info;
-          return sum + (info.state === "initialized" ? BigInt(info.tokenAmount.amount) : 0n);
-        }, 0n),
+        .result.value.map((a) => a.account.data.parsed.info),
     ),
   ]);
+  type Holding = { mint: string; symbol: string | null; balance: bigint; decimals: number };
+  const byMint = new Map<string, Holding>([
+    [native, { symbol: "SOL", mint: native, balance: sol, decimals: 9 }],
+    [usdc, { symbol: "USDC", mint: usdc, balance: 0n, decimals: 6 }],
+  ]);
+  for (const token of tokens) {
+    if (token.state !== "initialized" || !BigInt(token.tokenAmount.amount) || token.mint === native)
+      continue;
+    const holding = byMint.get(token.mint) ?? {
+      symbol: null,
+      mint: token.mint,
+      balance: 0n,
+      decimals: token.tokenAmount.decimals,
+    };
+    if (holding.decimals !== token.tokenAmount.decimals) throw Error("Inconsistent mint decimals");
+    holding.balance += BigInt(token.tokenAmount.amount);
+    byMint.set(token.mint, holding);
+  }
+  const holdings = Array.from(byMint.values()).filter(
+    (h) => !intent.sourceMint || h.mint === intent.sourceMint,
+  );
   const destination = acrossRoute(10).destinationToken;
   const routes = await Promise.all(
-    [
-      { symbol: "SOL", mint: native, balance: sol, decimals: 9 },
-      { symbol: "USDC", mint: usdc, balance: tokens, decimals: 6 },
-    ].map(async (holding) => {
+    holdings.map(async (holding, index) => {
       const source = {
         symbol: holding.symbol,
         mint: holding.mint,
         balanceUnits: String(holding.balance),
         decimals: holding.decimals,
       };
+      if (index >= 6) return { ...source, status: "select_source_mint" };
       if (!holding.balance) return { ...source, status: "empty" };
       try {
         const result = await post("https://api.relay.link/quote/v2", {
@@ -113,6 +137,7 @@ export async function quoteSolanaPayment(
           originCurrency: holding.mint,
           destinationCurrency: destination,
           tradeType: "EXACT_OUTPUT",
+          includeProtocolData: true,
           amount: intent.amountMicroUsdc,
         });
         const { details } = z
@@ -140,9 +165,31 @@ export async function quoteSolanaPayment(
           out.minimumAmount !== out.amount
         )
           throw Error("Relay terms differ from intent");
+        const order = checkSolanaRelayOrder(
+          result,
+          intent.sender,
+          intent.recipient,
+          holding.mint,
+          input.amount,
+          out.amount,
+        );
+        const simulation =
+          BigInt(input.amount) <= holding.balance
+            ? await simulateSolanaDeposit(
+                f,
+                rpcUrl,
+                rpc,
+                result,
+                intent.sender,
+                holding.mint === native ? null : holding.mint,
+                BigInt(input.amount),
+              ).catch(() => ({ status: "unverified" as const }))
+            : null;
         return {
           ...source,
           status: BigInt(input.amount) <= holding.balance ? "quoted" : "insufficient_balance",
+          sourceSimulation: simulation,
+          order,
           quotedInputUnits: input.amount,
           exactPayoutMicroUsdc: out.amount,
         };
@@ -156,7 +203,7 @@ export async function quoteSolanaPayment(
     provider: "relay",
     execution: "quote_only",
     atomic: false,
-    sourceNetworkFees: "unverified",
+
     routes,
   };
 }
