@@ -380,6 +380,9 @@ export const PaymentWalletMethods = z
       .array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4", "wallet_sendCalls"]))
       .optional(),
     "11155420": z.array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4"])).optional(),
+    "solana:devnet": z
+      .array(z.enum(["solana:signAndSendTransaction", "solana:signTransaction"]))
+      .optional(),
   })
   .strict();
 

@@ -169,6 +169,40 @@ try {
     assert.equal(testDeposit.returnedMicroUsdc, "185");
   }
   console.log("payment_status", JSON.stringify(testDeposit));
+  const solanaMint = await call("payment_status", {
+    circleSolana: {
+      originHash: "0x66486b26254100a04b5d8739db327825404fd2366540d52bf17aabbacb36d8aa",
+      approvalHash: "0x268059170ad939c4bbd9c7094347f053021284bcddf5734f2b7894dc132f3e8b",
+      review: {
+        chainId: "solana:devnet",
+        sourceChainId: 84532,
+        sender: "0x182764751e965C703E2219FC9619326E11376747",
+        recipient: "7SmLHZx8GwiGSTiFmgRmgcRVB6Hxc2opAKGXvZqte91E",
+        amountMicroUsdc: "1",
+        maxInputMicroUsdc: "208165",
+        burnDataHash: "0x8d74fe7e31d49c2c83567bf231f1b6a859297197da7587007e4e12308981217a",
+      },
+    },
+  });
+  console.log(
+    "Base to Solana payment",
+    z
+      .object({
+        status: z.literal("settled"),
+        originFinalized: z.literal(true),
+        destinationFinalized: z.literal(true),
+        paidMicroUsdc: z.literal("1"),
+        forwardFeeMicroUsdc: z.literal("208164"),
+        mintHash: z.literal(
+          "2Lfr9NQ3J7MUQnxTtk4P8Qamd83Tf8dQBQB8GCw1vcH3qJ64N2Zdmv4WboimgsXxzXFc2H4X27SJ6SBYijKMqMvo",
+        ),
+        destinationBalances: z.object({
+          beforeMicroUsdc: z.literal("0"),
+          afterMicroUsdc: z.literal("1"),
+        }),
+      })
+      .parse(solanaMint),
+  );
   const circle = z
     .object({
       status: z.literal("settled"),

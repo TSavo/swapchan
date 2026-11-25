@@ -1192,12 +1192,14 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           reviewId: z
             .uuid()
             .optional()
-            .describe("Build the recommended route from this saved Optimism Sepolia comparison."),
+            .describe(
+              "Build the recommended route from this saved Optimism Sepolia or Solana devnet comparison.",
+            ),
           walletCapabilities: PaymentWalletCapabilities.optional().describe(
             "Result of wallet_getCapabilities for the signing account. A supported Base Sepolia atomic capability can use wallet_sendCalls for an Across or Circle atomic origin.",
           ),
           walletMethodsByChain: PaymentWalletMethods.optional().describe(
-            "Caller-supported signing methods by origin chain for an Optimism Sepolia comparison. Omitted chains are unavailable.",
+            "Caller-supported signing methods by origin chain for Optimism Sepolia or Solana devnet funding comparisons. Omitted chains are unavailable.",
           ),
           quoteId: z.uuid().optional(),
           stage: z
@@ -1227,6 +1229,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               (a.chainId === 11155420 &&
                 (!a.intent || (!!a.walletMethodsByChain && !a.intent.provider)))) &&
             (!a.walletMethodsByChain ||
+              (a.chainId === "solana:devnet" && Boolean(a.intent?.fundingAddresses)) ||
               (!!a.intent &&
                 a.chainId === 11155420 &&
                 !a.intent.provider &&
@@ -1282,6 +1285,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                   quoteId: z.uuid().optional(),
                   sender: z.string(),
                   feePayer: z.string().optional(),
+                  walletCompatible: z.boolean().optional(),
                   execution: z.string(),
                 }),
               ),
@@ -1291,7 +1295,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             throw new UserError("No current executable Solana recommendation.");
           const q = comparison.data,
             route = q.routes.find(
-              (r) => r.quoteId === q.recommendedQuoteId && r.execution.startsWith("unsigned_"),
+              (r) =>
+                r.walletCompatible !== false &&
+                r.quoteId === q.recommendedQuoteId &&
+                r.execution.startsWith("unsigned_"),
             );
           if (!route) throw new UserError("Selected funding route is unavailable.");
           a.quoteId = q.recommendedQuoteId;

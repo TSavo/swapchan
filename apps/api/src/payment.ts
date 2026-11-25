@@ -874,6 +874,7 @@ export function paymentRoutes(
             chainId: z.literal("solana:devnet"),
             recipient: circleDevnetIntent.shape.recipient,
             feePayer: solanaDevnetIntent.shape.feePayer,
+            walletMethodsByChain: PaymentWalletMethods.optional(),
             amountMicroUsdc: circleDevnetIntent.shape.amountMicroUsdc,
             fundingAddresses: z
               .object({
@@ -886,11 +887,11 @@ export function paymentRoutes(
           .strict()
           .safeParse(raw);
         if (!parsed.success) return c.json({ error: "invalid_devnet_funding_addresses" }, 400);
-        const { fundingAddresses, feePayer, ...dest } = parsed.data;
+        const { fundingAddresses, feePayer, walletMethodsByChain, ...dest } = parsed.data;
         if (feePayer && !fundingAddresses.solana)
           return c.json({ error: "missing_solana_funding_address" }, 400);
         const sources = Object.entries(fundingAddresses);
-        const routes = await Promise.all(
+        const quotes = await Promise.all(
           sources.map(async ([network, sender]) => {
             try {
               if (network === "evm") {
@@ -949,10 +950,30 @@ export function paymentRoutes(
             }
           }),
         );
+        const routes = quotes.map((q) => {
+          const local = q.network === "solana";
+          const requiredWalletMethods = local
+            ? feePayer
+              ? ["solana:signTransaction", "solana:signAndSendTransaction"]
+              : ["solana:signAndSendTransaction"]
+            : ["eth_sendTransaction"];
+          const methods: readonly string[] =
+            walletMethodsByChain?.[local ? "solana:devnet" : "84532"] ?? [];
+          return {
+            ...q,
+            requiredWalletMethods,
+            walletCompatible:
+              !walletMethodsByChain || requiredWalletMethods.every((m) => methods.includes(m)),
+          };
+        });
         const now = Date.now() / 1000;
         const eligible = routes.filter(
           (r) =>
-            r.quoteId && r.expiresAt && r.expiresAt > now && r.execution.startsWith("unsigned_"),
+            r.walletCompatible &&
+            r.quoteId &&
+            r.expiresAt &&
+            r.expiresAt > now &&
+            r.execution.startsWith("unsigned_"),
         );
         const ranked = eligible
           .filter((r) => r.referenceCostUsd !== null)
