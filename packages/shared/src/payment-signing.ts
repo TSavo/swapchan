@@ -67,7 +67,10 @@ export function paymentSignatureRequest(
         auth.s.toLowerCase() !== authorization.s.toLowerCase()))
   )
     throw new Error("Operation delegation differs from the reviewed authorization.");
-  const limits = paymentGasLimits(!q.requiresDelegation && q.maxWethWei === "0");
+  const limits = paymentGasLimits(
+    !q.circle && !q.requiresDelegation && q.maxWethWei === "0",
+    Boolean(q.circle),
+  );
   for (const key of Object.keys(limits) as (keyof typeof limits)[]) {
     if (op[key] > limits[key]) throw new Error("Operation exceeds the reviewed gas limits.");
   }

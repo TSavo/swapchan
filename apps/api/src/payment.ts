@@ -138,6 +138,9 @@ export function paymentRoutes(
       paymaster,
       expiresAt: Math.floor(Date.now() / 1000) + 60,
       maxGasMicroUsdc: {
+        circle: gasCap(
+          Object.values(paymentGasLimits(false, true)).reduce((sum, n) => sum + n, 0n),
+        ).toString(),
         delegatedUsdc: gasCap(425000n).toString(),
         swapOrSetup: gasCap(955000n).toString(),
       },
@@ -495,7 +498,8 @@ export function paymentRoutes(
     const delegation = await inspectDelegation(chain, intent.sender, delegate);
     if (!delegation.existing?.known) return { status: "unverified_delegate" };
     const gas = await quoteGasInUsdc();
-    const maxGasMicroUsdc = gas.maxGasMicroUsdc.swapOrSetup;
+    const burn = quote.calls[quote.calls.length - 1]!;
+    const maxGasMicroUsdc = gas.maxGasMicroUsdc.circle;
     const required = BigInt(review.maxInputMicroUsdc) + BigInt(maxGasMicroUsdc);
     const balance = BigInt(review.sourceWallet.balanceMicroUsdc);
     const budget = {
@@ -509,24 +513,26 @@ export function paymentRoutes(
         status: "insufficient_usdc",
         shortfallMicroUsdc: String(required - balance),
       };
-    const burn = quote.calls[quote.calls.length - 1]!;
-    checkCircleBurn(burn.data, review);
-    const approve = (spender: Hex, amount: bigint) => ({
-      target: usdc,
-      value: 0n,
-      data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, amount] }),
-    });
-    const callData = encodeFunctionData({
-      abi: batchAbi,
-      functionName: "executeBatch",
-      args: [
-        [
-          approve(circleMessenger, BigInt(review.maxInputMicroUsdc)),
-          { target: circleMessenger, value: 0n, data: burn.data },
-          approve(paymaster, BigInt(maxGasMicroUsdc)),
-        ],
-      ],
-    });
+    const payment: PaymentQuote = {
+      sender: intent.sender,
+      recipient: intent.recipient,
+      amountMicroUsdc: intent.amountMicroUsdc,
+      chainId: 84532,
+      requiresDelegation: false,
+      maxWethWei: "0",
+      swapOutputMicroUsdc: "0",
+      expiresAt: budget.expiresAt,
+      maxGasMicroUsdc,
+      maxFeePerGas: gas.maxFeePerGas,
+      maxPriorityFeePerGas: gas.maxPriorityFeePerGas,
+      circle: {
+        destinationChainId: 11155420,
+        burnData: burn.data,
+        burnDataHash: review.burnDataHash,
+        maxInputMicroUsdc: review.maxInputMicroUsdc,
+      },
+    };
+    const callData = paymentBatch(payment);
     const op: RpcOp = {
       sender: intent.sender,
       nonce: await paymentNonce(intent.sender),
@@ -534,7 +540,7 @@ export function paymentRoutes(
       maxFeePerGas: gas.maxFeePerGas,
       maxPriorityFeePerGas: gas.maxPriorityFeePerGas,
       ...Object.fromEntries(
-        Object.entries(paymentGasLimits(false)).map(([key, value]) => [
+        Object.entries(paymentGasLimits(false, true)).map(([key, value]) => [
           key,
           "0x" + value.toString(16),
         ]),
@@ -544,7 +550,15 @@ export function paymentRoutes(
     await addPaymaster(op);
     const estimate = await simulateOperation(op);
     if (budget.expiresAt <= Date.now() / 1000) throw Error("Sponsored estimate expired");
-    return { ...budget, status: "simulated", gas: estimate, paymaster, entryPoint: entry };
+    return {
+      ...budget,
+      status: "simulated",
+      quoteId: retain(issued, payment),
+      destinationChainId: 11155420,
+      gas: estimate,
+      paymaster,
+      entryPoint: entry,
+    };
   }
   async function issueCircle(intent: Parameters<typeof quoteCirclePayment>[2]) {
     const quote = await quoteCirclePayment(f, chain, intent);
@@ -827,7 +841,7 @@ export function paymentRoutes(
       if (!checked.proposed || !("known" in checked.proposed) || !checked.proposed.known)
         return c.json({ error: "unverified_delegate_runtime" }, 422);
       const nonce = await paymentNonce(q.sender);
-      const direct = !q.requiresDelegation && q.maxWethWei === "0";
+      const direct = !q.circle && !q.requiresDelegation && q.maxWethWei === "0";
       const op: Record<string, string | Record<string, string>> = {
         sender: q.sender,
         nonce,
@@ -835,7 +849,7 @@ export function paymentRoutes(
         maxFeePerGas: q.maxFeePerGas,
         maxPriorityFeePerGas: q.maxPriorityFeePerGas,
         ...Object.fromEntries(
-          Object.entries(paymentGasLimits(direct)).map(([key, value]) => [
+          Object.entries(paymentGasLimits(direct, Boolean(q.circle))).map(([key, value]) => [
             key,
             "0x" + value.toString(16),
           ]),
@@ -972,6 +986,12 @@ export function paymentRoutes(
         sender: q.sender,
         recipient: q.recipient,
         amountMicroUsdc: q.amountMicroUsdc,
+        ...(q.circle
+          ? {
+              destinationChainId: q.circle.destinationChainId,
+              maxBridgeInputMicroUsdc: q.circle.maxInputMicroUsdc,
+            }
+          : {}),
         maxWethWei: q.maxWethWei,
         wrapNativeWei: q.wrapNativeWei ?? "0",
         maxGasMicroUsdc: q.maxGasMicroUsdc,
@@ -1038,6 +1058,35 @@ export function paymentRoutes(
         await chain("eth_getTransactionReceipt", [r.receipt.transactionHash]),
       );
       const result = reconcilePayment(saved.quote, digest, r, canonical);
+      if (
+        saved.quote.circle &&
+        result.status === "origin_confirmed" &&
+        "operationLogs" in result &&
+        result.gasChargedMicroUsdc
+      ) {
+        const settlement = await circleStatus(
+          circleStatusInput.parse({
+            originHash: canonical.transactionHash,
+            sender: saved.quote.sender,
+            recipient: saved.quote.recipient,
+            amountMicroUsdc: saved.quote.amountMicroUsdc,
+            maxInputMicroUsdc: saved.quote.circle.maxInputMicroUsdc,
+            burnDataHash: saved.quote.circle.burnDataHash,
+          }),
+          (id, m, p) => rpc(bridgeRpc[id], m, p),
+          f,
+          {
+            blockHash: canonical.blockHash,
+            logs: result.operationLogs,
+            gasChargedMicroUsdc: result.gasChargedMicroUsdc,
+          },
+        );
+        return c.json({
+          ...settlement,
+          userOpHash: digest,
+          gasChargedMicroUsdc: result.gasChargedMicroUsdc,
+        });
+      }
       const finalizedBlock = await chain("eth_getBlockByNumber", ["finalized", false]);
       const inclusionBlock = await chain("eth_getBlockByNumber", [canonical.blockNumber, false]);
       const inclusion = z

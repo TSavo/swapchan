@@ -81,6 +81,7 @@ export async function circleStatus(
   i: z.infer<typeof circleStatusInput>,
   rpc: Rpc,
   f: typeof fetch,
+  sponsored?: { blockHash: string; gasChargedMicroUsdc: string; logs: unknown[] },
 ) {
   async function canonical(chain: 84532 | 11155420, tx: Hex) {
     const raw = await rpc(chain, "eth_getTransactionReceipt", [tx]);
@@ -125,27 +126,39 @@ export async function circleStatus(
   }
   const origin = await canonical(84532, i.originHash);
   if (!origin) return { status: "awaiting_origin_receipt" };
-  const tx = z
-    .object({ input: data, hash, blockHash: hash, value: quantity })
-    .parse(await rpc(84532, "eth_getTransactionByHash", [i.originHash]));
-  const atomic = origin.r.to.toLowerCase() === i.sender.toLowerCase();
-  if (
-    tx.hash !== i.originHash ||
-    tx.blockHash !== origin.r.blockHash ||
-    origin.r.from.toLowerCase() !== i.sender.toLowerCase() ||
-    (!atomic && origin.r.to.toLowerCase() !== circleMessenger.toLowerCase()) ||
-    (atomic && i.approvalHash) ||
-    BigInt(tx.value) !== 0n
-  )
-    throw Error("Unexpected Circle burn");
-  const paid = atomic ? checkCircleBatch(tx.input, i) : checkCircleBurn(tx.input, i);
+  let paid: bigint;
+  if (sponsored) {
+    if (origin.r.blockHash !== sponsored.blockHash || i.approvalHash)
+      throw Error("Sponsored origin changed");
+    origin.r.logs = receipt.shape.logs.parse(sponsored.logs);
+    paid = BigInt(i.amountMicroUsdc);
+  } else {
+    const tx = z
+      .object({ input: data, hash, blockHash: hash, value: quantity })
+      .parse(await rpc(84532, "eth_getTransactionByHash", [i.originHash]));
+    const atomic = origin.r.to.toLowerCase() === i.sender.toLowerCase();
+    if (
+      tx.hash !== i.originHash ||
+      tx.blockHash !== origin.r.blockHash ||
+      origin.r.from.toLowerCase() !== i.sender.toLowerCase() ||
+      (!atomic && origin.r.to.toLowerCase() !== circleMessenger.toLowerCase()) ||
+      (atomic && i.approvalHash) ||
+      BigInt(tx.value) !== 0n
+    )
+      throw Error("Unexpected Circle burn");
+    paid = atomic ? checkCircleBatch(tx.input, i) : checkCircleBurn(tx.input, i);
+  }
   const base = {
     originHash: i.originHash,
     originFinalized: origin.finalized,
-    originFees: receiptFees(origin.r),
+    originFees: sponsored
+      ? { gasChargedMicroUsdc: sponsored.gasChargedMicroUsdc }
+      : receiptFees(origin.r),
   };
   if (origin.r.status === "0x0") return { ...base, status: "burn_reverted" };
-  const spent = -transfers(origin.r, acrossTestRoute.sourceToken, i.sender);
+  const spent =
+    -transfers(origin.r, acrossTestRoute.sourceToken, i.sender) -
+    BigInt(sponsored?.gasChargedMicroUsdc ?? "0");
   const sent = origin.r.logs.filter(
     (l) => l.address.toLowerCase() === transmitter && l.topics[0] === toEventSelector(events[0]),
   );

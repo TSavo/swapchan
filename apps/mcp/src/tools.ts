@@ -1050,7 +1050,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. Inspect routes, fundingShortfall and recommendedQuoteId. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
+        "Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. Inspect routes, fundingShortfall and recommendedQuoteId. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
       inputSchema: z
         .object({
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
@@ -1075,7 +1075,9 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .strict()
             .optional(),
           quoteId: z.uuid().optional(),
-          stage: z.enum(["initial", "after_approval", "atomic_origin"]).optional(),
+          stage: z
+            .enum(["initial", "after_approval", "atomic_origin", "sponsored_origin"])
+            .optional(),
           authorization: z
             .object({
               chainId: z.literal(84532),
@@ -1108,7 +1110,18 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             : {}),
         });
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
-      if (a.chainId !== 84532) {
+      if (a.stage === "sponsored_origin") {
+        const review = await api.savedPaymentQuote(a.quoteId!);
+        const sponsored = z
+          .object({
+            chainId: z.literal(84532),
+            circle: z.object({ destinationChainId: z.literal(11155420) }),
+          })
+          .safeParse(review);
+        if (!sponsored.success || a.chainId !== 11155420)
+          throw new UserError("Expected a sponsored Circle quote for Optimism Sepolia.");
+      }
+      if (a.chainId !== 84532 && a.stage !== "sponsored_origin") {
         const built = await api.crossPaymentBuild({
           quoteId: a.quoteId,
           ...(a.stage ? { stage: a.stage } : {}),
@@ -1154,7 +1167,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         ...(a.authorization ? { authorization: a.authorization } : {}),
       };
       const built = await api.paymentBuild(args);
-      if (built.quoteId !== a.quoteId || !built.userOperation || !built.userOpHash)
+      if (
+        (a.stage !== "sponsored_origin" &&
+          z.object({ circle: z.object({}) }).safeParse(built.quote).success) ||
+        built.quoteId !== a.quoteId ||
+        !built.userOperation ||
+        !built.userOpHash
+      )
         throw new UserError("Payment build differs from the reviewed quote.");
       const verification = await api.verifyBundle({
         ...args,

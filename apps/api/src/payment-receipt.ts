@@ -152,6 +152,24 @@ export function reconcilePayment(
       else fee += amount;
     }
   }
+  if (q.circle) {
+    const total = fee + paid;
+    if (
+      !charged ||
+      charged > BigInt(q.maxGasMicroUsdc) ||
+      total !== charged + BigInt(q.circle.maxInputMicroUsdc) ||
+      spent ||
+      received ||
+      wrappedNative
+    )
+      throw Error("Sponsored Circle origin differs from quote");
+    return {
+      ...base,
+      status: "origin_confirmed",
+      gasChargedMicroUsdc: String(charged),
+      operationLogs: entryLogs.slice(start + 1, end),
+    };
+  }
   if (
     paid !== BigInt(q.amountMicroUsdc) ||
     recipientDelta !== paid ||

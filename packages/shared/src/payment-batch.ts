@@ -1,4 +1,5 @@
 import { type Address, encodeFunctionData, erc20Abi, type Hex, parseAbi } from "viem";
+import { checkCircleBurn, circleMessenger } from "./circle-payment.js";
 
 export const paymentContracts = {
   weth: "0x4200000000000000000000000000000000000006",
@@ -34,13 +35,19 @@ export type PaymentQuote = {
   requiresDelegation: boolean;
   maxFeePerGas: string;
   maxPriorityFeePerGas: string;
+  circle?: {
+    destinationChainId: 11155420;
+    burnData: Hex;
+    burnDataHash: Hex;
+    maxInputMicroUsdc: string;
+  };
 };
 /** Gas ceilings used for both quoting and signing on Base Sepolia. */
-export function paymentGasLimits(direct: boolean) {
+export function paymentGasLimits(direct: boolean, circle = false) {
   return {
-    callGasLimit: direct ? 80000n : 450000n,
+    callGasLimit: circle ? 700000n : direct ? 80000n : 450000n,
     verificationGasLimit: direct ? 70000n : 140000n,
-    preVerificationGas: direct ? 90000n : 145000n,
+    preVerificationGas: circle ? 2400000n : direct ? 90000n : 145000n,
     paymasterVerificationGasLimit: direct ? 85000n : 120000n,
     paymasterPostOpGasLimit: direct ? 90000n : 100000n,
   };
@@ -90,14 +97,25 @@ export function paymentBatch(q: PaymentQuote) {
     );
     approve(weth, router, 0n);
   }
-  add(
-    usdc,
-    encodeFunctionData({
-      abi: erc20Abi,
-      functionName: "transfer",
-      args: [q.recipient, BigInt(q.amountMicroUsdc)],
-    }),
-  );
+  if (q.circle) {
+    if (
+      q.circle.destinationChainId !== 11155420 ||
+      BigInt(q.circle.maxInputMicroUsdc) < BigInt(q.amountMicroUsdc)
+    )
+      throw Error("Invalid Circle destination or spend");
+    checkCircleBurn(q.circle.burnData, { ...q, burnDataHash: q.circle.burnDataHash });
+    approve(usdc, circleMessenger, BigInt(q.circle.maxInputMicroUsdc));
+    add(circleMessenger, q.circle.burnData);
+  } else {
+    add(
+      usdc,
+      encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [q.recipient, BigInt(q.amountMicroUsdc)],
+      }),
+    );
+  }
   // Overwrite residual allowance so the fee pull for this operation is bounded.
   approve(usdc, paymaster, BigInt(q.maxGasMicroUsdc));
   return encodeFunctionData({ abi: batchAbi, functionName: "executeBatch", args: [calls] });
