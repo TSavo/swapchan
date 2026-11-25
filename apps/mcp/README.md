@@ -92,6 +92,8 @@ Base Sepolia quotes include USDC, WETH and native ETH balances at the quote bloc
 
 For a Base Sepolia payment, call `pay` with the intent, review the returned limits, then call `pay` with the same destination chain and the chosen `quoteId`. This second call builds the operation and runs `verify_bundle`'s checks against the exact operation and delegation. It returns the verifier's EIP-712 signing data and the verified payout, sender, recipient, fee limits and expiry. The connected wallet signs after approval.
 
+A wallet that reports atomic support on Base Sepolia can also call `build_7702_bundle` with the reviewed Across or Circle origin quote ID and its `walletCapabilities`. It receives an EIP-5792 batch. Pass the same quote ID and unmodified `walletRequest` to `verify_bundle` to re-simulate the exact approval and bridge call. The result identifies the delegate, spender, source gas payer and recipient. Follow `wallet_getCallsStatus` and `payment_status` to verify the origin and destination separately.
+
 ## Exact USDC payments
 
 For an exact Optimism Sepolia payment (`chainId: 11155420`), omit `intent.sourceChainId` in `pay` to compare available funding routes. The default comparison prices a local USDC transfer, an Across deposit, and a Circle burn with destination forwarding. Set the source to `84532` to compare Across and Circle using Base Sepolia funds, or supply both `sourceChainId: 84532` and `provider: "circle_cctp"` for Circle. Set the source to `11155420` for a local transfer. An explicit source restricts the quote to that chain. A bridge result with `depositLimitIssue: "below_minimum"` is ineligible for execution.

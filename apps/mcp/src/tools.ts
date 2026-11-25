@@ -1,9 +1,9 @@
 import { createPublicKey, verify as verifySignature } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { McpServer } from "@modelcontextprotocol/server";
 import {
   BROADCAST_CHAINS,
   BROADCAST_COUNT,
-  batchAbi,
   broadcastSummary,
   CHAIN_COUNT,
   COW_NETWORK,
@@ -35,7 +35,6 @@ import {
 } from "@swapchan/shared";
 import {
   createPublicClient,
-  decodeFunctionData,
   encodeFunctionData,
   erc20Abi,
   http,
@@ -48,7 +47,7 @@ import { z } from "zod";
 import { ApiError, type SwapChanApi } from "./api.js";
 import { imageData, mascotsFor, SITE, SWAP_CHAN, swapUrl } from "./art.js";
 import type { Config } from "./config.js";
-import { checkPaymentRoute } from "./payment-route.js";
+import { atomicWalletPayment, atomicWalletRequest, checkPaymentRoute } from "./payment-route.js";
 
 export const SERVER_NAME = "swapchan";
 export const SERVER_VERSION = "0.3.0";
@@ -1029,6 +1028,12 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             ])
             .optional(),
           fundingAddresses: fundingAddresses.optional(),
+          walletMethodsByChain: PaymentWalletMethods.optional().describe(
+            "Signing methods supported on each origin chain when comparing funding routes.",
+          ),
+          walletCapabilities: PaymentWalletCapabilities.optional().describe(
+            "Base Sepolia wallet_getCapabilities result when comparing atomic funding routes to Optimism Sepolia.",
+          ),
           feePayer: z
             .string()
             .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
@@ -1066,7 +1071,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             a.savedId
               ? Object.keys(a).length === 1
               : Boolean(
-                  (!a.feePayer || (a.chainId === "solana:devnet" && !a.sourceChainId)) &&
+                  (!a.walletCapabilities || (a.chainId === 11155420 && !!a.walletMethodsByChain)) &&
+                    (!a.walletMethodsByChain ||
+                      (a.chainId === "solana:devnet" && !!a.fundingAddresses) ||
+                      (a.chainId === 11155420 &&
+                        !a.provider &&
+                        (!a.sourceChainId || a.sourceChainId === 84532))) &&
+                    (!a.feePayer || (a.chainId === "solana:devnet" && !a.sourceChainId)) &&
                     a.chainId &&
                     a.recipient &&
                     a.amountMicroUsdc &&
@@ -1082,16 +1093,33 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         ),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    safe(async (a) => (a.savedId ? api.savedPaymentQuote(a.savedId) : api.paymentQuote(a))),
+    safe(async (a) =>
+      a.savedId
+        ? api.savedPaymentQuote(a.savedId)
+        : api.paymentQuote({
+            ...a,
+            ...(a.walletMethodsByChain && a.chainId === 11155420 && a.sourceChainId === 84532
+              ? { compareProviders: true }
+              : {}),
+          }),
+    ),
   );
+  async function buildAtomicOrigin(quoteId: string) {
+    const [review, built] = await Promise.all([
+      api.savedPaymentQuote(quoteId),
+      api.crossPaymentBuild({ quoteId, stage: "atomic_origin" }),
+    ]);
+    return atomicWalletPayment(quoteId, review, built);
+  }
   server.registerTool(
     "build_7702_bundle",
     {
       title: "Build a simulated Base Sepolia payment",
       description:
-        "Build the exact quoted payment by quoteId. Returns an unsigned EntryPoint v0.8 operation after paymaster and bundler simulation. Fresh accounts require the sender's chain-specific delegation authorization. The sender signs locally.",
+        "Build the exact quoted payment by quoteId. Returns an unsigned EntryPoint v0.8 operation after paymaster and bundler simulation. Fresh accounts require the sender's chain-specific delegation authorization. The sender signs locally. Supply walletCapabilities from wallet_getCapabilities for a reviewed atomic Circle or Across origin to obtain its verified EIP-5792 wallet request.",
       inputSchema: z.object({
         quoteId: z.uuid(),
+        walletCapabilities: PaymentWalletCapabilities.optional(),
         authorization: z
           .object({
             chainId: z.literal(84532),
@@ -1105,25 +1133,53 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       }),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    safe(async (a: { quoteId: string; authorization?: unknown }) => api.paymentBuild(a)),
+    safe(async (a) => {
+      if (!a.walletCapabilities) return api.paymentBuild(a);
+      if (a.authorization || a.walletCapabilities["0x14a34"]?.atomic?.status !== "supported")
+        throw new UserError(
+          "An atomic origin requires an already delegated Base Sepolia wallet with atomic support.",
+        );
+      return buildAtomicOrigin(a.quoteId);
+    }),
   );
   server.registerTool(
     "verify_bundle",
     {
       title: "Verify a Base Sepolia payment before signing",
       description:
-        "Recheck an unsigned payment against its reviewed quote. Verifies the operation hash, exact batch, approval and fee limits, current delegation and fresh bundler simulation. Supply the same authorization used at build for a first payment.",
+        "Recheck an unsigned payment against its reviewed quote. Verifies the operation hash, exact batch, approval and fee limits, current delegation and fresh bundler simulation. Supply the same authorization used at build for a first payment. To verify an EIP-5792 bridge batch, provide only quoteId and walletRequest.",
       inputSchema: z
         .object({
           quoteId: z.uuid(),
-          userOpHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
-          userOperation: z.record(z.string(), z.unknown()),
+          walletRequest: atomicWalletRequest.optional(),
+          userOpHash: z
+            .string()
+            .regex(/^0x[0-9a-f]{64}$/i)
+            .optional(),
+          userOperation: z.record(z.string(), z.unknown()).optional(),
           authorization: z.record(z.string(), z.unknown()).optional(),
         })
-        .strict(),
+        .strict()
+        .refine((a) =>
+          a.walletRequest
+            ? !(a.authorization || a.userOperation || a.userOpHash)
+            : Boolean(a.userOpHash && a.userOperation),
+        ),
       annotations: ro,
     },
-    safe(async (a) => api.verifyBundle(a)),
+    safe(async (a) => {
+      if (!a.walletRequest) return api.verifyBundle(a);
+      const b = await buildAtomicOrigin(a.quoteId);
+      if (!isDeepStrictEqual(a.walletRequest, b.walletRequest))
+        throw new UserError("Wallet batch differs from the simulated quote.");
+      return {
+        quoteId: b.quoteId,
+        expiresAt: b.expiresAt,
+        originSimulation: b.originSimulation,
+        estimatedOriginFeeWei: b.estimatedOriginFeeWei,
+        ...b.verification,
+      };
+    }),
   );
   server.registerTool(
     "pay",
@@ -1606,47 +1662,9 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         )
           throw new UserError("Payment build returned an unexpected chain or action.");
         const reviewed = await api.savedPaymentQuote(result.data.quoteId);
+        if (action === "atomic_origin" && useWalletBatch)
+          return atomicWalletPayment(result.data.quoteId, reviewed, result.data);
         const next = checkPaymentRoute(reviewed, result.data);
-        if (action === "atomic_origin" && useWalletBatch) {
-          const batch = decodeFunctionData({
-            abi: batchAbi,
-            data: unsignedTransaction.data as `0x${string}`,
-          });
-          const calls = batch.args[0].map((c) => ({
-            to: c.target,
-            value: "0x" + c.value.toString(16),
-            data: c.data,
-          }));
-          return {
-            ...result.data,
-            walletRequest: {
-              method: "wallet_sendCalls",
-              params: [
-                {
-                  version: "2.0.0",
-                  from: unsignedTransaction.from,
-                  chainId: "0x14a34",
-                  atomicRequired: true,
-                  calls,
-                },
-              ],
-            },
-            walletStatusRequest: {
-              method: "wallet_getCallsStatus",
-              addWalletResultIdAt: "params[0]",
-            },
-            next: {
-              tool: next.tool,
-              arguments: next.arguments,
-              addWalletStatusResultAt:
-                reviewed.provider === "circle_cctp"
-                  ? "circle.walletCallsStatus"
-                  : "crossChain.walletCallsStatus",
-              requireAtomic: true,
-              requireStatus: 200,
-            },
-          };
-        }
         return {
           ...result.data,
           walletRequest: {

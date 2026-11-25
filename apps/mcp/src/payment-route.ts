@@ -1,5 +1,6 @@
 import {
   acrossTestRoute,
+  batchAbi,
   checkAcrossApproval,
   checkAcrossAtomicOrigin,
   checkAcrossDeposit,
@@ -7,8 +8,10 @@ import {
   checkCircleBurn,
   circleMessenger,
   EvmAddress,
+  paymentContracts,
+  paymentDelegationNotice,
 } from "@swapchan/shared";
-import { encodeFunctionData, erc20Abi, type Hex } from "viem";
+import { decodeFunctionData, encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { z } from "zod";
 
 const units = z.string().regex(/^\d+$/);
@@ -147,5 +150,113 @@ export function checkPaymentRoute(
       },
     },
     addTransactionHashAt: "crossChain.originHash",
+  };
+}
+
+export const atomicWalletRequest = z
+  .object({
+    method: z.literal("wallet_sendCalls"),
+    params: z.tuple([
+      z
+        .object({
+          version: z.literal("2.0.0"),
+          from: EvmAddress,
+          chainId: z.literal("0x14a34"),
+          atomicRequired: z.literal(true),
+          calls: z
+            .array(
+              z
+                .object({
+                  to: EvmAddress,
+                  value: z.literal("0x0"),
+                  data: z.string().regex(/^0x(?:[a-f0-9]{2})+$/i),
+                })
+                .strict(),
+            )
+            .length(2),
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
+
+/** Accept only a freshly simulated atomic origin using the reviewed delegate and exact bridge calls. */
+export function atomicWalletPayment(
+  quoteId: string,
+  review: Record<string, unknown>,
+  raw: unknown,
+) {
+  const build = z
+    .object({
+      quoteId: z.literal(quoteId),
+      action: z.literal("atomic_origin"),
+      expiresAt: z.number().int(),
+      originSimulation: z.object({ status: z.literal("succeeded") }),
+      estimatedOriginFeeWei: units,
+      unsignedTransaction: z.object({
+        chainId: z.literal(84532),
+        from: EvmAddress,
+        to: EvmAddress,
+        value: z.literal("0x0"),
+        data: z.string().regex(/^0x(?:[a-f0-9]{2})+$/i),
+      }),
+    })
+    .parse(raw);
+  const delegate = z.object({ delegate: EvmAddress }).parse(review.atomicOrigin).delegate;
+  if (delegate.toLowerCase() !== paymentContracts.delegate.toLowerCase())
+    throw Error("Unexpected atomic payment delegate.");
+  const next = checkPaymentRoute(review, build);
+  const tx = build.unsignedTransaction;
+  const batch = decodeFunctionData({ abi: batchAbi, data: tx.data as Hex });
+  const walletRequest = atomicWalletRequest.parse({
+    method: "wallet_sendCalls",
+    params: [
+      {
+        version: "2.0.0",
+        from: tx.from,
+        chainId: "0x14a34",
+        atomicRequired: true,
+        calls: batch.args[0].map((c) => ({
+          to: c.target,
+          value: "0x" + c.value.toString(16),
+          data: c.data,
+        })),
+      },
+    ],
+  });
+  const approval = decodeFunctionData({ abi: erc20Abi, data: batch.args[0][0]!.data });
+  if (approval.functionName !== "approve")
+    throw Error("Atomic origin must start with the reviewed approval.");
+  return {
+    ...build,
+    walletRequest,
+    verification: {
+      status: "verified",
+      delegate,
+      delegation: paymentDelegationNotice,
+      recipient: review.recipient,
+      amountMicroUsdc: review.amountMicroUsdc,
+      maxInputMicroUsdc: review.maxInputMicroUsdc,
+      feePayer: tx.from,
+      gasToken: "ETH",
+      approval: {
+        token: paymentContracts.usdc,
+        spender: approval.args[0],
+        amountMicroUsdc: String(approval.args[1]),
+      },
+      paymasterChargeMicroUsdc: "0",
+      destinationSettlement: "asynchronous",
+    },
+    walletStatusRequest: { method: "wallet_getCallsStatus", addWalletResultIdAt: "params[0]" },
+    next: {
+      tool: next.tool,
+      arguments: next.arguments,
+      addWalletStatusResultAt:
+        review.provider === "circle_cctp"
+          ? "circle.walletCallsStatus"
+          : "crossChain.walletCallsStatus",
+      requireAtomic: true,
+      requireStatus: 200,
+    },
   };
 }
