@@ -908,13 +908,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         fromChainId: a.fromChainId,
         toChainId: a.toChainId,
         says:
-          r.status === "done"
-            ? "The route provider reports completion. Check the destination transaction for settlement."
-            : r.refundTxHash
-              ? "The provider reports a refund. Check the refund transaction on the source chain."
-              : r.status === "failed"
-                ? "Uwaa, that one failed. Check the source tx."
-                : "Still in flight, I'm watching the arrival gate~",
+          r.tronUsdcSettlement?.status === "settled"
+            ? `Ethereum finalized a payout of ${r.tronUsdcSettlement.paidMicroUsdc} micro-USDC to ${r.tronUsdcSettlement.recipient}. The outbound references the confirmed Tron deposit.`
+            : r.status === "done"
+              ? "The route provider reports completion. Check the destination transaction for settlement."
+              : r.refundTxHash
+                ? "The provider reports a refund. Check the refund transaction on the source chain."
+                : r.status === "failed"
+                  ? "Uwaa, that one failed. Check the source tx."
+                  : "Still in flight, I'm watching the arrival gate~",
       }),
     ),
   );

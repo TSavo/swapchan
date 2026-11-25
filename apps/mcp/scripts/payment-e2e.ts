@@ -209,6 +209,25 @@ try {
     assert.equal(circle.paidMicroUsdc, "1");
   }
   console.log("circle payment_status", JSON.stringify(circle));
+  const historicalSwap = z
+    .object({
+      tronUsdcSettlement: z.object({
+        status: z.literal("settled"),
+        sourceSignatureCount: z.literal(1),
+        sourceAmountSun: z.literal("6726933"),
+        sourceFeeSun: z.literal("1000000"),
+        paidMicroUsdc: z.literal("1765526"),
+      }),
+    })
+    .parse(
+      await call("get_route_status", {
+        provider: "thorchain",
+        fromChainId: 728126428,
+        toChainId: 1,
+        txHash: "3d78de8c3b44ba21cb6aa3eaa5dd9f4890b57302f66654f97487755865920e7c",
+      }),
+    );
+  console.log("historical TRX swap", JSON.stringify(historicalSwap.tronUsdcSettlement));
 } finally {
   await client.close();
 }

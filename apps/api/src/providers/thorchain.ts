@@ -22,6 +22,7 @@ import { thorMemoMismatch } from "../guard/index.js";
 import { type Pricer, ZERO_ADDRESS } from "../pricing.js";
 import { RouteRefused, UTXO_DEST, validateUtxoRecipient } from "../utxodest.js";
 import { buildUtxoSend, MEMO_LIMIT } from "../utxosend.js";
+import { tronUsdcSettlement } from "./thorchain-tron-settlement.js";
 import { type Fetch, getJson, type ProviderAdapter, placeholderFor } from "./types.js";
 
 /** THORChain's error when memo + refund + affiliate exceed the source chain's memo limit (BTC: 80 bytes). */
@@ -510,8 +511,27 @@ export function thorchain(
       const result = await track(req.txHash, signal);
       if (result.state === "refunded")
         return { status: "failed", receivingTxHash: null, refundTxHash: result.payout?.txid };
-      if (result.state === "paid_out")
-        return { status: "done", receivingTxHash: result.payout?.txid ?? null };
+      if (result.state === "paid_out") {
+        const receivingTxHash = result.payout?.txid ?? null;
+        const verified =
+          req.fromChainId === TRON &&
+          req.toChainId === 1 &&
+          result.payout?.chain === "ETH" &&
+          receivingTxHash
+            ? await tronUsdcSettlement(
+                f,
+                signal,
+                req.txHash,
+                receivingTxHash,
+                env.RPC_URL_1 || "https://ethereum-rpc.publicnode.com",
+              ).catch(() => null)
+            : null;
+        return {
+          status: "done",
+          receivingTxHash,
+          ...(verified ? { tronUsdcSettlement: verified } : {}),
+        };
+      }
       return {
         status:
           result.state === "waiting"

@@ -32,11 +32,23 @@ flowchart LR
   sign --> paid["Recipient is paid<br/>gas in USDC via paymaster"]
 ```
 
-For THORChain routes from Litecoin, Dogecoin and Bitcoin Cash, MCP returns the unsigned PSBT, wallet signing instructions and the tracking tool that accepts the inbound transaction ID. Tron deposits show the vault, amount in sun and required memo. The API and web tracker distinguish a provider-reported refund on the source chain from a destination payout. The refund path has API fixture coverage. A live non-EVM payment receipt remains open.
+For THORChain routes from Litecoin, Dogecoin and Bitcoin Cash, MCP returns the unsigned PSBT, wallet signing instructions and the tracking tool that accepts the inbound transaction ID. Tron deposits show the vault, amount in sun and required memo. The API and web tracker distinguish a provider-reported refund on the source chain from a destination payout. The refund path has API fixture coverage. A SwapChan-initiated exact-USDC payment from a non-EVM wallet remains open.
 
 For Solana-origin swaps, the web wallet compiles the reviewed instructions or decodes the provider transaction, checks the fee payer and simulates the transaction with its original blockhash before requesting a signature. MCP can simulate a serialized quote directly. For an instruction-list quote, the wallet must compile it first and pass the serialized transaction to `simulate_swap`. Simulation covers source execution only. Live Solana payment settlement remains unverified.
 
+For a native TRX swap to Ethereum USDC, `get_route_status` can verify a historical payout against both chains. In the verified example, one Tron signature sent 6.726933 TRX with a 1 TRX transaction fee. The Ethereum router referenced that Tron transaction in its outbound memo and paid 1.765526 USDC to the recipient named in the inbound memo. Ethereum block 26,493,279 finalized. This replays a public swap with variable output. [Confirmed Tron deposit](https://tronscan.org/#/transaction/3d78de8c3b44ba21cb6aa3eaa5dd9f4890b57302f66654f97487755865920e7c) · [Ethereum payout](https://etherscan.io/tx/0xb0912b9de14422e0160b6c000cfafbb2189fde75a1975cec7710a104fccb2e47)
+
 ## Milestone 1 — one same-chain payment
+
+### Payment coverage on this branch
+
+| Payment path                                          | What the caller signs                                                                             | Fees and settlement evidence                                                                                                               |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Base Sepolia WETH or USDC to exact local USDC         | First use requires delegation and a payment signature. Repeat use requires one payment signature. | The USDC paymaster covered native gas on both recorded payments. The receipt checks the recipient’s exact gain and the paymaster charge.   |
+| Base Sepolia USDC to Optimism Sepolia USDC via Circle | The tested account signed an exact approval and a burn. Circle submitted the destination mint.    | The sender paid origin ETH and an upfront USDC forwarding fee. The recipient gained one micro-USDC with zero ETH.                          |
+| Base Sepolia USDC to Optimism Sepolia USDC via Across | Approval when needed, then deposit. An eligible delegated account can batch the origin calls.     | Origin gas is paid in ETH. The recorded testnet deposit expired. MCP distinguishes destination settlement from an origin refund.           |
+| Local Optimism USDC transfer                          | A funded EOA signs one ERC-20 transfer.                                                           | Sepolia builds simulate the transfer. The receipt verifier matched a historical mainnet transfer. Mainnet builds are disabled.             |
+| Solana, Tron and UTXO-origin swaps                    | The swap tools return chain-specific signing material or deposit instructions.                    | These source assets are outside the exact-USDC `pay` builder. A swap quote’s expected output is insufficient evidence of an exact payment. |
 
 On Base Sepolia, the sponsored route can also wrap native ETH inside the payment batch when the sender has insufficient WETH. The quote includes the ETH amount to wrap. The router cap includes the newly wrapped WETH, and the paymaster still charges USDC. A live quote for a wallet holding 19.984022 USDC, zero WETH and 0.000117512143599005 ETH priced a 19.984023 USDC payment with a 392,073,794,024 wei wrap. This additional funding path has quote and batch-construction evidence; a mined wrap-and-pay receipt remains open.
 

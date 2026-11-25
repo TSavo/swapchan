@@ -295,6 +295,19 @@ export const StatusResponse = z.object({
   receivingTxHash: z.string().nullable(),
   /** Provider-reported return of funds on the origin chain. */
   refundTxHash: z.string().optional(),
+  tronUsdcSettlement: z
+    .object({
+      status: z.enum(["settled", "awaiting_finality"]),
+      sourceSignatureCount: z.number().int(),
+      sourceAmountSun: z.string(),
+      sourceFeeSun: z.string().nullable(),
+      sourceBlock: z.number().int(),
+      destinationBlock: z.string(),
+      recipient: z.string(),
+      paidMicroUsdc: z.string(),
+      outboundExecutionFeeWei: z.string(),
+    })
+    .optional(),
 });
 export type StatusResponse = z.infer<typeof StatusResponse>;
 
