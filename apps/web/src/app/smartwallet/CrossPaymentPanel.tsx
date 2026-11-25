@@ -42,6 +42,8 @@ type Quote = Pick<Proposal, "recipient" | "amountMicroUsdc"> & {
   chainId: number;
   quoteId: string;
   expiresAt: number;
+  fillDeadline?: number;
+  recovery?: string;
   provider?: string;
   atomicOrigin?: { delegate: string; estimatedFeeWei: string } | null;
   fundingFeeWei?: string | null;
@@ -406,6 +408,9 @@ export function CrossPaymentPanel({
       status: string;
       fillHash?: Hex;
       providerStatus?: string;
+      refundHash?: Hex;
+      returnedMicroUsdc?: string;
+      refundFinalized?: boolean;
       spentMicroUsdc?: string;
       paidMicroUsdc?: string;
       originFinalized?: boolean;
@@ -440,16 +445,17 @@ export function CrossPaymentPanel({
     const details = {
       awaiting_origin_receipt: "Waiting for the origin deposit receipt.",
       awaiting_fill_index: "Waiting for Across to index the deposit.",
+      expiry_reported:
+        "Across reports that the deposit expired. Checking the finalized destination block.",
       fill_deadline_passed:
         "The destination chain has passed the fill deadline. A fill or refund still needs a verified receipt.",
       awaiting_verified_fill: "Waiting for the recipient’s USDC on the destination chain.",
       awaiting_destination_receipt: "Waiting for the destination transaction receipt.",
       awaiting_finality: "The destination transfer matches. Waiting for chain finality.",
       settled: "The exact destination payout is finalized.",
-      recovery_reported:
-        "Across reported " +
-        result.providerStatus +
-        ". Check the origin receipt and recovery status before taking further action.",
+      recovery_reported: result.returnedMicroUsdc
+        ? `Across reports a refund. Its origin receipt shows ${usdc(result.returnedMicroUsdc)} USDC returned to the sender. ${result.refundFinalized ? "Finalized." : "Waiting for finality."}`
+        : "Across reports a refund. The return of USDC to the sender still needs receipt verification.",
     };
     const deadline = result.fillDeadline
       ? " Fill deadline " + new Date(result.fillDeadline * 1000).toLocaleString() + "."
@@ -457,6 +463,7 @@ export function CrossPaymentPanel({
     setMessage(
       (details[result.status as keyof typeof details] ?? result.status) +
         deadline +
+        (result.refundHash ? " Reported refund transaction " + result.refundHash + "." : "") +
         (result.spentMicroUsdc ? " Source deposit " + usdc(result.spentMicroUsdc) + " USDC." : "") +
         (result.depositExecutionFeeWei
           ? " Deposit execution fee " + formatEther(BigInt(result.depositExecutionFeeWei)) + " ETH."
@@ -531,6 +538,9 @@ export function CrossPaymentPanel({
           {direct
             ? "The transfer settles on this chain."
             : "Destination settlement requires a separate fill."}
+          {q.fillDeadline &&
+            " Fill deadline " + new Date(q.fillDeadline * 1000).toLocaleString() + "."}
+          {q.recovery && " " + q.recovery}
         </p>
       )}
       {q?.execution === "quote_only" && q.fundingShortfall && (

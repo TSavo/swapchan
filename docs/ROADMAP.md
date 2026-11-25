@@ -278,6 +278,8 @@ Swap routing already covers 15 networks, including native BTC/LTC/DOGE/BCH throu
 
 After an origin deposit, use **Verify a destination transaction** in SmartWallet if a relayer supplies a fill hash before the Across index catches up. SmartWallet checks the destination receipt against the origin deposit, recipient and exact USDC movement, including when a relayer batches several deposits. It saves a matching hash for finality checks across browser restarts. The destination chain's finalized timestamp determines when SmartWallet reports a passed fill deadline. A refund requires separate receipt evidence.
 
+The Across review shows the fill deadline before signing and explains testnet refund handling. When Across indexes a refund, SmartWallet checks its linked origin receipt for a successful post-deadline transfer of the exact deposited USDC from the pool back to the sender. It displays the returned amount and finality when those checks pass. Across supplies the link between the refund transaction and deposit ID. The November 25 lookup for deposit 1003766 returned `expired` with empty fill and refund transaction references.
+
 The direct-transfer receipt check was replayed against a public Optimism transaction for 1.494646 USDC. It matched the transaction hash, token, transfer calldata, recipient, amount and finalized receipt. That receipt recorded 57,691,280,687 wei in execution fees and 2,713,792,278 wei in L1 data fees. Mainnet builds remain disabled. [Optimism receipt](https://optimistic.etherscan.io/tx/0x73c067802b2b58184f1fdef6d86c780d5b6d52e51021f67f4f9a4141031886f0)
 
 ## Proposed tools

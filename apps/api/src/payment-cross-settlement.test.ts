@@ -70,6 +70,43 @@ it("reports a finalized destination deadline separately from a fill or refund", 
   const after = await verify(sample, true, undefined, pending, "0xffffffff");
   expect(after).toMatchObject({ status: "fill_deadline_passed", providerStatus: "pending" });
 });
+it("checks the provider-linked return against the origin token, sender, amount and finality", async () => {
+  const refundHash = "0x" + "ab".repeat(32);
+  const transfer = structuredClone(sample.origin.logs[0]!);
+  const [signature, senderTopic, poolTopic] = transfer.topics;
+  transfer.topics = [signature!, poolTopic!, senderTopic!];
+  const verifyReturn = () =>
+    crossSettlement(
+      async (chain, method, params) => {
+        expect(chain).toBe(8453);
+        if (method === "eth_getTransactionReceipt")
+          return params[0] === refundHash
+            ? {
+                ...sample.origin,
+                transactionHash: refundHash,
+                blockNumber: "0x8000000",
+                logs: [transfer],
+              }
+            : sample.origin;
+        return { number: "0x8000000", hash: sample.origin.blockHash, timestamp: "0xffffffff" };
+      },
+      { ...intent, fillHash: undefined },
+      async () =>
+        Response.json({
+          ...indexResult,
+          status: "refunded",
+          fillTxnRef: null,
+          depositRefundTxnRef: refundHash,
+        }),
+    );
+  expect(await verifyReturn()).toMatchObject({
+    status: "recovery_reported",
+    returnedMicroUsdc: "13442407",
+    refundFinalized: true,
+  });
+  transfer.topics[2] = poolTopic!;
+  expect(await verifyReturn()).not.toHaveProperty("returnedMicroUsdc");
+});
 it("reconciles the historical Base deposit with the finalized Optimism payout", async () => {
   expect(await verify()).toMatchObject({
     status: "settled",

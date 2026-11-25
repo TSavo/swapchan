@@ -114,6 +114,7 @@ try {
         "awaiting_fill_index",
         "awaiting_verified_fill",
         "fill_deadline_passed",
+        "expiry_reported",
         "recovery_reported",
         "awaiting_destination_receipt",
         "awaiting_finality",

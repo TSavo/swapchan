@@ -256,6 +256,11 @@ export async function quoteCrossPayment(
     },
     originSimulation,
     expectedFillSeconds: q.expectedFillTime,
+    fillDeadline,
+    recovery:
+      route.origin === 84532
+        ? "Across does not automatically refund unfilled testnet deposits."
+        : "If the fill expires, track the origin-chain refund separately.",
     expiresAt: Math.min(q.quoteExpiryTimestamp, fillDeadline),
     settlement: "Requires a separate destination fill and confirmation.",
   };

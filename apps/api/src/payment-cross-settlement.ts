@@ -55,6 +55,7 @@ export async function crossSettlement(
       throw Error("Noncanonical receipt");
     return {
       r,
+      timestamp: z.object({ timestamp: height.optional() }).parse(block).timestamp,
       final:
         BigInt(height.parse(z.object({ number: height }).parse(finalized).number)) >=
         BigInt(r.blockNumber),
@@ -126,12 +127,40 @@ export async function crossSettlement(
         depositId: z.union([z.string(), z.number().int().safe()]),
         depositTxnRef: hash,
         fillTxnRef: hash.nullish(),
+        depositRefundTxnRef: hash.nullish(),
       })
       .parse(await reply.json());
     if (hint.depositTxnRef !== intent.originHash || String(hint.depositId) !== progress.depositId)
       throw Error("Across index returned a different deposit");
-    if (hint.status === "refunded" || hint.status === "expired")
-      return { ...progress, status: "recovery_reported", providerStatus: hint.status };
+    if (hint.status === "expired") return pending("expiry_reported", hint.status);
+    if (hint.status === "refunded") {
+      const reported = { ...progress, status: "recovery_reported", providerStatus: hint.status };
+      const refundHash = hint.depositRefundTxnRef;
+      if (!refundHash || refundHash === intent.originHash) return reported;
+      const refund = await canonical(route.origin, refundHash);
+      if (!refund || !refund.timestamp || BigInt(refund.timestamp) <= BigInt(d.fillDeadline))
+        return { ...reported, refundHash };
+      const transfers = logs(refund.r, route.sourceToken)
+        .filter((l) => l.topics[0] === toEventSelector("Transfer(address,address,uint256)"))
+        .map((l) => decodeEventLog({ abi: erc20Abi, eventName: "Transfer", ...l }).args)
+        .filter(
+          (t) =>
+            t.from.toLowerCase() === route.pool.toLowerCase() &&
+            t.to.toLowerCase() === intent.sender.toLowerCase() &&
+            t.value === d.inputAmount,
+        );
+      if (
+        transfers.length !== 1 ||
+        delta(refund.r, route.sourceToken, intent.sender) !== d.inputAmount
+      )
+        return { ...reported, refundHash };
+      return {
+        ...reported,
+        refundHash,
+        returnedMicroUsdc: String(d.inputAmount),
+        refundFinalized: origin.final && refund.final,
+      };
+    }
     if (hint.status !== "filled" || !hint.fillTxnRef)
       return pending("awaiting_verified_fill", hint.status);
     fillHash = hint.fillTxnRef;
