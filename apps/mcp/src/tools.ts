@@ -1030,6 +1030,12 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               sender: evm,
               recipient: evm,
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              sourceChainId: z
+                .union([z.literal(84532), z.literal(11155420), z.literal(10)])
+                .optional()
+                .describe(
+                  "Quote only this source chain. Omit to compare supported funding routes.",
+                ),
             })
             .strict()
             .optional(),

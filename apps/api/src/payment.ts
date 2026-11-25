@@ -48,6 +48,7 @@ const abi = parseAbi([
 const input = z
   .object({
     chainId: z.literal(84532),
+    sourceChainId: z.literal(84532).optional(),
     sender: EvmAddress,
     recipient: EvmAddress,
     amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
@@ -453,7 +454,7 @@ export function paymentRoutes(
       });
       return c.json({ ...comparison, reviewId });
     }
-    if (raw?.sourceChainId !== undefined)
+    if (raw?.sourceChainId !== undefined && (raw.chainId !== 84532 || raw.sourceChainId !== 84532))
       return c.json({ error: "unsupported_cross_chain_payment" }, 400);
     const parsed = input.safeParse(raw);
     if (!parsed.success) return c.json({ error: "invalid_payment" }, 400);

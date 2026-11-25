@@ -94,6 +94,8 @@ For a Base Sepolia payment, call `pay` with the intent, review the returned limi
 
 ## Tests
 
+For an exact Optimism Sepolia payment (`chainId: 11155420`), omit `intent.sourceChainId` in `pay` to compare available funding routes. Set it to `84532` to use Base Sepolia USDC through Across, or `11155420` to use a local USDC transfer. An explicit source restricts the quote to that chain. A bridge result with `depositLimitIssue: "below_minimum"` is ineligible for execution.
+
 Run `pnpm --filter @swapchan/mcp e2e:payments` against a running MCP server and API to check the live payment flow. Set `MCP_URL` if the server uses a different URL from `http://127.0.0.1:8788/mcp`, and set `MCP_KEY` if it requires authentication. The check compares both Optimism Sepolia funding routes through `pay` and `quote_payment`. It verifies a historical finalized Base-to-Optimism transfer and reports the current settlement state of the roadmap's testnet deposit. It uses public wallet addresses and requires no signing key.
 
 `pnpm --filter @swapchan/mcp test` boots a mock of the API contract (`src/mockApi.ts`) and drives the real HTTP server with the SDK
