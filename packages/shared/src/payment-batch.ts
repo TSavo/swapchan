@@ -33,6 +33,7 @@ export type PaymentQuote = {
   wrapNativeWei?: string;
   swapOutputMicroUsdc: string;
   requiresDelegation: boolean;
+  authorizationNonce?: string;
   maxFeePerGas: string;
   maxPriorityFeePerGas: string;
   circle?: {

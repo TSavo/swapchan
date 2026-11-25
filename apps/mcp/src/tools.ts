@@ -1470,12 +1470,37 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         String(built.userOpHash),
         a.authorization as SignedAuthorization | undefined,
       );
+      const payment = saved as unknown as PaymentQuote;
+      const blockToolsArgs = [
+        "base-sepolia-payment",
+        "build.json",
+        payment.sender,
+        payment.recipient,
+        payment.amountMicroUsdc,
+        payment.maxWethWei,
+        payment.maxGasMicroUsdc,
+        ...(payment.circle
+          ? ["--circle", payment.circle.maxInputMicroUsdc, payment.circle.burnDataHash]
+          : []),
+        ...(BigInt(payment.wrapNativeWei ?? "0") > 0n ? ["--wrap", payment.wrapNativeWei!] : []),
+      ];
       const payload = serializeTypedData(local);
       const { typedData: verifiedTypedData, ...checks } = verification;
       return {
         ...built,
         typedData: JSON.parse(payload),
         verification: checks,
+        blockTools: {
+          executable: "tx-sign",
+          inspectArgs: [...blockToolsArgs, "--inspect"],
+          signArgs: blockToolsArgs,
+          buildFile: {
+            quote: payment,
+            entryPoint: built.entryPoint,
+            userOperation: built.userOperation,
+            userOpHash: built.userOpHash,
+          },
+        },
         walletRequest: { method: "eth_signTypedData_v4", params: [saved.sender, payload] },
         next: {
           tool: "submit_payment",

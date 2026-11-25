@@ -651,6 +651,13 @@ export function paymentRoutes(
       amountMicroUsdc: intent.amountMicroUsdc,
       chainId: 84532,
       requiresDelegation,
+      ...(requiresDelegation
+        ? {
+            authorizationNonce: String(
+              BigInt(hex.parse(await chain("eth_getTransactionCount", [intent.sender, "pending"]))),
+            ),
+          }
+        : {}),
       maxWethWei: String(maxWeth),
       wrapNativeWei: String(wrapNative),
       swapOutputMicroUsdc: String(missing),
@@ -1118,6 +1125,8 @@ export function paymentRoutes(
         const pending = BigInt(
           hex.parse(await chain("eth_getTransactionCount", [q.sender, "pending"])),
         );
+        if (q.authorizationNonce !== undefined && pending.toString() !== q.authorizationNonce)
+          return c.json({ error: "authorization_nonce_changed" }, 409);
         if (!auth) {
           const request = {
             delegation: checked,
