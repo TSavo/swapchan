@@ -339,11 +339,11 @@ export function CrossPaymentPanel({
       );
     }
   }
-  async function check(candidateFillHash?: Hex) {
+  async function check(candidateFillHash?: Hex, candidateOriginHash?: Hex) {
     if (!review?.step || !q || !matches(q)) return;
     const { step } = review;
-    let hash = step.hash ?? (recovery as Hex);
-    if (step.batchId && !step.hash) {
+    let hash = step.hash ?? candidateOriginHash ?? (recovery as Hex);
+    if (step.batchId && !step.hash && !candidateOriginHash) {
       const client = await getConnectorClient(config, { account: sender, chainId: 84532 });
       const status = await client.request({
         method: "wallet_getCallsStatus",
@@ -369,9 +369,10 @@ export function CrossPaymentPanel({
         throw Error("Transaction differs from the reviewed step.");
       save({ ...review, step: { ...step, hash } });
     }
-    if (step.batchId && !step.hash) save({ ...review, step: { ...step, hash } });
     const receipt = await getTransactionReceipt(config, { chainId: signingChain, hash });
     if (receipt.status !== "success") {
+      if (step.batchId)
+        throw Error("This origin receipt reverted. Check the deposit hash in your wallet.");
       save({ quote: q });
       throw Error("Origin transaction reverted. Refresh the quote before signing again.");
     }
@@ -416,6 +417,11 @@ export function CrossPaymentPanel({
       );
       return;
     }
+    const reviewedDepositData =
+      step.action === "atomic_origin"
+        ? decodeFunctionData({ abi: batchAbi, data: step.tx.data }).args[0][1]?.data
+        : step.tx.data;
+    if (!reviewedDepositData) throw Error("The saved review is missing its deposit call.");
     const result = await paymentRequest<{
       status: string;
       fillHash?: Hex;
@@ -438,16 +444,20 @@ export function CrossPaymentPanel({
       ...intent,
       sourceChainId: route.origin,
       originHash: hash,
+      reviewedDepositData,
       approvalHash: review.approvalHash,
       fillHash: candidateFillHash ?? step.fillHash,
       maxInputMicroUsdc: q.maxInputMicroUsdc,
     });
-    if (
-      result.fillHash &&
-      result.fillHash !== step.fillHash &&
-      (result.status === "settled" || result.status === "awaiting_finality")
-    )
-      save({ ...review, step: { ...step, hash, fillHash: result.fillHash } });
+    const verifiedFill =
+      result.status === "settled" || result.status === "awaiting_finality"
+        ? result.fillHash
+        : undefined;
+    if (result.spentMicroUsdc && (!step.hash || (verifiedFill && verifiedFill !== step.fillHash)))
+      save({
+        ...review,
+        step: { ...step, hash, ...(verifiedFill ? { fillHash: verifiedFill } : {}) },
+      });
     if (result.status === "settled" && result.fillHash) {
       await report(proposal.actionId, {
         status: "confirmed",
@@ -630,23 +640,44 @@ export function CrossPaymentPanel({
             Check transaction status
           </button>
           {batchId && (
-            <button
-              disabled={busy}
-              onClick={() =>
-                run(async () => {
-                  const client = await getConnectorClient(config, {
-                    account: sender,
-                    chainId: 84532,
-                  });
-                  await client.request(
-                    { method: "wallet_showCallsStatus", params: [batchId] },
-                    { retryCount: 0 },
-                  );
-                })
-              }
-            >
-              Open batch in wallet
-            </button>
+            <>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    const client = await getConnectorClient(config, {
+                      account: sender,
+                      chainId: 84532,
+                    });
+                    await client.request(
+                      { method: "wallet_showCallsStatus", params: [batchId] },
+                      { retryCount: 0 },
+                    );
+                  })
+                }
+              >
+                Open batch in wallet
+              </button>
+              {!review.step.hash && (
+                <details>
+                  <summary>Recover a mined deposit from the wallet</summary>
+                  <label>
+                    Base Sepolia deposit transaction hash
+                    <input
+                      value={recovery}
+                      onChange={(e) => setRecovery(e.target.value)}
+                      spellCheck={false}
+                    />
+                  </label>
+                  <button
+                    disabled={busy || !/^0x[0-9a-f]{64}$/i.test(recovery.trim())}
+                    onClick={() => run(() => check(undefined, recovery.trim() as Hex))}
+                  >
+                    Verify origin receipt
+                  </button>
+                </details>
+              )}
+            </>
           )}
           {review.step.hash &&
             (review.step.action === "deposit" || review.step.action === "atomic_origin") && (

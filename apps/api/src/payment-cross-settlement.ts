@@ -1,5 +1,14 @@
-import { acrossRoute, EvmAddress } from "@swapchan/shared";
-import { decodeEventLog, erc20Abi, type Hex, pad, parseAbi, toEventSelector, zeroHash } from "viem";
+import { acrossDepositAbi, acrossRoute, EvmAddress } from "@swapchan/shared";
+import {
+  decodeEventLog,
+  encodeFunctionData,
+  erc20Abi,
+  type Hex,
+  pad,
+  parseAbi,
+  toEventSelector,
+  zeroHash,
+} from "viem";
 import { z } from "zod";
 import { crossPaymentInput } from "./payment-cross-chain.js";
 import { receiptFees } from "./payment-origin-fees.js";
@@ -28,6 +37,7 @@ const receipt = z.object({
 });
 export const settlementInput = crossPaymentInput.safeExtend({
   originHash: hash,
+  reviewedDepositData: data.optional(),
   approvalHash: hash.optional(),
   fillHash: hash.optional(),
   maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
@@ -76,6 +86,41 @@ export async function crossSettlement(
     .map((l) => decodeEventLog({ abi: [abi[0]], ...l }));
   if (deposits.length !== 1) throw Error("Ambiguous or missing origin deposit");
   const d = deposits[0]!.args;
+  if (intent.reviewedDepositData) {
+    const encodeDeposit = (exclusivity: number) =>
+      encodeFunctionData({
+        abi: acrossDepositAbi,
+        functionName: "deposit",
+        args: [
+          d.depositor,
+          d.recipient,
+          d.inputToken,
+          d.outputToken,
+          d.inputAmount,
+          d.outputAmount,
+          d.destinationChainId,
+          d.exclusiveRelayer,
+          d.quoteTimestamp,
+          d.fillDeadline,
+          exclusivity,
+          d.message,
+        ],
+      }).toLowerCase();
+    const candidates: string[] = [];
+    if (d.exclusivityDeadline === 0 || d.exclusivityDeadline > 31_536_000)
+      candidates.push(encodeDeposit(d.exclusivityDeadline));
+    if (origin.timestamp) {
+      const offset = BigInt(d.exclusivityDeadline) - BigInt(origin.timestamp);
+      if (offset > 0n && offset <= 31_536_000n) candidates.push(encodeDeposit(Number(offset)));
+    }
+    const reviewed = intent.reviewedDepositData;
+    if (
+      !candidates.some(
+        (encoded) => reviewed === encoded || reviewed === encoded + "1dc0de000073c0de",
+      )
+    )
+      throw Error("Origin receipt differs from the reviewed deposit");
+  }
   if (
     d.depositor !== pad(intent.sender).toLowerCase() ||
     d.recipient !== pad(intent.recipient).toLowerCase() ||

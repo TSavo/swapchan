@@ -282,6 +282,8 @@ After an origin deposit, use **Verify a destination transaction** in SmartWallet
 
 The API keeps the reviewed Across deposit calldata until quote expiry. Before each wallet step, it checks the current source balances, allowance and gas, then simulates the retained transaction. SmartWallet also checks the encoded fill deadline against the one shown in the review.
 
+If the wallet cannot recover a submitted batch by ID, use **Recover a mined deposit from the wallet** and enter its Base Sepolia transaction hash. SmartWallet matches the origin deposit event to the saved call before keeping the hash and tracking the destination. This read-only recovery establishes the deposit outcome. Wallet batch status supplies separate evidence of atomic execution.
+
 For a split approval and deposit, SmartWallet sends both receipt hashes to the status API. MCP accepts the same optional `crossChain.approvalHash` in `payment_status`. For deposit 1003766 the matched approval cost 332,478,000,000 wei in execution and 92 wei in L1 data. The deposit cost 438,582,000,000 wei in execution and 182 wei in L1 data. Both origin receipts finalized.
 
 The Across review shows the fill deadline before signing and explains testnet refund handling. When Across indexes a refund, SmartWallet checks its linked origin receipt for a successful post-deadline transfer of the exact deposited USDC from the pool back to the sender. It displays the returned amount and finality when those checks pass. Across supplies the link between the refund transaction and deposit ID. The November 25 lookup for deposit 1003766 returned `expired` with empty fill and refund transaction references.

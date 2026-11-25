@@ -35,7 +35,7 @@ export function acrossRoute(destination: number) {
   if (destination === 11155420) return acrossTestRoute;
   throw Error("Unsupported Across destination");
 }
-const deposit = parseAbi([
+export const acrossDepositAbi = parseAbi([
   "function deposit(bytes32 depositor,bytes32 recipient,bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 destinationChainId,bytes32 exclusiveRelayer,uint32 quoteTimestamp,uint32 fillDeadline,uint32 exclusivityDeadline,bytes message)",
 ]);
 
@@ -53,11 +53,11 @@ export function checkAcrossDeposit(
 ) {
   const route = acrossRoute(intent.chainId ?? 10);
   const { sourceToken, destinationToken, pool } = route;
-  const { args } = decodeFunctionData({ abi: deposit, data: tx.data as Hex });
+  const { args } = decodeFunctionData({ abi: acrossDepositAbi, data: tx.data as Hex });
   const [sender, recipient, tokenIn, tokenOut, amountIn, amountOut, destination, , , , , message] =
     args;
   const canonical = encodeFunctionData({
-    abi: deposit,
+    abi: acrossDepositAbi,
     functionName: "deposit",
     args,
   }).toLowerCase();

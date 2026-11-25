@@ -1138,6 +1138,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
               maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
               originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              reviewedDepositData: z
+                .string()
+                .regex(/^0x(?:[0-9a-f]{2})+$/i)
+                .optional(),
               approvalHash: z
                 .string()
                 .regex(/^0x[0-9a-f]{64}$/i)
