@@ -4,6 +4,7 @@ import { acrossRoute, EvmAddress, NON_EVM, TRON } from "@swapchan/shared";
 import { type Address, encodeAbiParameters, encodeFunctionData, type Hex, parseAbi } from "viem";
 import { z } from "zod";
 import { RELAY_DEPOSITORY_PINS } from "./guard/relayPins.js";
+import { relayPayout } from "./payment-relay-payout.js";
 import { checkRelayPaymentTerms } from "./payment-relay-terms.js";
 import { getJson } from "./providers/types.js";
 
@@ -38,7 +39,17 @@ const trigger = z
     data: z.string().regex(/^[0-9a-f]+$/i),
   })
   .strict();
-export async function quoteTronPayment(f: typeof fetch, i: z.infer<typeof tronPaymentInput>) {
+export type ReviewedTronPayment = z.infer<typeof tronPaymentInput> & {
+  requestId: string;
+  orderId: string;
+  depositSun: string;
+  expiresAt: number;
+};
+export async function quoteTronPayment(
+  f: typeof fetch,
+  i: z.infer<typeof tronPaymentInput>,
+  save: (review: ReviewedTronPayment) => string,
+) {
   const post = (url: string, body: unknown) =>
     getJson(f, url, {
       method: "POST",
@@ -88,6 +99,7 @@ export async function quoteTronPayment(f: typeof fetch, i: z.infer<typeof tronPa
       steps: z.tuple([
         z.object({
           id: z.literal("deposit"),
+          requestId: z.string().regex(/^0x[0-9a-f]{64}$/),
           items: z.tuple([
             z.object({
               data: z
@@ -185,6 +197,20 @@ export async function quoteTronPayment(f: typeof fetch, i: z.infer<typeof tronPa
   const total = BigInt(amount) + energySun + bandwidthSun;
   return {
     ...reviewed,
+    tracking: {
+      tool: "payment_status",
+      arguments: {
+        tron: {
+          reviewId: save({
+            ...i,
+            requestId: steps[0].requestId,
+            orderId: v2.orderId,
+            depositSun: amount,
+            expiresAt: order.deadline + 7 * 24 * 3600,
+          }),
+        },
+      },
+    },
     status: balance >= total ? "quoted" : "insufficient_unstaked_balance",
     sourceSimulation: {
       status: "succeeded",
@@ -195,5 +221,139 @@ export async function quoteTronPayment(f: typeof fetch, i: z.infer<typeof tronPa
     estimatedEnergyBurnSun: String(energySun),
     estimatedBandwidthBurnSun: String(bandwidthSun),
     estimatedTotalWithoutStakedResourcesSun: String(total),
+  };
+}
+
+const word = z.string().regex(/^0x[0-9a-f]{64}$/i);
+export async function tronPaymentStatus(
+  f: typeof fetch,
+  rpc: (url: string, method: string, params: unknown[]) => Promise<unknown>,
+  i: ReviewedTronPayment,
+) {
+  const report = z
+    .object({
+      status: z.string(),
+      inTxHashes: z.array(z.string()).optional(),
+      txHashes: z.array(z.string()).optional(),
+      originChainId: z.literal(TRON).optional(),
+      destinationChainId: z.literal(10).optional(),
+    })
+    .parse(
+      await getJson(f, "https://api.relay.link/intents/status/v3?requestId=" + i.requestId, {
+        signal: AbortSignal.timeout(10000),
+      }),
+    );
+  const base = { requestId: i.requestId, orderId: i.orderId, providerStatus: report.status };
+  if (!report.inTxHashes?.length) return { ...base, status: "awaiting_origin_receipt" };
+  if (report.inTxHashes.length !== 1) throw Error("Ambiguous Tron deposit");
+  const id = z
+    .string()
+    .regex(/^(?:0x)?[0-9a-f]{64}$/i)
+    .parse(report.inTxHashes[0])
+    .replace(/^0x/, "");
+  const solid = (method: string) =>
+    getJson(f, "https://api.trongrid.io/walletsolidity/" + method, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: id }),
+      signal: AbortSignal.timeout(10000),
+    });
+  const [raw, info] = await Promise.all([
+    solid("gettransactionbyid"),
+    solid("gettransactioninfobyid"),
+  ]);
+  if (
+    !z.object({ txID: z.string() }).safeParse(raw).success ||
+    !z.object({ id: z.string() }).safeParse(info).success
+  )
+    return { ...base, status: "awaiting_origin_finality", transactionHash: id };
+  const tx = z
+    .object({
+      txID: z.literal(id),
+      raw_data_hex: z.string().regex(/^(?:[0-9a-f]{2})+$/i),
+      signature: z.tuple([z.string().regex(/^[0-9a-f]{130}$/i)]),
+      raw_data: z.object({
+        contract: z.tuple([
+          z.object({
+            type: z.literal("TriggerSmartContract"),
+            parameter: z.object({ value: trigger }),
+          }),
+        ]),
+      }),
+    })
+    .parse(raw);
+  const p = tx.raw_data.contract[0].parameter.value;
+  const owner = Buffer.from(base58.decode(i.sender)).toString("hex"),
+    depository = Buffer.from(base58.decode(RELAY_DEPOSITORY_PINS[TRON]!)).toString("hex");
+  const addr = ("0x" + owner.slice(2)) as Address;
+  if (
+    createHash("sha256").update(Buffer.from(tx.raw_data_hex, "hex")).digest("hex") !== id ||
+    p.owner_address !== owner ||
+    p.contract_address !== depository ||
+    String(p.call_value) !== i.depositSun ||
+    "0x" + p.data !==
+      encodeFunctionData({
+        abi: parseAbi(["function depositNative(address depositor,bytes32 id)"]),
+        functionName: "depositNative",
+        args: [addr, i.orderId as Hex],
+      })
+  )
+    throw Error("Mined Tron deposit differs from review");
+  const rec = z
+    .object({
+      id: z.literal(id),
+      blockNumber: safe,
+      fee: safe.optional(),
+      receipt: z.object({ result: z.string() }),
+      log: z
+        .array(z.object({ address: z.string(), topics: z.array(z.string()), data: z.string() }))
+        .optional(),
+    })
+    .parse(info);
+  const origin = {
+    transactionHash: id,
+    blockNumber: rec.blockNumber,
+    finalized: true,
+    signatures: 1,
+    feeSun: String(rec.fee ?? 0),
+  };
+  if (rec.receipt.result !== "SUCCESS") return { ...base, origin, status: "origin_failed" };
+  const event = encodeAbiParameters(
+    [{ type: "address" }, { type: "uint256" }, { type: "bytes32" }],
+    [addr, BigInt(i.depositSun), i.orderId as Hex],
+  ).slice(2);
+  if (
+    !rec.log ||
+    rec.log.length !== 1 ||
+    rec.log[0]!.address !== depository.slice(2) ||
+    rec.log[0]!.topics.join("") !==
+      "8032066556caf3967d8fec4ad22a2d9e1e9576556b2903a0fcd5b1fd201e3477" ||
+    rec.log[0]!.data !== event
+  )
+    throw Error("Unexpected Tron deposit event");
+  const progress = { ...base, origin: { ...origin, depositSun: i.depositSun } };
+  if (report.status !== "success")
+    return {
+      ...progress,
+      status:
+        report.status === "refund"
+          ? "refund_reported"
+          : report.status === "failure"
+            ? "provider_failed"
+            : "awaiting_destination",
+    };
+  if (
+    report.originChainId !== TRON ||
+    report.destinationChainId !== 10 ||
+    report.txHashes?.length !== 1
+  )
+    throw Error("Ambiguous Tron payout");
+  return {
+    ...progress,
+    ...(await relayPayout(
+      rpc,
+      { recipient: i.recipient, payoutMicroUsdc: i.amountMicroUsdc },
+      word.parse(report.txHashes[0]),
+    )),
   };
 }

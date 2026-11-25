@@ -42,6 +42,7 @@ export async function multiFundingQuote(
   i: z.infer<typeof multiFundingInput>,
   prices: Pricer,
   save: Parameters<typeof quoteSolanaPayment>[3],
+  saveTron: Parameters<typeof quoteTronPayment>[2],
   evmQuote: (chainId: 10 | 8453, sender: `0x${string}`) => Promise<EvmReview>,
 ) {
   const { fundingAddresses: a, ...intent } = i;
@@ -113,7 +114,11 @@ export async function multiFundingQuote(
     });
   if (a.tron)
     add(TRON, async () => {
-      const q = await quoteTronPayment(f, { ...intent, sourceChainId: TRON, sender: a.tron! }),
+      const q = await quoteTronPayment(
+          f,
+          { ...intent, sourceChainId: TRON, sender: a.tron! },
+          saveTron,
+        ),
         mint = NON_EVM[TRON]!.native;
       return {
         review: q,

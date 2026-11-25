@@ -1446,6 +1446,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .string()
             .regex(/^0x[0-9a-f]{64}$/i)
             .optional(),
+          tron: z.object({ reviewId: z.uuid() }).strict().optional(),
           solana: z.object({ reviewId: z.uuid() }).strict().optional(),
           circle: z
             .object({
@@ -1525,7 +1526,8 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         })
         .refine(
           (a) =>
-            [a.userOpHash, a.crossChain, a.direct, a.circle, a.solana].filter(Boolean).length === 1,
+            [a.userOpHash, a.crossChain, a.direct, a.circle, a.solana, a.tron].filter(Boolean)
+              .length === 1,
           "Supply one payment reference",
         ),
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -1552,6 +1554,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           originHash: batch.receipts[0]!.transactionHash,
         });
       }
+      if (a.tron) return api.tronPaymentStatus(a.tron);
       return a.solana
         ? api.solanaPaymentStatus(a.solana)
         : a.circle

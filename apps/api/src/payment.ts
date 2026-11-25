@@ -50,7 +50,12 @@ import {
 import { quoteSolanaPayment, solanaPaymentInput } from "./payment-solana.js";
 import { type ReviewedSolanaPayment, solanaPaymentStatus } from "./payment-solana-status.js";
 import { openPaymentStore } from "./payment-store.js";
-import { quoteTronPayment, tronPaymentInput } from "./payment-tron.js";
+import {
+  quoteTronPayment,
+  type ReviewedTronPayment,
+  tronPaymentInput,
+  tronPaymentStatus,
+} from "./payment-tron.js";
 import { llamaPricer } from "./pricing.js";
 
 const { weth, usdc, paymaster, entry, delegate } = paymentContracts;
@@ -442,6 +447,22 @@ export function paymentRoutes(
     "solana-receipts",
     (r) => r.expiresAt,
   );
+  const tronReviews = receipts.cache<ReviewedTronPayment>("tron-receipts", (r) => r.expiresAt);
+  const saveTron = (review: ReviewedTronPayment) => retain(tronReviews, review);
+  app.post("/tron/status", async (c) => {
+    const parsed = z
+      .object({ reviewId: z.uuid() })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_tron_review" }, 400);
+    const review = tronReviews.get(parsed.data.reviewId);
+    if (!review) return c.json({ error: "unknown_tron_payment" }, 404);
+    try {
+      return c.json(await tronPaymentStatus(f, rpc, review));
+    } catch {
+      return c.json({ error: "tron_settlement_unverified" }, 502);
+    }
+  });
   app.post("/solana/status", async (c) => {
     const body = z
       .object({ reviewId: z.uuid() })
@@ -664,6 +685,7 @@ export function paymentRoutes(
         parsed.data,
         prices,
         (r) => retain(solanaReviews, r),
+        saveTron,
         (chainId, sender) => {
           const intent = { chainId: 10 as const, sender, recipient, amountMicroUsdc };
           return chainId === 10
@@ -680,7 +702,7 @@ export function paymentRoutes(
       const parsed = tronPaymentInput.safeParse(raw);
       if (!parsed.success) return c.json({ error: "invalid_tron_payment" }, 400);
       try {
-        return c.json(await quoteTronPayment(f, parsed.data));
+        return c.json(await quoteTronPayment(f, parsed.data, saveTron));
       } catch {
         return c.json({ error: "tron_quote_unverified" }, 503);
       }

@@ -203,6 +203,12 @@ export class SwapChanApi {
       body: JSON.stringify(body),
     });
   }
+  tronPaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/tron/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   solanaPaymentStatus(body: Record<string, unknown>) {
     return this.req(z.record(z.string(), z.unknown()), "/payments/solana/status", {
       method: "POST",
