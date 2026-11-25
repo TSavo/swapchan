@@ -160,11 +160,14 @@ it.each([false, true])(
   "builds only the next simulated testnet step (approved=%s)",
   async (approved) => {
     const amount = BigInt(sepolia.inputAmount);
-    const a = app(sepolia, amount, approved ? amount : 0n, false, false, "0xffff");
+    const providerTerms = structuredClone(sepolia);
+    const a = app(providerTerms, amount, approved ? amount : 0n, false, false, "0xffff");
     const q = await (
       await post(a, "/quote", { ...intent, sourceChainId: 84532, chainId: 11155420 })
     ).json();
     expect(q.execution).toBe("unsigned_origin_steps");
+    // Future provider quotes can change. The build must simulate the retained deposit.
+    providerTerms.expectedOutputAmount = "2";
     expect(
       await (await post(a, "/cross-chain/build", { quoteId: q.quoteId, stage: "initial" })).json(),
     ).toMatchObject({
@@ -204,6 +207,13 @@ it.each(["none", "verified", "changed", "revert"] as const)(
       expiresAt: q.expiresAt,
     };
     expect(() => checkAcrossAtomicOrigin(tx, review, q.inputMicroUsdc)).not.toThrow();
+    expect(() =>
+      checkAcrossAtomicOrigin(
+        tx,
+        { ...review, fillDeadline: q.fillDeadline + 1 },
+        q.inputMicroUsdc,
+      ),
+    ).toThrow();
     const [calls] = decodeFunctionData({ abi: batchAbi, data: tx.data as Hex }).args;
     for (const bad of [
       [...calls].reverse(),

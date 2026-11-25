@@ -49,6 +49,7 @@ export async function quoteCrossPayment(
   f: typeof fetch,
   intent: z.infer<typeof crossPaymentInput>,
   sourceRpc: (method: string, params: unknown[]) => Promise<unknown>,
+  reviewed?: z.infer<typeof response>,
 ) {
   const route = acrossRoute(intent.chainId);
   const { sourceToken, destinationToken, pool } = route;
@@ -64,9 +65,10 @@ export async function quoteCrossPayment(
     integratorId: "0x0000",
   });
   const q = response.parse(
-    await getJson(f, route.api + "/swap/approval?" + params, {
-      signal: AbortSignal.timeout(10000),
-    }),
+    reviewed ??
+      (await getJson(f, route.api + "/swap/approval?" + params, {
+        signal: AbortSignal.timeout(10000),
+      })),
   );
   if (q.swapTx.chainId !== route.origin) throw Error("Wrong origin chain");
   const { amountIn, fillDeadline } = checkAcrossDeposit(
@@ -264,5 +266,5 @@ export async function quoteCrossPayment(
     expiresAt: Math.min(q.quoteExpiryTimestamp, fillDeadline),
     settlement: "Requires a separate destination fill and confirmation.",
   };
-  return { quote, calls, atomicTx };
+  return { quote, calls, atomicTx, providerQuote: q };
 }

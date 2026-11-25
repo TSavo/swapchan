@@ -48,6 +48,7 @@ export function checkAcrossDeposit(
     amountMicroUsdc: string;
     maxInputMicroUsdc: string;
     expiresAt: number;
+    fillDeadline?: number | undefined;
   },
 ) {
   const route = acrossRoute(intent.chainId ?? 10);
@@ -76,6 +77,7 @@ export function checkAcrossDeposit(
     amountIn <= 0n ||
     amountIn > BigInt(intent.maxInputMicroUsdc) ||
     args[9] <= now ||
+    (intent.fillDeadline !== undefined && args[9] !== intent.fillDeadline) ||
     intent.expiresAt <= now
   )
     throw Error("Cross-chain deposit differs from payment intent or has expired");

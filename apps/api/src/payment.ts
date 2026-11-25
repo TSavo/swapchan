@@ -72,6 +72,7 @@ export function paymentRoutes(
   const crossQuotes = receipts.cache<{
     intent: z.infer<typeof crossPaymentInput>;
     review: CrossQuote;
+    providerQuote?: Awaited<ReturnType<typeof quoteCrossPayment>>["providerQuote"];
   }>("across", (v) => v.review.expiresAt);
   type RpcOp = Record<string, string | Record<string, string>>;
   const builds = receipts.cache<{ op: RpcOp; digest: Hex; quote: PaymentQuote }>(
@@ -150,8 +151,10 @@ export function paymentRoutes(
     84532: "https://sepolia.base.org",
     11155420: "https://sepolia.optimism.io",
   } as const;
-  const inspectCrossPayment = (intent: z.infer<typeof crossPaymentInput>) =>
-    quoteCrossPayment(f, intent, (m, p) => rpc(bridgeRpc[intent.sourceChainId], m, p));
+  const inspectCrossPayment = (
+    intent: z.infer<typeof crossPaymentInput>,
+    reviewed?: Parameters<typeof quoteCrossPayment>[3],
+  ) => quoteCrossPayment(f, intent, (m, p) => rpc(bridgeRpc[intent.sourceChainId], m, p), reviewed);
   const inspectDirect = (i: z.infer<typeof destinationIntent>) =>
     quoteDirect(i, (m, p) => rpc(bridgeRpc[i.chainId], m, p));
   const directQuotes = receipts.cache<{
@@ -164,10 +167,10 @@ export function paymentRoutes(
     return id;
   }
   async function issueCross(i: z.infer<typeof crossPaymentInput>) {
-    const { quote } = await inspectCrossPayment(i);
+    const { quote, providerQuote } = await inspectCrossPayment(i);
     if (i.chainId === 10 || !testnetEnabled) quote.execution = "quote_only";
     quote.expiresAt = Math.min(quote.expiresAt, Math.floor(Date.now() / 1000) + 120);
-    return { ...quote, quoteId: retain(crossQuotes, { intent: i, review: quote }) };
+    return { ...quote, quoteId: retain(crossQuotes, { intent: i, review: quote, providerQuote }) };
   }
   async function issueDirect(i: z.infer<typeof destinationIntent>) {
     const { quote } = await inspectDirect(i);
@@ -252,7 +255,11 @@ export function paymentRoutes(
     )
       return c.json({ error: "funded_quote_required" }, 422);
     try {
-      const { quote, calls, atomicTx } = await inspectCrossPayment(saved.intent);
+      if (!saved.providerQuote) return c.json({ error: "fresh_review_required" }, 409);
+      const { quote, calls, atomicTx } = await inspectCrossPayment(
+        saved.intent,
+        saved.providerQuote,
+      );
       if (saved.review.expiresAt <= Date.now() / 1000)
         return c.json({ error: "quote_expired" }, 410);
       if (

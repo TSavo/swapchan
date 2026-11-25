@@ -257,7 +257,12 @@ export function CrossPaymentPanel({
     if (atomic)
       checkAcrossAtomicOrigin(
         tx,
-        { ...intent, expiresAt, maxInputMicroUsdc: q.maxInputMicroUsdc },
+        {
+          ...intent,
+          expiresAt,
+          fillDeadline: q.fillDeadline,
+          maxInputMicroUsdc: q.maxInputMicroUsdc,
+        },
         q.sourceWallet.requiredApprovalMicroUsdc,
       );
     else if (action === "transfer") {
@@ -274,7 +279,13 @@ export function CrossPaymentPanel({
         throw Error("Transfer differs from your request.");
     } else if (action === "approve")
       checkAcrossApproval(tx, q.sourceWallet.requiredApprovalMicroUsdc, route.destination);
-    else checkAcrossDeposit(tx, { ...intent, maxInputMicroUsdc: q.maxInputMicroUsdc, expiresAt });
+    else
+      checkAcrossDeposit(tx, {
+        ...intent,
+        maxInputMicroUsdc: q.maxInputMicroUsdc,
+        fillDeadline: q.fillDeadline,
+        expiresAt,
+      });
     const step = { action: expectedAction, tx } as Step;
     if (atomic && atomicWallet) {
       const client = await getConnectorClient(config, { account: sender, chainId: 84532 });
