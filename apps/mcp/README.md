@@ -88,6 +88,8 @@ Hosted at `https://mcp.swapchan.com/mcp`.
 
 ## Payment review
 
+Base Sepolia quotes include the sender's USDC and WETH balances at the quote block. An underfunded wallet receives a `quote_only` review. Its `fundingShortfall` gives the additional WETH for the quoted swap and, separately, the additional micro-USDC for a payment funded entirely in USDC. Request a fresh quote after funding before building.
+
 For a Base Sepolia payment, call `pay` with the intent, review the returned limits, then call `pay` with the same destination chain and the chosen `quoteId`. This second call builds the operation and runs `verify_bundle`'s checks against the exact operation and delegation. It returns the verifier's EIP-712 signing data and the verified payout, sender, recipient, fee limits and expiry. The connected wallet signs after approval.
 
 ## Tests

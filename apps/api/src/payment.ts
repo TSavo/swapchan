@@ -64,7 +64,10 @@ export function paymentRoutes(
   receipts = openPaymentStore(),
   testnetEnabled = false,
 ) {
-  const issued = receipts.cache<PaymentQuote>("same-chain", (q) => q.expiresAt);
+  const issued = receipts.cache<PaymentQuote & { execution?: "quote_only" | "sponsored_payment" }>(
+    "same-chain",
+    (q) => q.expiresAt,
+  );
   type CrossQuote = Awaited<ReturnType<typeof quoteCrossPayment>>["quote"];
   const crossQuotes = receipts.cache<{
     intent: z.infer<typeof crossPaymentInput>;
@@ -460,6 +463,7 @@ export function paymentRoutes(
           : BigInt(gasQuote.maxGasMicroUsdc.swapOrSetup);
       const missing = payout + gas - BigInt(usd);
       let maxWeth = 0n;
+      let wethGap = 0n;
       if (missing > 0n) {
         const data = encodeFunctionData({
           abi,
@@ -476,12 +480,27 @@ export function paymentRoutes(
         if (!needed) throw new Error("no route");
         maxWeth = (needed * 101n + 99n) / 100n;
         const available = BigInt(wrapped);
-        if (available < needed)
-          return c.json({ error: "insufficient_WETH", requiredWei: maxWeth.toString() }, 422);
-        if (available < maxWeth) maxWeth = available;
+        if (available < needed) wethGap = needed - available;
+        else if (available < maxWeth) maxWeth = available;
       }
       const result = {
         ...parsed.data,
+        execution: wethGap > 0n ? ("quote_only" as const) : ("sponsored_payment" as const),
+        sourceWallet: {
+          balanceMicroUsdc: BigInt(usd).toString(),
+          balanceWethWei: BigInt(wrapped).toString(),
+        },
+        fundingShortfall:
+          wethGap > 0n
+            ? {
+                additionalWethWei: wethGap.toString(),
+                additionalMicroUsdcForDirectPayment: (
+                  payout +
+                  (code === "0x" ? gas : directCap) -
+                  BigInt(usd)
+                ).toString(),
+              }
+            : null,
         blockNumber,
         expiresAt: gasQuote.expiresAt,
         delegate,
@@ -551,6 +570,7 @@ export function paymentRoutes(
     if (!parsed.success) return c.json({ error: "invalid_build_request" }, 400);
     const q = issued.get(parsed.data.quoteId);
     if (!q || q.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
+    if (q.execution === "quote_only") return c.json({ error: "funded_quote_required" }, 422);
     try {
       const auth = parsed.data.authorization;
       const checked = await inspectDelegation(chain, q.sender, delegate);

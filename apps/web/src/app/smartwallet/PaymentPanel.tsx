@@ -25,7 +25,16 @@ import {
 import { simulateContract, waitForTransactionReceipt } from "wagmi/actions";
 import { PaymentRequestError, paymentRequest as request } from "@/lib/paymentRequest";
 
-type Review = PaymentQuote & { quoteId: string; authorizationNonce?: string };
+type Review = PaymentQuote & {
+  quoteId: string;
+  authorizationNonce?: string;
+  execution?: "quote_only" | "sponsored_payment";
+  sourceWallet?: { balanceMicroUsdc: string; balanceWethWei: string };
+  fundingShortfall?: {
+    additionalWethWei: string;
+    additionalMicroUsdcForDirectPayment: string;
+  } | null;
+};
 function readAuthorization(raw: string, q: Review): SignedAuthorization {
   const value = JSON.parse(raw),
     a = value.authorization ?? value;
@@ -216,7 +225,7 @@ export function PaymentPanel({
     setMsg("");
     setReceipt("");
     try {
-      if (!q) {
+      if (!q || q.execution === "quote_only") {
         if (
           !isAddress(recipient) ||
           !/^\d+(\.\d{1,6})?$/.test(amount) ||
@@ -350,7 +359,22 @@ export function PaymentPanel({
               {formatUnits(BigInt(q.maxGasMicroUsdc), 6)} USDC. Maximum WETH spend{" "}
               {formatUnits(BigInt(q.maxWethWei), 18)}.
             </p>
-            {q.requiresDelegation && (
+            {q.sourceWallet && (
+              <p>
+                Available on Base Sepolia: {formatUnits(BigInt(q.sourceWallet.balanceMicroUsdc), 6)}{" "}
+                USDC and {formatUnits(BigInt(q.sourceWallet.balanceWethWei), 18)} WETH.
+              </p>
+            )}
+            {q.fundingShortfall && (
+              <p>
+                At this quote, the swap needs another{" "}
+                {formatUnits(BigInt(q.fundingShortfall.additionalWethWei), 18)} WETH. To pay
+                entirely in USDC, add{" "}
+                {formatUnits(BigInt(q.fundingShortfall.additionalMicroUsdcForDirectPayment), 6)}{" "}
+                USDC.
+              </p>
+            )}
+            {q.execution !== "quote_only" && q.requiresDelegation && (
               <label>
                 First payment: import the signed Block Tools delegation for Base Sepolia, nonce{" "}
                 {q.authorizationNonce}, delegate {paymentContracts.delegate}.
@@ -376,7 +400,13 @@ export function PaymentPanel({
           disabled={loadingReview || busy || !!pending}
           onClick={() => void act()}
         >
-          {busy ? "Working…" : q ? "Review and sign in wallet" : "Get payment quote"}
+          {busy
+            ? "Working…"
+            : q?.execution === "quote_only"
+              ? "Refresh funding quote"
+              : q
+                ? "Review and sign in wallet"
+                : "Get payment quote"}
         </button>
         {q && (
           <p>

@@ -196,10 +196,18 @@ describe("payment build and relay", () => {
       maxWethWei: "10010",
       requiresDelegation: true,
     });
-    expect(await setup("none", 9999n).quote()).toMatchObject({
-      error: "insufficient_WETH",
-      requiredWei: "10100",
+    const h = setup("none", 9999n);
+    const review = await h.quote();
+    expect(review).toMatchObject({
+      execution: "quote_only",
+      maxWethWei: "10100",
+      sourceWallet: { balanceMicroUsdc: "0", balanceWethWei: "9999" },
+      fundingShortfall: {
+        additionalWethWei: "1",
+        additionalMicroUsdcForDirectPayment: String(BigInt(review.maxGasMicroUsdc) + 1n),
+      },
     });
+    expect((await h.post("/build", { quoteId: review.quoteId })).status).toBe(422);
   });
   it("withholds the signing request after failed full-operation simulation", async () => {
     const h = setup("simulation");
