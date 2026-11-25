@@ -26,7 +26,7 @@ const step = z.object({
     }),
   ]),
 });
-const tokenBalance = z.object({
+export const tokenBalance = z.object({
   owner: z.string().optional(),
   mint: z.string(),
   uiTokenAmount: z.object({ amount: z.string().regex(/^\d+$/) }),
@@ -104,6 +104,30 @@ export async function simulateSolanaDeposit(
   const v = simulation.value;
   const nativeSpent =
     BigInt(integer.parse(v.preBalances[0])) - BigInt(integer.parse(v.postBalances[0]));
+  if (nativeSpent !== BigInt(v.fee) + (token ? 0n : amount))
+    throw Error("Source SOL debit differs from quote");
+  checkTokenChanges(v, sender, token, amount);
+  return {
+    status: "simulated" as const,
+    slot: simulation.context.slot,
+    networkFeeLamports: String(v.fee),
+    totalLamportsDebited: String(nativeSpent),
+    tokenUnitsDebited: String(token ? amount : 0n),
+    requiredSignatures: 1,
+    messageSha256: createHash("sha256").update(message.serialize()).digest("hex"),
+    lastValidBlockHeight: block.value.lastValidBlockHeight,
+  };
+}
+
+export function checkTokenChanges(
+  v: {
+    preTokenBalances: z.infer<typeof tokenBalance>[];
+    postTokenBalances: z.infer<typeof tokenBalance>[];
+  },
+  sender: string,
+  token: string | null,
+  amount: bigint,
+) {
   const changes = new Map<string, bigint>();
   for (const [sign, balances] of [
     [1n, v.preTokenBalances],
@@ -115,19 +139,8 @@ export async function simulateSolanaDeposit(
         changes.set(b.mint, (changes.get(b.mint) ?? 0n) + sign * BigInt(b.uiTokenAmount.amount));
     }
   if (
-    nativeSpent !== BigInt(v.fee) + (token ? 0n : amount) ||
     (token && changes.get(token) !== amount) ||
     Array.from(changes).some(([mint, delta]) => mint !== token && delta !== 0n)
   )
-    throw Error("Source balance changes differ from quote");
-  return {
-    status: "simulated" as const,
-    slot: simulation.context.slot,
-    networkFeeLamports: String(v.fee),
-    totalLamportsDebited: String(nativeSpent),
-    tokenUnitsDebited: String(token ? amount : 0n),
-    requiredSignatures: 1,
-    messageSha256: createHash("sha256").update(message.serialize()).digest("hex"),
-    lastValidBlockHeight: block.value.lastValidBlockHeight,
-  };
+    throw Error("Source token changes differ from quote");
 }

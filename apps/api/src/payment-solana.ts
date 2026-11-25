@@ -1,8 +1,11 @@
 import { base58 } from "@scure/base";
 import { acrossRoute, EvmAddress, SOLANA } from "@swapchan/shared";
+import { formatUnits } from "viem";
 import { z } from "zod";
 import { checkSolanaRelayOrder } from "./payment-solana-order.js";
 import { simulateSolanaDeposit } from "./payment-solana-simulation.js";
+import type { ReviewedSolanaPayment } from "./payment-solana-status.js";
+import { type Pricer } from "./pricing.js";
 import { getJson } from "./providers/types.js";
 
 const native = "11111111111111111111111111111111";
@@ -40,6 +43,8 @@ const asset = z.object({
 export async function quoteSolanaPayment(
   f: typeof fetch,
   intent: z.infer<typeof solanaPaymentInput>,
+  prices: Pricer,
+  saveReview: (r: ReviewedSolanaPayment) => string,
 ) {
   const rpcUrl =
     process.env.SOLANA_RPC_URL ||
@@ -118,6 +123,7 @@ export async function quoteSolanaPayment(
     (h) => !intent.sourceMint || h.mint === intent.sourceMint,
   );
   const destination = acrossRoute(10).destinationToken;
+  const solPrice = prices.token(SOLANA, native);
   const routes = await Promise.all(
     holdings.map(async (holding, index) => {
       const source = {
@@ -140,8 +146,9 @@ export async function quoteSolanaPayment(
           includeProtocolData: true,
           amount: intent.amountMicroUsdc,
         });
-        const { details } = z
+        const { details, steps } = z
           .object({
+            steps: z.tuple([z.object({ requestId: z.string().regex(/^0x[0-9a-f]{64}$/) })]),
             details: z.object({
               sender: z.literal(intent.sender),
               recipient: EvmAddress,
@@ -185,11 +192,50 @@ export async function quoteSolanaPayment(
                 BigInt(input.amount),
               ).catch(() => ({ status: "unverified" as const }))
             : null;
+        const reviewId =
+          simulation?.status === "simulated"
+            ? saveReview({
+                requestId: steps[0].requestId,
+                orderId: order.orderId,
+                messageSha256: simulation.messageSha256,
+                sender: intent.sender,
+                recipient: intent.recipient,
+                payoutMicroUsdc: out.amount,
+                networkFeeLamports: simulation.networkFeeLamports,
+                totalLamportsDebited: simulation.totalLamportsDebited,
+                sourceToken: holding.mint === native ? null : holding.mint,
+                tokenUnitsDebited: simulation.tokenUnitsDebited,
+                expiresAt: order.deadline + 7 * 24 * 3600,
+              })
+            : null;
+        let estimatedTotalUsd: number | null = null;
+        if (simulation?.status === "simulated") {
+          const [solRate, tokenRate] = await Promise.all([
+            solPrice,
+            holding.mint === native ? solPrice : prices.token(SOLANA, holding.mint),
+          ]);
+          if (
+            solRate?.priceUsd &&
+            solRate.decimals === 9 &&
+            tokenRate?.priceUsd &&
+            tokenRate.decimals === holding.decimals
+          ) {
+            const total =
+              Number(formatUnits(BigInt(simulation.totalLamportsDebited), 9)) * solRate.priceUsd +
+              Number(formatUnits(BigInt(simulation.tokenUnitsDebited), holding.decimals)) *
+                tokenRate.priceUsd;
+            if (Number.isFinite(total) && total > 0) estimatedTotalUsd = total;
+          }
+        }
         return {
           ...source,
           status: BigInt(input.amount) <= holding.balance ? "quoted" : "insufficient_balance",
           sourceSimulation: simulation,
+          tracking: reviewId
+            ? { tool: "payment_status", arguments: { solana: { reviewId } } }
+            : null,
           order,
+          estimatedTotalUsd,
           quotedInputUnits: input.amount,
           exactPayoutMicroUsdc: out.amount,
         };
@@ -198,12 +244,21 @@ export async function quoteSolanaPayment(
       }
     }),
   );
+  const simulated = routes
+    .filter((r) => "sourceSimulation" in r)
+    .filter((r) => r.sourceSimulation?.status === "simulated");
+  const priced = simulated
+    .filter((r) => r.estimatedTotalUsd != null)
+    .sort((a, b) => a.estimatedTotalUsd! - b.estimatedTotalUsd!);
+  const recommended =
+    simulated.length === 1 ? simulated[0] : priced.length === simulated.length ? priced[0] : null;
   return {
     ...intent,
     provider: "relay",
     execution: "quote_only",
     atomic: false,
-
+    recommendedSourceMint: recommended?.mint ?? null,
+    comparisonScope: "simulated_source_routes",
     routes,
   };
 }

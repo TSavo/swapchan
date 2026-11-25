@@ -1235,13 +1235,14 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Check payment settlement",
       description:
-        "Track a Base Sepolia payment by userOpHash, an Optimism USDC transfer with direct, an Across deposit with crossChain, or a Circle burn and mint with circle. Use the tracking arguments returned by pay and add the transaction hash. Include approvalHash for split bridge transactions to reconcile approval fees. Circle and Across settle only after the destination payout matches the reviewed intent and both receipts finalize.",
+        "Use solana.reviewId from a simulated Solana funding quote to track its reviewed deposit and Optimism payout. Track a Base Sepolia payment by userOpHash, an Optimism USDC transfer with direct, an Across deposit with crossChain, or a Circle burn and mint with circle. Use the tracking arguments returned by pay and add the transaction hash. Include approvalHash for split bridge transactions to reconcile approval fees. Circle and Across settle only after the destination payout matches the reviewed intent and both receipts finalize.",
       inputSchema: z
         .object({
           userOpHash: z
             .string()
             .regex(/^0x[0-9a-f]{64}$/i)
             .optional(),
+          solana: z.object({ reviewId: z.uuid() }).strict().optional(),
           circle: z
             .object({
               originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
@@ -1291,19 +1292,22 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .optional(),
         })
         .refine(
-          (a) => [a.userOpHash, a.crossChain, a.direct, a.circle].filter(Boolean).length === 1,
+          (a) =>
+            [a.userOpHash, a.crossChain, a.direct, a.circle, a.solana].filter(Boolean).length === 1,
           "Supply one payment reference",
         ),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     safe(async (a) =>
-      a.circle
-        ? api.circlePaymentStatus(a.circle)
-        : a.direct
-          ? api.directPaymentStatus(a.direct)
-          : a.crossChain
-            ? api.crossPaymentStatus(a.crossChain)
-            : api.paymentStatus(a.userOpHash!),
+      a.solana
+        ? api.solanaPaymentStatus(a.solana)
+        : a.circle
+          ? api.circlePaymentStatus(a.circle)
+          : a.direct
+            ? api.directPaymentStatus(a.direct)
+            : a.crossChain
+              ? api.crossPaymentStatus(a.crossChain)
+              : api.paymentStatus(a.userOpHash!),
     ),
   );
   server.registerTool(

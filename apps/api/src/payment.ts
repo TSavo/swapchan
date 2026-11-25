@@ -44,7 +44,9 @@ import {
   reconcilePayment,
 } from "./payment-receipt.js";
 import { quoteSolanaPayment, solanaPaymentInput } from "./payment-solana.js";
+import { type ReviewedSolanaPayment, solanaPaymentStatus } from "./payment-solana-status.js";
 import { openPaymentStore } from "./payment-store.js";
+import { llamaPricer } from "./pricing.js";
 
 const { weth, usdc, paymaster, entry, delegate } = paymentContracts;
 const quoter = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27";
@@ -148,6 +150,7 @@ export function paymentRoutes(
       ...fees,
     };
   }
+  const prices = llamaPricer(f);
   const app = new Hono();
   app.use("*", async (c, next) => {
     if (
@@ -430,6 +433,24 @@ export function paymentRoutes(
       return c.json({ error: "settlement_unverified" }, 502);
     }
   });
+  const solanaReviews = receipts.cache<ReviewedSolanaPayment>(
+    "solana-receipts",
+    (r) => r.expiresAt,
+  );
+  app.post("/solana/status", async (c) => {
+    const body = z
+      .object({ reviewId: z.uuid() })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "invalid_review" }, 400);
+    const review = solanaReviews.get(body.data.reviewId);
+    if (!review) return c.json({ error: "unknown_solana_payment" }, 404);
+    try {
+      return c.json(await solanaPaymentStatus(f, review, rpc));
+    } catch {
+      return c.json({ error: "solana_settlement_unverified" }, 502);
+    }
+  });
   app.post("/circle/status", async (c) => {
     const i = circleStatusInput.safeParse(await c.req.json().catch(() => null));
     if (!i.success) return c.json({ error: "invalid_circle_status" }, 400);
@@ -633,7 +654,9 @@ export function paymentRoutes(
       const parsed = solanaPaymentInput.safeParse(raw);
       if (!parsed.success) return c.json({ error: "invalid_solana_payment" }, 400);
       try {
-        return c.json(await quoteSolanaPayment(f, parsed.data));
+        return c.json(
+          await quoteSolanaPayment(f, parsed.data, prices, (r) => retain(solanaReviews, r)),
+        );
       } catch {
         return c.json({ error: "solana_balances_unavailable" }, 503);
       }
