@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { acrossTestRoute, NATIVE_TOKEN, SOLANA } from "@swapchan/shared";
+import { acrossTestRoute, NATIVE_TOKEN, paymentContracts, SOLANA } from "@swapchan/shared";
 import { encodeFunctionData, erc20Abi } from "viem";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SwapChanApi } from "./api.js";
@@ -84,6 +84,50 @@ describe("swapchan mcp over streamable http", () => {
     } finally {
       build.mockRestore();
       simulate.mockRestore();
+      await c.close();
+    }
+  });
+  it("returns the pinned first-use authorization and continuation for a fresh account", async () => {
+    const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
+    const sender = circleBuild.quote.sender;
+    const saved = vi.spyOn(SwapChanApi.prototype, "savedPaymentQuote").mockResolvedValue({
+      sender,
+      quoteId,
+      chainId: 84532,
+      requiresDelegation: true,
+      expiresAt: Date.now() / 1000 + 60,
+    });
+    const pending = {
+      status: "delegation_required",
+      quoteId,
+      delegation: {
+        chainId: 84532,
+        accountType: "undelegated",
+        sender,
+        proposed: { address: paymentContracts.delegate, known: true },
+      },
+      authorization: { chainId: 84532, address: paymentContracts.delegate, nonce: "13" },
+    };
+    const build = vi.spyOn(SwapChanApi.prototype, "paymentBuild").mockResolvedValue(pending);
+    const c = await connect();
+    const pay = () => c.callTool({ name: "pay", arguments: { chainId: 84532, quoteId } });
+    try {
+      expect(data(await pay())).toMatchObject({
+        authorization: { address: paymentContracts.delegate, nonce: 13 },
+        next: {
+          tool: "pay",
+          arguments: { chainId: 84532, quoteId },
+          addWalletResultAt: "authorization",
+        },
+      });
+      build.mockResolvedValueOnce({
+        ...pending,
+        authorization: { ...pending.authorization, address: sender },
+      });
+      expect((await pay()).isError).toBe(true);
+    } finally {
+      build.mockRestore();
+      saved.mockRestore();
       await c.close();
     }
   });

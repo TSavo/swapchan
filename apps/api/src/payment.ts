@@ -1029,7 +1029,11 @@ export function paymentRoutes(
     "0x302f9159d5987680933b56019340d483d5ad02ac7f20d74021d3b587a0077b0b2388e782c5690c9c391c5877f4edadabdf7751dfee5c2dd90e4cded0f6e091181c";
   app.post("/build", async (c) => {
     const parsed = z
-      .object({ quoteId: z.uuid(), authorization: authorization.optional() })
+      .object({
+        quoteId: z.uuid(),
+        authorization: authorization.optional(),
+        prepareDelegation: z.boolean().optional(),
+      })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid_build_request" }, 400);
@@ -1063,15 +1067,15 @@ export function paymentRoutes(
         const pending = BigInt(
           hex.parse(await chain("eth_getTransactionCount", [q.sender, "pending"])),
         );
-        if (!auth)
-          return c.json(
-            {
-              error: "delegation_required",
-              delegation: checked,
-              authorization: { chainId: 84532, address: delegate, nonce: pending.toString() },
-            },
-            409,
-          );
+        if (!auth) {
+          const request = {
+            delegation: checked,
+            authorization: { chainId: 84532, address: delegate, nonce: pending.toString() },
+          };
+          return parsed.data.prepareDelegation
+            ? c.json({ ...request, status: "delegation_required", quoteId: parsed.data.quoteId })
+            : c.json({ ...request, error: "delegation_required" }, 409);
+        }
         if (
           auth.address.toLowerCase() !== delegate.toLowerCase() ||
           BigInt(auth.nonce) !== pending ||

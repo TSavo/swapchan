@@ -14,6 +14,8 @@ import {
   type PaymentQuote,
   PaymentWalletCapabilities,
   PaymentWalletMethods,
+  paymentContracts,
+  paymentDelegationNotice,
   paymentSignatureRequest,
   playbook,
   playbookInstructions,
@@ -1140,6 +1142,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                 ),
               sourceChainId: z
                 .union([
+                  z.literal(8453),
                   z.literal(84532),
                   z.literal(11155420),
                   z.literal(10),
@@ -1366,7 +1369,57 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         quoteId: quoteId,
         ...(a.authorization ? { authorization: a.authorization } : {}),
       };
-      const built = await api.paymentBuild(args);
+      const built = await api.paymentBuild({ ...args, prepareDelegation: !a.authorization });
+      if (built.status === "delegation_required") {
+        const saved = await api.savedPaymentQuote(quoteId!);
+        const pending = z
+          .object({
+            quoteId: z.literal(quoteId!),
+            delegation: z.object({
+              chainId: z.literal(84532),
+              sender: evm,
+              accountType: z.literal("undelegated"),
+              proposed: z.object({
+                known: z.literal(true),
+                address: z.literal(paymentContracts.delegate),
+              }),
+            }),
+            authorization: z
+              .object({
+                chainId: z.literal(84532),
+                address: z.literal(paymentContracts.delegate),
+                nonce: z.string().regex(/^(0|[1-9][0-9]*)$/),
+              })
+              .strict(),
+          })
+          .parse(built);
+        if (
+          a.authorization ||
+          sponsored ||
+          saved.quoteId !== quoteId ||
+          saved.chainId !== 84532 ||
+          saved.requiresDelegation !== true ||
+          String(saved.sender).toLowerCase() !== pending.delegation.sender.toLowerCase() ||
+          typeof saved.expiresAt !== "number" ||
+          saved.expiresAt <= Date.now() / 1000 ||
+          !Number.isSafeInteger(Number(pending.authorization.nonce))
+        )
+          throw new UserError("Delegation request differs from the reviewed payment.");
+        return {
+          status: "delegation_required",
+          sender: saved.sender,
+          authorization: { ...pending.authorization, nonce: Number(pending.authorization.nonce) },
+          permission: paymentDelegationNotice.permission,
+          howToRevoke: paymentDelegationNotice.revoke,
+          signingInstruction:
+            "Use the sender's wallet to sign this EIP-7702 authorization for Base Sepolia.",
+          next: {
+            tool: "pay",
+            arguments: { chainId: 84532, quoteId },
+            addWalletResultAt: "authorization",
+          },
+        };
+      }
       if (
         (!sponsored && z.object({ circle: z.object({}) }).safeParse(built.quote).success) ||
         built.quoteId !== quoteId ||
