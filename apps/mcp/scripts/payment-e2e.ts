@@ -171,7 +171,7 @@ try {
   console.log("payment_status", JSON.stringify(testDeposit));
   const circle = z
     .object({
-      status: z.enum(["awaiting_finality", "settled"]),
+      status: z.literal("settled"),
       mintHash: z.literal("0x77f6fec920441eb44f802dad1ab2a1a4c90093b697d2917028d4401ef69fb373"),
       destinationBlockBalances: z.object({
         before: z.object({ ethWei: z.literal("0"), microUsdc: z.literal("0") }),
@@ -187,7 +187,7 @@ try {
       spentMicroUsdc: z.literal("67944"),
       forwardFeeMicroUsdc: z.literal("67943"),
       originFinalized: z.literal(true),
-      destinationFinalized: z.boolean(),
+      destinationFinalized: z.literal(true),
       paidMicroUsdc: z.literal("1"),
     })
     .parse(
@@ -203,11 +203,6 @@ try {
         },
       }),
     );
-  if (circle.status === "settled") {
-    assert.equal(circle.originFinalized, true);
-    assert.equal(circle.destinationFinalized, true);
-    assert.equal(circle.paidMicroUsdc, "1");
-  }
   console.log("circle payment_status", JSON.stringify(circle));
   const historicalSwap = z
     .object({
