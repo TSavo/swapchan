@@ -5,6 +5,7 @@ import {
   paymentBatch,
   paymentContracts,
   paymentSignatureRequest,
+  paymentWalletPayload,
 } from "./index.js";
 
 // Public fields from the settled Base Sepolia repeat payment.
@@ -39,7 +40,16 @@ const op = {
 };
 describe("SmartWallet payment signature request", () => {
   it("reproduces the digest that settled on Base Sepolia", () => {
-    expect(hashTypedData(paymentSignatureRequest(quote, op, hash))).toBe(hash);
+    const typed = paymentSignatureRequest(quote, op, hash);
+    const payload = JSON.parse(paymentWalletPayload(typed, hash));
+    expect(payload.types.EIP712Domain.map((field: { name: string }) => field.name)).toEqual([
+      "name",
+      "version",
+      "chainId",
+      "verifyingContract",
+    ]);
+    expect(payload.domain.chainId).toBe(84532);
+    expect(hashTypedData(payload)).toBe(hash);
   });
   it.each([
     ["recipient", { callData: paymentBatch({ ...quote, recipient: quote.sender }) }],

@@ -21,6 +21,7 @@ import {
   paymentContracts,
   paymentDelegationNotice,
   paymentSignatureRequest,
+  paymentWalletPayload,
   playbook,
   playbookInstructions,
   type Quote,
@@ -41,7 +42,6 @@ import {
   isAddress,
   keccak256,
   type SignedAuthorization,
-  serializeTypedData,
   type Address as ViemAddress,
 } from "viem";
 import { z } from "zod";
@@ -1772,7 +1772,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           : []),
         ...(BigInt(payment.wrapNativeWei ?? "0") > 0n ? ["--wrap", payment.wrapNativeWei!] : []),
       ];
-      const payload = serializeTypedData(local);
+      const payload = paymentWalletPayload(local, String(built.userOpHash));
       const { typedData: verifiedTypedData, ...checks } = verification;
       return {
         ...built,

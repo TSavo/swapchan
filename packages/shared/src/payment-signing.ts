@@ -1,4 +1,4 @@
-import { type Hex, hashTypedData, type SignedAuthorization } from "viem";
+import { getTypesForEIP712Domain, type Hex, hashTypedData, type SignedAuthorization } from "viem";
 import { getUserOperationTypedData } from "viem/account-abstraction";
 import { z } from "zod";
 import {
@@ -103,4 +103,21 @@ export function paymentSignatureRequest(
   if (hashTypedData(typed) !== expectedHash)
     throw new Error("Payment hash differs from the simulated operation.");
   return typed;
+}
+
+/** eth_signTypedData_v4 needs the domain declaration in the actual JSON sent to the wallet. */
+export function paymentWalletPayload(
+  typed: ReturnType<typeof paymentSignatureRequest>,
+  expectedHash: string,
+) {
+  const payload = JSON.stringify(
+    {
+      ...typed,
+      types: { ...typed.types, EIP712Domain: getTypesForEIP712Domain({ domain: typed.domain }) },
+    },
+    (_key, value) => (typeof value === "bigint" ? String(value) : value),
+  );
+  if (hashTypedData(JSON.parse(payload)) !== expectedHash)
+    throw Error("Serialized wallet request differs from the verified operation.");
+  return payload;
 }
