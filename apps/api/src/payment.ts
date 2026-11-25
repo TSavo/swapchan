@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   acrossRoute,
+  batchAbi,
+  checkCircleBurn,
+  circleMessenger,
   EvmAddress,
   type PaymentQuote,
   paymentBatch,
@@ -480,10 +483,77 @@ export function paymentRoutes(
       ? c.json({ ...saved.data, reviewId: id })
       : c.json({ error: "quote_expired" }, 410);
   });
+  async function sponsoredCircleEstimate(quote: Awaited<ReturnType<typeof quoteCirclePayment>>) {
+    const { review, intent } = quote;
+    const block = review.sourceWallet.blockNumber;
+    const code = await chain("eth_getCode", [intent.sender, block]);
+    if (
+      typeof code !== "string" ||
+      code.toLowerCase() !== "0xef0100" + delegate.slice(2).toLowerCase()
+    )
+      return { status: "known_delegation_required" };
+    const delegation = await inspectDelegation(chain, intent.sender, delegate);
+    if (!delegation.existing?.known) return { status: "unverified_delegate" };
+    const gas = await quoteGasInUsdc();
+    const maxGasMicroUsdc = gas.maxGasMicroUsdc.swapOrSetup;
+    const required = BigInt(review.maxInputMicroUsdc) + BigInt(maxGasMicroUsdc);
+    const balance = BigInt(review.sourceWallet.balanceMicroUsdc);
+    const budget = {
+      maxGasMicroUsdc,
+      requiredMicroUsdc: String(required),
+      expiresAt: Math.min(review.expiresAt, gas.expiresAt),
+    };
+    if (required > balance)
+      return {
+        ...budget,
+        status: "insufficient_usdc",
+        shortfallMicroUsdc: String(required - balance),
+      };
+    const burn = quote.calls[quote.calls.length - 1]!;
+    checkCircleBurn(burn.data, review);
+    const approve = (spender: Hex, amount: bigint) => ({
+      target: usdc,
+      value: 0n,
+      data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, amount] }),
+    });
+    const callData = encodeFunctionData({
+      abi: batchAbi,
+      functionName: "executeBatch",
+      args: [
+        [
+          approve(circleMessenger, BigInt(review.maxInputMicroUsdc)),
+          { target: circleMessenger, value: 0n, data: burn.data },
+          approve(paymaster, BigInt(maxGasMicroUsdc)),
+        ],
+      ],
+    });
+    const op: RpcOp = {
+      sender: intent.sender,
+      nonce: await paymentNonce(intent.sender),
+      callData,
+      maxFeePerGas: gas.maxFeePerGas,
+      maxPriorityFeePerGas: gas.maxPriorityFeePerGas,
+      ...Object.fromEntries(
+        Object.entries(paymentGasLimits(false)).map(([key, value]) => [
+          key,
+          "0x" + value.toString(16),
+        ]),
+      ),
+      signature: simulationSignature,
+    };
+    await addPaymaster(op);
+    const estimate = await simulateOperation(op);
+    if (budget.expiresAt <= Date.now() / 1000) throw Error("Sponsored estimate expired");
+    return { ...budget, status: "simulated", gas: estimate, paymaster, entryPoint: entry };
+  }
   async function issueCircle(intent: Parameters<typeof quoteCirclePayment>[2]) {
     const quote = await quoteCirclePayment(f, chain, intent);
     if (!testnetEnabled) quote.review.execution = "quote_only";
-    return { ...quote.review, quoteId: retain(circleQuotes, quote) };
+    const sponsoredOrigin = testnetEnabled
+      ? await sponsoredCircleEstimate(quote).catch(() => ({ status: "estimate_unavailable" }))
+      : undefined;
+    const saved = { ...quote, review: { ...quote.review, sponsoredOrigin } };
+    return { ...saved.review, quoteId: retain(circleQuotes, saved) };
   }
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
@@ -701,6 +771,30 @@ export function paymentRoutes(
       super("Gas estimate exceeds the reviewed limit");
     }
   }
+  async function paymentNonce(sender: Hex) {
+    const nonceData = encodeFunctionData({
+      abi: parseAbi(["function getNonce(address,uint192) view returns(uint256)"]),
+      functionName: "getNonce",
+      args: [sender, 0n],
+    });
+    return (
+      "0x" +
+      BigInt(
+        hex.parse(await chain("eth_call", [{ to: entry, data: nonceData }, "latest"])),
+      ).toString(16)
+    );
+  }
+  async function addPaymaster(op: RpcOp) {
+    const context = [entry, "0x14a34", { token: usdc }];
+    for (const method of ["pm_getPaymasterStubData", "pm_getPaymasterData"]) {
+      const offer = z
+        .object({ paymaster: EvmAddress, paymasterData: hex })
+        .parse(await pm(method, [op, ...context]));
+      if (offer.paymaster.toLowerCase() !== paymaster.toLowerCase())
+        throw new Error("unexpected_paymaster");
+      Object.assign(op, offer);
+    }
+  }
   async function simulateOperation(op: RpcOp) {
     const estimate = z
       .object({
@@ -732,16 +826,7 @@ export function paymentRoutes(
       const checked = await inspectDelegation(chain, q.sender, delegate);
       if (!checked.proposed || !("known" in checked.proposed) || !checked.proposed.known)
         return c.json({ error: "unverified_delegate_runtime" }, 422);
-      const nonceData = encodeFunctionData({
-        abi: parseAbi(["function getNonce(address,uint192) view returns(uint256)"]),
-        functionName: "getNonce",
-        args: [q.sender, 0n],
-      });
-      const nonce =
-        "0x" +
-        BigInt(
-          hex.parse(await chain("eth_call", [{ to: entry, data: nonceData }, "latest"])),
-        ).toString(16);
+      const nonce = await paymentNonce(q.sender);
       const direct = !q.requiresDelegation && q.maxWethWei === "0";
       const op: Record<string, string | Record<string, string>> = {
         sender: q.sender,
@@ -791,15 +876,7 @@ export function paymentRoutes(
         });
       } else if (auth || !checked.existing?.known)
         return c.json({ error: "delegation_changed" }, 409);
-      const context = [entry, "0x14a34", { token: usdc }];
-      for (const method of ["pm_getPaymasterStubData", "pm_getPaymasterData"]) {
-        const offer = z
-          .object({ paymaster: EvmAddress, paymasterData: hex })
-          .parse(await pm(method, [op, ...context]));
-        if (offer.paymaster.toLowerCase() !== paymaster.toLowerCase())
-          return c.json({ error: "unexpected_paymaster" }, 422);
-        Object.assign(op, offer);
-      }
+      await addPaymaster(op);
       const estimate = await simulateOperation(op);
       if (q.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
       delete op.signature;
