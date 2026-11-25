@@ -293,6 +293,8 @@ export type StatusRequest = z.infer<typeof StatusRequest>;
 export const StatusResponse = z.object({
   status: z.enum(["pending", "done", "failed", "not_found"]),
   receivingTxHash: z.string().nullable(),
+  /** Provider-reported return of funds on the origin chain. */
+  refundTxHash: z.string().optional(),
 });
 export type StatusResponse = z.infer<typeof StatusResponse>;
 

@@ -32,6 +32,8 @@ flowchart LR
   sign --> paid["Recipient is paid<br/>gas in USDC via paymaster"]
 ```
 
+For THORChain routes from Litecoin, Dogecoin and Bitcoin Cash, MCP returns the unsigned PSBT, wallet signing instructions and the tracking tool that accepts the inbound transaction ID. Tron deposits show the vault, amount in sun and required memo. The API and web tracker distinguish a provider-reported refund on the source chain from a destination payout. The refund path has API fixture coverage. A live non-EVM payment receipt remains open.
+
 ## Milestone 1 — one same-chain payment
 
 On Base Sepolia, the sponsored route can also wrap native ETH inside the payment batch when the sender has insufficient WETH. SmartWallet discloses the ETH amount before signing. The router cap includes the newly wrapped WETH, and the paymaster still charges USDC. A live quote for a wallet holding 19.984022 USDC, zero WETH and 0.000117512143599005 ETH priced a 19.984023 USDC payment with a 392,073,794,024 wei wrap. This additional funding path has quote and batch-construction evidence; a mined wrap-and-pay receipt remains open.

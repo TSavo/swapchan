@@ -144,7 +144,13 @@ export function StatusTracker({
         {cross && (
           <li>
             {state === "done" ? "✔" : "…"} Bridged via {p.provider}
-            {state !== "done" && " (Swap-chan checks every 3s)"}
+            {state === "pending" && " (Swap-chan checks every 3s)"}
+          </li>
+        )}
+        {status.data?.refundTxHash && (
+          <li>
+            Provider reports a refund:{" "}
+            <TxLink chainId={p.fromChainId} hash={status.data.refundTxHash} />
           </li>
         )}
         {status.data?.receivingTxHash && (

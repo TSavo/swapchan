@@ -352,6 +352,23 @@ describe("THORChain deposit address and tracking (mocked thornode)", () => {
     ).toBe("refunded");
     expect((await tr({ status: { tx: {}, error: "boom" } })).state).toBe("failed");
   });
+  it("reports the refund hash without claiming a destination payment on /status", async () => {
+    const refundTxHash = "EF".repeat(32);
+    const status = { tx: {}, out_txs: [{ chain: "LTC", id: refundTxHash, memo: "REFUND:X" }] };
+    const app = createApp([thorchain(pricer, env, net({ status }).f)], {
+      pricer: null,
+      guard: ctx(),
+      simulator: null,
+    });
+    const response = await app.request(
+      `/status?provider=thorchain&txHash=${"ab".repeat(32)}&fromChainId=${req.fromChainId}&toChainId=${req.toChainId}`,
+    );
+    expect(await response.json()).toMatchObject({
+      status: "failed",
+      receivingTxHash: null,
+      refundTxHash,
+    });
+  });
   it("API: /utxo/deposit and /utxo/status", async () => {
     const app = createApp([thorchain(pricer, env, net({ statusCode: 404 }).f)], {
       pricer: null,

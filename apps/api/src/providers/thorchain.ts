@@ -9,7 +9,6 @@ import {
   type NonEvmTx,
   Quote,
   type QuoteRequest,
-  StatusResponse,
   sameAddressSpace,
   TRON,
   type UtxoDeposit,
@@ -508,18 +507,20 @@ export function thorchain(
       };
     },
     async status(req, signal) {
-      const s = await getJson<{
-        tx?: unknown;
-        out_txs?: { id: string }[];
-        stages?: { outbound_signed?: { completed?: boolean }; swap_status?: { pending?: boolean } };
-      }>(f, `${base}/tx/status/${req.txHash.replace(/^0x/, "")}`, { signal }).catch(() => null);
-      if (!s?.tx) return { status: "not_found", receivingTxHash: null };
-      const out = s.out_txs?.[0]?.id;
-      const done = !!out && s.stages?.outbound_signed?.completed !== false;
-      return StatusResponse.parse({
-        status: done ? "done" : "pending",
-        receivingTxHash: out ?? null,
-      });
+      const result = await track(req.txHash, signal);
+      if (result.state === "refunded")
+        return { status: "failed", receivingTxHash: null, refundTxHash: result.payout?.txid };
+      if (result.state === "paid_out")
+        return { status: "done", receivingTxHash: result.payout?.txid ?? null };
+      return {
+        status:
+          result.state === "waiting"
+            ? "not_found"
+            : result.state === "failed"
+              ? "failed"
+              : "pending",
+        receivingTxHash: null,
+      };
     },
     async deposit(req, refund, signal): Promise<UtxoDeposit> {
       const d = UTXO_DEST[req.fromChainId];
@@ -617,73 +618,75 @@ export function thorchain(
         ],
       };
     },
-    async track(txid, signal): Promise<UtxoTrack> {
-      const id = txid.replace(/^0x/, "").toUpperCase();
-      const thorchainUrl = `https://thorchain.net/tx/${id}`;
-      type Out = { chain: string; id: string; memo?: string };
-      const s = await getJson<{
-        tx?: unknown;
-        out_txs?: Out[];
-        planned_out_txs?: { chain: string; refund?: boolean }[];
-        stages?: {
-          inbound_observed?: { started?: boolean; completed?: boolean };
-          inbound_confirmation_counted?: { completed?: boolean };
-          swap_status?: { pending?: boolean };
-          swap_finalised?: { completed?: boolean };
-          outbound_signed?: { completed?: boolean };
-        };
-        error?: string;
-      }>(f, `${base}/tx/status/${id}`, { signal }).catch((e: unknown) => {
-        if (e instanceof Error && /^(404|400)\b/.test(e.message)) return null;
-        throw e;
-      });
-      const waiting: UtxoTrack = {
-        state: "waiting",
-        message:
-          "THORChain has not seen this transaction yet. It shows up once your wallet broadcasts it.",
-        thorchainUrl,
-        payout: null,
-      };
-      if (!s || !s.tx || s.stages?.inbound_observed?.started === false) return waiting;
-      const outs = (s.out_txs ?? []).filter((o) => o.id && !/^0+$/.test(o.id));
-      const refundPlanned = (s.planned_out_txs ?? []).some((p) => p.refund);
-      const out = outs[0];
-      if (out && s.stages?.outbound_signed?.completed !== false) {
-        const refunded = refundPlanned || /^refund/i.test(out.memo ?? "");
-        return UtxoTrack.parse({
-          state: refunded ? "refunded" : "paid_out",
-          message: refunded
-            ? "THORChain refunded this swap to the refund address (minus network fees)."
-            : "Paid out: THORChain sent the swap output.",
-          thorchainUrl,
-          payout: { chain: out.chain, txid: out.id, url: explorerTx(out.chain, out.id) },
-        });
-      }
-      if (s.error)
-        return {
-          state: "failed",
-          message: `THORChain reports: ${s.error.slice(0, 160)}`,
-          thorchainUrl,
-          payout: null,
-        };
-      if (
-        s.stages?.inbound_observed?.completed === false ||
-        s.stages?.inbound_confirmation_counted?.completed === false
-      )
-        return {
-          state: "seen",
-          message: "THORChain has seen your transaction and is waiting for confirmations.",
-          thorchainUrl,
-          payout: null,
-        };
-      return {
-        state: "swapping",
-        message: refundPlanned
-          ? "The swap could not complete; THORChain is sending a refund."
-          : "Swapping: THORChain is executing the swap and preparing the payout.",
-        thorchainUrl,
-        payout: null,
-      };
-    },
+    track,
   };
+
+  async function track(txid: string, signal: AbortSignal): Promise<UtxoTrack> {
+    const id = txid.replace(/^0x/, "").toUpperCase();
+    const thorchainUrl = `https://thorchain.net/tx/${id}`;
+    type Out = { chain: string; id: string; memo?: string };
+    const s = await getJson<{
+      tx?: unknown;
+      out_txs?: Out[];
+      planned_out_txs?: { chain: string; refund?: boolean }[];
+      stages?: {
+        inbound_observed?: { started?: boolean; completed?: boolean };
+        inbound_confirmation_counted?: { completed?: boolean };
+        swap_status?: { pending?: boolean };
+        swap_finalised?: { completed?: boolean };
+        outbound_signed?: { completed?: boolean };
+      };
+      error?: string;
+    }>(f, `${base}/tx/status/${id}`, { signal }).catch((e: unknown) => {
+      if (e instanceof Error && /^(404|400)\b/.test(e.message)) return null;
+      throw e;
+    });
+    const waiting: UtxoTrack = {
+      state: "waiting",
+      message:
+        "THORChain has not seen this transaction yet. It shows up once your wallet broadcasts it.",
+      thorchainUrl,
+      payout: null,
+    };
+    if (!s || !s.tx || s.stages?.inbound_observed?.started === false) return waiting;
+    const outs = (s.out_txs ?? []).filter((o) => o.id && !/^0+$/.test(o.id));
+    const refundPlanned = (s.planned_out_txs ?? []).some((p) => p.refund);
+    const out = outs[0];
+    if (out && s.stages?.outbound_signed?.completed !== false) {
+      const refunded = refundPlanned || /^refund/i.test(out.memo ?? "");
+      return UtxoTrack.parse({
+        state: refunded ? "refunded" : "paid_out",
+        message: refunded
+          ? "THORChain refunded this swap to the refund address (minus network fees)."
+          : "Paid out: THORChain sent the swap output.",
+        thorchainUrl,
+        payout: { chain: out.chain, txid: out.id, url: explorerTx(out.chain, out.id) },
+      });
+    }
+    if (s.error)
+      return {
+        state: "failed",
+        message: `THORChain reports: ${s.error.slice(0, 160)}`,
+        thorchainUrl,
+        payout: null,
+      };
+    if (
+      s.stages?.inbound_observed?.completed === false ||
+      s.stages?.inbound_confirmation_counted?.completed === false
+    )
+      return {
+        state: "seen",
+        message: "THORChain has seen your transaction and is waiting for confirmations.",
+        thorchainUrl,
+        payout: null,
+      };
+    return {
+      state: "swapping",
+      message: refundPlanned
+        ? "The swap could not complete; THORChain is sending a refund."
+        : "Swapping: THORChain is executing the swap and preparing the payout.",
+      thorchainUrl,
+      payout: null,
+    };
+  }
 }

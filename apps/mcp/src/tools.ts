@@ -9,10 +9,12 @@ import {
   isAnyAddress,
   isVmAddress,
   NATIVE_TOKEN,
+  type NonEvmTx,
   playbook,
   playbookInstructions,
   type Quote,
   type QuoteRequest,
+  StatusRequest,
   type Token,
   toBaseUnits,
   UTXO_CHAIN_COUNT,
@@ -342,9 +344,12 @@ async function compareExecutionModels(api: SwapChanApi, quotes: Quote[]) {
       const row = await summarize(api, q);
       return {
         ...row,
-        authorization: solver
-          ? "Sign the order for solver execution. Token approval may require a separate transaction."
-          : "Sign the source transaction. Token approval may require a separate transaction.",
+        authorization: [
+          solver
+            ? "Sign the order for solver execution."
+            : "Review and sign the source transaction in the source-chain wallet.",
+          ...(q.approvalAddress ? ["A separate token allowance may be required."] : []),
+        ].join(" "),
         settlement: solver
           ? "A solver must fill the signed order before expiry."
           : row.crossChain
@@ -686,7 +691,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             : {}),
         };
         if (built.execution === "nonevm" && built.nonEvmTx) {
-          const how: Record<string, string> = {
+          const how: Record<NonEvmTx["kind"], string> = {
             "svm-base64":
               "`data` is a base64 serialized Solana VersionedTransaction: deserialize, have the user's Solana wallet sign, send to a Solana RPC.",
             "svm-instructions":
@@ -695,12 +700,29 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               "`data` is a Bitcoin PSBT (or deposit request): have the user's Bitcoin wallet sign and broadcast it.",
             "tvm-json":
               "`data` is a Tron transaction request: have the user's Tron wallet (TronLink) sign and broadcast it.",
+            "tvm-deposit":
+              "Review the TRX vault address, amount in sun and exact memo. Send that amount to data.to with data.memo as transaction data using the sender's Tron wallet. Keep the inbound txid.",
+            "uvm-psbt":
+              "Review data.summary against the wallet's decoded outputs, change, fee and memo. Sign data.psbt locally in the source-chain wallet, finalize and broadcast it. Keep the inbound txid.",
           };
+          const provider = built.provider ?? pick.provider;
           return {
             quote: await summarize(api, pick),
             execution: "nonevm",
             unsignedTx: built.nonEvmTx,
             howToExecute: how[built.nonEvmTx.kind],
+            afterBroadcast:
+              provider === "thorchain" && built.nonEvmTx.vm === "uvm"
+                ? { tool: "track_utxo_swap", arguments: {}, addSourceTransactionIdAs: "txid" }
+                : {
+                    tool: "get_route_status",
+                    arguments: {
+                      provider,
+                      fromChainId: pick.request.fromChainId,
+                      toChainId: pick.request.toChainId,
+                    },
+                    addSourceTransactionIdAs: "txHash",
+                  },
             ...guard,
             safety: "Unsigned. SwapChan never holds keys or signs.",
           };
@@ -857,12 +879,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           .string()
           .min(1)
           .describe('Provider name from the quote (e.g. "across", "lifi")'),
-        txHash: z
-          .string()
-          .regex(
-            /^0x[0-9a-fA-F]{64}$|^[1-9A-HJ-NP-Za-km-z]{64,90}$/,
-            "0x tx hash (EVM) or base58 signature (Solana)",
-          ),
+        txHash: StatusRequest.shape.txHash,
         fromChainId: chainId,
         toChainId: chainId,
       }),
@@ -870,16 +887,18 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     },
     safe(
       async (a: { provider: string; txHash: string; fromChainId: number; toChainId: number }) =>
-        api.status({ ...a, txHash: a.txHash as `0x${string}` }),
+        api.status(a),
       (a, r) => ({
         fromChainId: a.fromChainId,
         toChainId: a.toChainId,
         says:
           r.status === "done"
-            ? "It landed! Your tokens are home~"
-            : r.status === "failed"
-              ? "Uwaa, that one failed. Check the source tx."
-              : "Still in flight, I'm watching the arrival gate~",
+            ? "The route provider reports completion. Check the destination transaction for settlement."
+            : r.refundTxHash
+              ? "The provider reports a refund. Check the refund transaction on the source chain."
+              : r.status === "failed"
+                ? "Uwaa, that one failed. Check the source tx."
+                : "Still in flight, I'm watching the arrival gate~",
       }),
     ),
   );
