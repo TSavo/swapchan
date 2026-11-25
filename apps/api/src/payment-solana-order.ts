@@ -1,7 +1,7 @@
-import { getOrderId } from "@relay-protocol/settlement-sdk";
-import { acrossRoute, SOLANA } from "@swapchan/shared";
+import { SOLANA } from "@swapchan/shared";
 import { z } from "zod";
 import { RELAY_DEPOSITORY_PINS } from "./guard/relayPins.js";
+import { checkRelayPaymentTerms } from "./payment-relay-terms.js";
 
 export function checkSolanaRelayOrder(
   quote: unknown,
@@ -35,66 +35,20 @@ export function checkSolanaRelayOrder(
     })
     .parse(quote);
   const { orderData, orderId } = result.protocol.v2;
-  const outputMint = acrossRoute(10).destinationToken.toLowerCase();
-  const address = z.string().transform((s) => s.toLowerCase());
-  const terms = z
-    .object({
-      solverChainId: z.enum(["base", "optimism"]),
-      inputs: z.tuple([
-        z.object({
-          payment: z.object({
-            chainId: z.literal("solana"),
-            currency: z.literal(sourceMint),
-            amount: z.literal(input),
-          }),
-          refunds: z
-            .array(z.object({ chainId: z.string(), currency: z.string(), recipient: z.string() }))
-            .min(1),
-        }),
-      ]),
-      output: z.object({
-        chainId: z.literal("optimism"),
-        calls: z.tuple([]),
-        payments: z.tuple([
-          z.object({
-            currency: address,
-            recipient: address,
-            minimumAmount: z.literal(payout),
-            expectedAmount: z.literal(payout),
-          }),
-        ]),
-        deadline: z
-          .number()
-          .int()
-          .gt(Date.now() / 1000),
-      }),
-    })
-    .parse(orderData);
-  const pay = terms.output.payments[0];
-  if (
-    pay.currency !== outputMint ||
-    pay.recipient !== recipient.toLowerCase() ||
-    terms.inputs[0].refunds.some(
-      (r) =>
-        !(
-          (r.chainId === "solana" && r.recipient === sender && r.currency === sourceMint) ||
-          (r.chainId === "optimism" &&
-            r.recipient.toLowerCase() === pay.recipient &&
-            r.currency.toLowerCase() === outputMint)
-        ),
-    )
-  )
-    throw Error("Unexpected payout or refund terms");
-  const computed = getOrderId(orderData as Parameters<typeof getOrderId>[0], {
-    solana: "solana-vm",
-    optimism: "ethereum-vm",
-    base: "ethereum-vm",
-  });
+  const terms = checkRelayPaymentTerms(
+    "solana",
+    orderData,
+    orderId,
+    sender,
+    recipient,
+    sourceMint,
+    input,
+    payout,
+  );
   const ix = result.steps[0].items[0].data.instructions[0],
     data = Buffer.from(ix.data, "hex");
   const native = sourceMint === "11111111111111111111111111111111";
   if (
-    computed !== orderId ||
     ix.programId !== RELAY_DEPOSITORY_PINS[SOLANA] ||
     data.length !== 48 ||
     data.subarray(0, 8).toString("hex") !== (native ? "0d9e0ddf5fd51c06" : "0b9c60da27a3b413") ||
@@ -112,10 +66,5 @@ export function checkSolanaRelayOrder(
     ix.keys.filter((k) => k.isSigner).length !== 1
   )
     throw Error("Deposit differs from Relay order");
-  return {
-    orderId,
-    deadline: terms.output.deadline,
-    recipient: pay.recipient,
-    payoutMicroUsdc: payout,
-  };
+  return terms;
 }

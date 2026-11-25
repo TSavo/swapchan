@@ -25,6 +25,7 @@ import {
 import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
+import { bitcoinPaymentInput, quoteBitcoinPayment } from "./payment-bitcoin.js";
 import { quoteCirclePayment } from "./payment-circle.js";
 import { circleStatus, circleStatusInput } from "./payment-circle-status.js";
 import { comparePaymentCosts, recommendedPaymentStage } from "./payment-costs.js";
@@ -650,6 +651,15 @@ export function paymentRoutes(
   }
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
+    if (raw?.sourceChainId === 8253038) {
+      const parsed = bitcoinPaymentInput.safeParse(raw);
+      if (!parsed.success) return c.json({ error: "invalid_bitcoin_payment" }, 400);
+      try {
+        return c.json(await quoteBitcoinPayment(f, parsed.data));
+      } catch {
+        return c.json({ error: "bitcoin_quote_unverified" }, 503);
+      }
+    }
     if (raw?.sourceChainId === 792703809) {
       const parsed = solanaPaymentInput.safeParse(raw);
       if (!parsed.success) return c.json({ error: "invalid_solana_payment" }, 400);
