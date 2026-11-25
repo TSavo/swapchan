@@ -7,7 +7,7 @@ import {
 } from "@swapchan/shared";
 import { encodeFunctionData, erc20Abi, type Hex, keccak256 } from "viem";
 import { z } from "zod";
-import { simpleAccountRuntimeHash } from "./payment-delegation.js";
+import { simulateAtomicOrigin } from "./payment-atomic-origin.js";
 import { estimateOriginFees } from "./payment-origin-fees.js";
 import { getJson } from "./providers/types.js";
 
@@ -178,65 +178,16 @@ export async function quoteCrossPayment(
       originSimulation = { status: "unavailable" };
     }
   }
-  let atomicOrigin: null | { delegate: string; estimatedFeeWei: string } = null;
-  let atomicEstimateWei: string | null = null;
-  let atomicTx: null | { from: Hex; to: Hex; data: Hex } = null;
-  if (route.origin === 84532 && calls.length === 2 && originSimulation.status === "succeeded") {
-    try {
-      const code = await sourceRpc("eth_getCode", [intent.sender, block]);
-      if (
-        typeof code === "string" &&
-        code.toLowerCase() === "0xef0100" + paymentContracts.delegate.slice(2).toLowerCase()
-      ) {
-        const runtime = z
-          .string()
-          .regex(/^0x(?:[0-9a-f]{2})+$/i)
-          .parse(await sourceRpc("eth_getCode", [paymentContracts.delegate, block])) as Hex;
-        if (keccak256(runtime) === simpleAccountRuntimeHash) {
-          const data = encodeFunctionData({
-            abi: batchAbi,
-            functionName: "executeBatch",
-            args: [calls.map((c) => ({ target: c.to, data: c.data, value: 0n }))],
-          });
-          const transaction = { from: intent.sender, to: intent.sender, data };
-          const result = z
-            .array(
-              z.object({
-                calls: z
-                  .array(
-                    z.object({
-                      status: z.literal("0x1"),
-                      returnData: z.literal("0x"),
-                      gasUsed: quantity,
-                    }),
-                  )
-                  .length(1),
-              }),
-            )
-            .length(1)
-            .parse(
-              await sourceRpc("eth_simulateV1", [
-                { blockStateCalls: [{ calls: [transaction] }], validation: false },
-                block,
-              ]),
-            );
-          const gas = BigInt(result[0]!.calls[0]!.gasUsed);
-          if (gas > 0n) {
-            const fee = await estimateOriginFees(sourceRpc, 84532, block, intent.sender, [
-              { to: intent.sender, data, gas },
-            ]);
-            atomicEstimateWei = fee.totalWei;
-            if (BigInt(fee.totalWei) <= native) {
-              atomicTx = transaction;
-              atomicOrigin = { delegate: paymentContracts.delegate, estimatedFeeWei: fee.totalWei };
-            }
-          }
-        }
-      }
-    } catch {
-      /* Separate origin steps remain available when the delegated batch cannot be verified. */
-    }
-  }
+  const atomic =
+    route.origin === 84532 && calls.length === 2 && originSimulation.status === "succeeded"
+      ? await simulateAtomicOrigin(sourceRpc, block, intent.sender, calls).catch(() => null)
+      : null;
+  const atomicEstimateWei = atomic?.feeWei ?? null;
+  const funded = atomic && BigInt(atomic.feeWei) <= native ? atomic : null;
+  const atomicTx = funded?.transaction ?? null;
+  const atomicOrigin = funded
+    ? { delegate: funded.delegate, estimatedFeeWei: funded.feeWei }
+    : null;
   if (Math.min(q.quoteExpiryTimestamp, fillDeadline) <= Date.now() / 1000)
     throw Error("Expired cross-chain payment quote");
   const quote = {

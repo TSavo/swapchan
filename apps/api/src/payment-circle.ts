@@ -10,9 +10,11 @@ import {
   type Hex,
   keccak256,
   pad,
+  toHex,
   zeroHash,
 } from "viem";
 import { z } from "zod";
+import { simulateAtomicOrigin } from "./payment-atomic-origin.js";
 import { estimateOriginFees } from "./payment-origin-fees.js";
 import { getJson } from "./providers/types.js";
 
@@ -64,8 +66,13 @@ export async function quoteCirclePayment(
   const cost = amount + BigInt(quote.feeTotalAmount);
   const read = async (data: Hex) =>
     BigInt(hex.parse(await rpc("eth_call", [{ to: usdc, data }, block])));
+  const balanceCall = {
+    from: intent.sender,
+    to: usdc,
+    data: encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [intent.sender] }),
+  };
   const [balance, allowance, native] = await Promise.all([
-    read(encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [intent.sender] })),
+    read(balanceCall.data),
     read(
       encodeFunctionData({
         abi: erc20Abi,
@@ -112,18 +119,7 @@ export async function quoteCirclePayment(
           {
             blockStateCalls: [
               {
-                calls: [
-                  ...calls,
-                  {
-                    from: intent.sender,
-                    to: usdc,
-                    data: encodeFunctionData({
-                      abi: erc20Abi,
-                      functionName: "balanceOf",
-                      args: [intent.sender],
-                    }),
-                  },
-                ],
+                calls: [...calls, balanceCall],
               },
             ],
             validation: false,
@@ -146,6 +142,14 @@ export async function quoteCirclePayment(
         calls.map((c, i) => ({ ...c, gas: BigInt(simulation.calls[i]!.gasUsed) })),
       );
   }
+  const batch =
+    status === "succeeded" && calls.length === 2
+      ? await simulateAtomicOrigin(rpc, block, intent.sender, calls, {
+          call: balanceCall,
+          expected: toHex(balance - cost, { size: 32 }),
+        }).catch(() => null)
+      : null;
+  const funded = batch && BigInt(batch.feeWei) <= native ? batch : null;
   if (quote.expiry.expiresAt <= Date.now() / 1000) throw Error("Circle quote expired");
   const review = {
     ...intent,
@@ -153,7 +157,10 @@ export async function quoteCirclePayment(
     execution:
       status === "succeeded" && estimate && native >= BigInt(estimate.totalWei)
         ? "unsigned_origin_steps"
-        : "quote_only",
+        : funded && estimate
+          ? "unsigned_atomic_origin"
+          : "quote_only",
+    atomicOrigin: funded ? { delegate: funded.delegate, estimatedFeeWei: funded.feeWei } : null,
     burnTarget: messenger,
     burnDataHash: keccak256(calls[calls.length - 1]!.data),
     atomic: false,
@@ -168,8 +175,8 @@ export async function quoteCirclePayment(
       requiredApprovalMicroUsdc: allowance < cost ? String(cost) : "0",
     },
     originSimulation: { status },
-    originGas: { token: "ETH", estimate },
+    originGas: { token: "ETH", estimate, atomicEstimateWei: batch?.feeWei ?? null },
     destinationGasPaidBy: "circle_forwarder",
   };
-  return { review, signedTerms: quote, calls, intent };
+  return { review, signedTerms: quote, calls, intent, atomicTx: funded?.transaction ?? null };
 }

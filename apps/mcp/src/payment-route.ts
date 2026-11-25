@@ -3,6 +3,7 @@ import {
   checkAcrossApproval,
   checkAcrossAtomicOrigin,
   checkAcrossDeposit,
+  checkCircleBatch,
   checkCircleBurn,
   circleMessenger,
   EvmAddress,
@@ -84,8 +85,16 @@ export function checkPaymentRoute(
   const cap = q.sourceWallet.requiredApprovalMicroUsdc;
   if (q.provider === "circle_cctp") {
     const messenger = circleMessenger;
-    if (build.action === "burn" && tx.to.toLowerCase() === messenger.toLowerCase()) {
-      checkCircleBurn(tx.data, { ...q, burnDataHash: q.burnDataHash });
+    if (build.action === "burn" || build.action === "atomic_origin") {
+      const atomic = build.action === "atomic_origin";
+      if (
+        tx.to.toLowerCase() !== (atomic ? q.sender : messenger).toLowerCase() ||
+        (atomic && cap !== q.maxInputMicroUsdc)
+      )
+        throw Error("Unexpected Circle execution target or approval.");
+      const intent = { ...q, burnDataHash: q.burnDataHash };
+      if (atomic) checkCircleBatch(tx.data, intent);
+      else checkCircleBurn(tx.data, intent);
       return {
         after: "successful_burn_receipt",
         tool: "payment_status",

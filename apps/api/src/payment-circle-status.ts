@@ -1,4 +1,10 @@
-import { acrossTestRoute, checkCircleBurn, circleMessenger, EvmAddress } from "@swapchan/shared";
+import {
+  acrossTestRoute,
+  checkCircleBatch,
+  checkCircleBurn,
+  circleMessenger,
+  EvmAddress,
+} from "@swapchan/shared";
 import {
   decodeEventLog,
   encodeFunctionData,
@@ -122,15 +128,17 @@ export async function circleStatus(
   const tx = z
     .object({ input: data, hash, blockHash: hash, value: quantity })
     .parse(await rpc(84532, "eth_getTransactionByHash", [i.originHash]));
+  const atomic = origin.r.to.toLowerCase() === i.sender.toLowerCase();
   if (
     tx.hash !== i.originHash ||
     tx.blockHash !== origin.r.blockHash ||
     origin.r.from.toLowerCase() !== i.sender.toLowerCase() ||
-    origin.r.to.toLowerCase() !== circleMessenger.toLowerCase() ||
+    (!atomic && origin.r.to.toLowerCase() !== circleMessenger.toLowerCase()) ||
+    (atomic && i.approvalHash) ||
     BigInt(tx.value) !== 0n
   )
     throw Error("Unexpected Circle burn");
-  const paid = checkCircleBurn(tx.input, i);
+  const paid = atomic ? checkCircleBatch(tx.input, i) : checkCircleBurn(tx.input, i);
   const base = {
     originHash: i.originHash,
     originFinalized: origin.finalized,

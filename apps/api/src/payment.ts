@@ -225,14 +225,16 @@ export function paymentRoutes(
     const circle = circleQuotes.get(body.data.quoteId);
     if (circle) {
       const previous = circle.review;
+      const stage = body.data.stage ?? recommendedPaymentStage(previous);
+      const atomic = stage === "atomic_origin";
       if (
         previous.execution === "quote_only" ||
         !previous.originGas.estimate ||
-        body.data.stage === "atomic_origin"
+        (!atomic && previous.execution === "unsigned_atomic_origin")
       )
         return c.json({ error: "funded_quote_required" }, 422);
       try {
-        const { review, calls } = await quoteCirclePayment(
+        const { review, calls, atomicTx } = await quoteCirclePayment(
           f,
           chain,
           circle.intent,
@@ -244,9 +246,11 @@ export function paymentRoutes(
           review.execution === "quote_only" ||
           !review.originGas.estimate ||
           caps.length !== calls.length ||
-          review.originGas.estimate.perTransactionWei.some(
-            (v, i) => BigInt(v) > BigInt(caps[i]!),
-          ) ||
+          (!atomic &&
+            (review.execution === "unsigned_atomic_origin" ||
+              review.originGas.estimate.perTransactionWei.some(
+                (v, i) => BigInt(v) > BigInt(caps[i]!),
+              ))) ||
           review.burnDataHash !== previous.burnDataHash ||
           review.maxInputMicroUsdc !== previous.maxInputMicroUsdc ||
           (approval &&
@@ -254,6 +258,25 @@ export function paymentRoutes(
               body.data.stage === "after_approval"))
         )
           return c.json({ error: "payment_terms_changed" }, 409);
+        if (atomic) {
+          if (
+            !approval ||
+            !previous.atomicOrigin ||
+            !review.atomicOrigin ||
+            !atomicTx ||
+            BigInt(review.atomicOrigin.estimatedFeeWei) >
+              BigInt(previous.atomicOrigin.estimatedFeeWei)
+          )
+            return c.json({ error: "atomic_origin_unavailable" }, 422);
+          return c.json({
+            quoteId: body.data.quoteId,
+            action: "atomic_origin",
+            unsignedTransaction: { ...atomicTx, chainId: 84532, value: "0x0" },
+            expiresAt: review.expiresAt,
+            originSimulation: { status: "succeeded" },
+            estimatedOriginFeeWei: review.atomicOrigin.estimatedFeeWei,
+          });
+        }
         return c.json({
           quoteId: body.data.quoteId,
           action: approval ? "approve" : "burn",
