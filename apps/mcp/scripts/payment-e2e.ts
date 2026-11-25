@@ -35,15 +35,25 @@ try {
     const args = tool === "pay" ? { chainId: 11155420, intent } : { chainId: 11155420, ...intent };
     const comparison = z
       .object({
+        reviewId: z.uuid(),
         routes: z.array(routeSchema),
         recommendedQuoteId: z.uuid().nullable(),
       })
       .parse(await call(tool, args));
+    const recovered = z
+      .object({ reviewId: z.uuid(), routes: z.array(routeSchema) })
+      .parse(await call("quote_payment", { savedId: comparison.reviewId }));
+    assert.deepEqual(recovered.routes, comparison.routes);
     assert.deepEqual(comparison.routes.map((r) => [r.sourceChainId, r.provider]).sort(), [
       [11155420, "direct_transfer"],
       [84532, "across"],
     ]);
     for (const route of comparison.routes) {
+      const terms = routeSchema.omit({ fundingShortfall: true });
+      assert.deepEqual(
+        terms.parse(await call("quote_payment", { savedId: route.quoteId })),
+        terms.parse(route),
+      );
       assert.equal(route.sender.toLowerCase(), sender.toLowerCase());
       assert.equal(route.recipient.toLowerCase(), recipient.toLowerCase());
     }

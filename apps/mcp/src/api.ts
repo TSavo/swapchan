@@ -143,6 +143,12 @@ export class SwapChanApi {
       body: JSON.stringify(body),
     });
   }
+  savedPaymentQuote(id: string) {
+    return this.req(
+      z.record(z.string(), z.unknown()),
+      "/payments/review/" + encodeURIComponent(id),
+    );
+  }
   checkDelegation(body: Record<string, unknown>) {
     return this.req(z.record(z.string(), z.unknown()), "/payments/delegation", {
       method: "POST",

@@ -389,8 +389,12 @@ export function paymentRoutes(
     c.header("Cache-Control", "no-store");
     const q = issued.get(id);
     if (q) return c.json({ ...q, quoteId: id });
+    const route = directQuotes.get(id) ?? crossQuotes.get(id);
+    if (route) return c.json({ ...route.review, quoteId: id });
     const saved = comparisons.get(id);
-    return saved ? c.json(saved.data) : c.json({ error: "quote_expired" }, 410);
+    return saved
+      ? c.json({ ...saved.data, reviewId: id })
+      : c.json({ error: "quote_expired" }, 410);
   });
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);

@@ -962,18 +962,36 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       title: "Quote an exact USDC payment",
       description:
         "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare a direct transfer with an Across bridge by available USDC and estimated ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
-      inputSchema: z.object({
-        chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
-        sourceChainId: z
-          .union([z.literal(8453), z.literal(84532), z.literal(10), z.literal(11155420)])
-          .optional(),
-        sender: evm,
-        recipient: evm,
-        amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
-      }),
+      inputSchema: z
+        .object({
+          savedId: z
+            .uuid()
+            .optional()
+            .describe(
+              "On payment-enabled deployments, pass only a previously issued quoteId or comparison reviewId to retrieve its original terms before expiry.",
+            ),
+          chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]).optional(),
+          sourceChainId: z
+            .union([z.literal(8453), z.literal(84532), z.literal(10), z.literal(11155420)])
+            .optional(),
+          sender: evm.optional(),
+          recipient: evm.optional(),
+          amountMicroUsdc: z
+            .string()
+            .regex(/^[1-9][0-9]{0,37}$/)
+            .optional(),
+        })
+        .strict()
+        .refine(
+          (a) =>
+            a.savedId
+              ? Object.keys(a).length === 1
+              : Boolean(a.chainId && a.sender && a.recipient && a.amountMicroUsdc),
+          "Supply a complete payment intent or a savedId alone.",
+        ),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    safe(async (a) => api.paymentQuote(a)),
+    safe(async (a) => (a.savedId ? api.savedPaymentQuote(a.savedId) : api.paymentQuote(a))),
   );
   server.registerTool(
     "build_7702_bundle",
