@@ -137,6 +137,12 @@ export class SwapChanApi {
       body: JSON.stringify(body),
     });
   }
+  paymasterCleanup(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/paymaster-cleanup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   paymentQuote(body: Record<string, unknown>) {
     return this.req(z.record(z.string(), z.unknown()), "/payments/quote", {
       method: "POST",

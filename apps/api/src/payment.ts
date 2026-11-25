@@ -31,6 +31,7 @@ import { z } from "zod";
 import { bitcoinPaymentInput, quoteBitcoinPayment } from "./payment-bitcoin.js";
 import { quoteCirclePayment, quoteDevnetCircle } from "./payment-circle.js";
 import { circleStatus, circleStatusInput } from "./payment-circle-status.js";
+import { cleanupInput, paymasterCleanup } from "./payment-cleanup.js";
 import { comparePaymentCosts, recommendedPaymentStage } from "./payment-costs.js";
 import { crossPaymentInput, quoteCrossPayment } from "./payment-cross-chain.js";
 import { crossSettlement, settlementInput } from "./payment-cross-settlement.js";
@@ -230,6 +231,16 @@ export function paymentRoutes(
     });
     return wei > 0n ? 10n ** 24n / wei : null;
   }
+  app.post("/paymaster-cleanup", async (c) => {
+    if (!testnetEnabled) return c.json({ error: "testnet_payments_disabled" }, 403);
+    const input = cleanupInput.safeParse(await c.req.json().catch(() => null));
+    if (!input.success) return c.json({ error: "invalid_cleanup_request" }, 400);
+    try {
+      return c.json(await paymasterCleanup(chain, input.data));
+    } catch {
+      return c.json({ error: "unable_to_verify_paymaster_revocation" }, 422);
+    }
+  });
   app.post("/direct/status", async (c) => {
     const p = directReceiptInput.safeParse(await c.req.json().catch(() => null));
     if (!p.success) return c.json({ error: "invalid_direct_payment" }, 400);
@@ -1541,6 +1552,38 @@ export function paymentRoutes(
       return c.json({ error: "payment_submission_failed", userOpHash: built.digest }, 422);
     }
   });
+  async function allowanceAt(owner: Hex, blockHash: string) {
+    const data = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [owner, paymaster],
+    });
+    const remaining = await chain("eth_call", [
+      { to: usdc, data },
+      { blockHash, requireCanonical: true },
+    ])
+      .then((v) => BigInt(hex.parse(v)).toString())
+      .catch(() => null);
+    const args = { chainId: 84532, token: usdc, spender: paymaster };
+    return {
+      paymasterAllowanceAfterBlockMicroUsdc: remaining,
+      ...(remaining && remaining !== "0"
+        ? {
+            allowanceCleanup: {
+              tool: "build_revoke_tx",
+              arguments: args,
+              sender: owner,
+              requiresNativeGas: true,
+              gaslessOwnerOption: {
+                tool: "build_revoke_tx",
+                arguments: { ...args, relayedPaymaster: { owner } },
+                addFeePayerAt: "relayedPaymaster.relayer",
+              },
+            },
+          }
+        : {}),
+    };
+  }
   app.get("/status/:hash", async (c) => {
     const digest = c.req.param("hash"),
       saved = receipts.get(digest);
@@ -1583,6 +1626,7 @@ export function paymentRoutes(
         );
         return c.json({
           ...settlement,
+          ...(await allowanceAt(saved.quote.sender, canonical.blockHash)),
           spentWethWei: result.spentWethWei,
           wrappedNativeWei: result.wrappedNativeWei,
           receivedFromSwapMicroUsdc: result.receivedFromSwapMicroUsdc,
@@ -1601,17 +1645,6 @@ export function paymentRoutes(
         BigInt(z.object({ number: hex }).parse(finalizedBlock).number) >=
         BigInt(canonical.blockNumber);
       if (!finalized) return c.json({ ...result, status: "awaiting_finality", finalized });
-      const dataAllowance = encodeFunctionData({
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [saved.quote.sender, paymaster],
-      });
-      const remaining = chain("eth_call", [
-        { to: usdc, data: dataAllowance },
-        { blockHash: canonical.blockHash, requireCanonical: true },
-      ])
-        .then((x) => BigInt(hex.parse(x)).toString())
-        .catch(() => null);
       const balances =
         inclusion.parentHash && result.status === "settled"
           ? Promise.all([
@@ -1621,24 +1654,14 @@ export function paymentRoutes(
               .then(([before, after]) => ({ before, after }))
               .catch(() => null)
           : null;
-      const [paymasterAllowanceAfterBlockMicroUsdc, blockBalances] = await Promise.all([
-        remaining,
+      const [allowance, blockBalances] = await Promise.all([
+        allowanceAt(saved.quote.sender, canonical.blockHash),
         balances,
       ]);
       return c.json({
         ...result,
         finalized,
-        paymasterAllowanceAfterBlockMicroUsdc,
-        ...(paymasterAllowanceAfterBlockMicroUsdc && paymasterAllowanceAfterBlockMicroUsdc !== "0"
-          ? {
-              allowanceCleanup: {
-                tool: "build_revoke_tx",
-                arguments: { chainId: 84532, token: usdc, spender: paymaster },
-                sender: saved.quote.sender,
-                requiresNativeGas: true,
-              },
-            }
-          : {}),
+        ...allowance,
         blockBalances,
         paymaster,
       });

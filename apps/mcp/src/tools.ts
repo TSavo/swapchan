@@ -7,6 +7,8 @@ import {
   CHAIN_COUNT,
   COW_NETWORK,
   circleMessenger,
+  cleanupOwnerRequest,
+  cleanupRelayRequest,
   fromBaseUnits,
   isAnyAddress,
   isVmAddress,
@@ -2293,21 +2295,85 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Build revoke-approval tx",
       description:
-        "Unsigned transaction that sets an ERC-20 allowance to 0 (approve(spender, 0)) on an EVM chain. The user's wallet signs and sends it; SwapChan never signs. Use after check_approvals. Result includes `display` markdown with chan images: show it to the user.",
+        "Unsigned transaction that sets an ERC-20 allowance to 0 (approve(spender, 0)) on an EVM chain. The user's wallet signs and sends it; SwapChan never signs. For a Base Sepolia payment paymaster allowance, pass relayedPaymaster with owner and funded relayer. The owner signs a zero-value USDC permit. Supply the signed nonce, deadline and signature to build the relayer transaction. Use after check_approvals. Result includes `display` markdown with chan images: show it to the user.",
       inputSchema: z.object({
         chainId: chainArg,
         token: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
         spender: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+        relayedPaymaster: z
+          .object({
+            owner: evm,
+            relayer: evm,
+            signed: z
+              .object({
+                nonce: z.string().regex(/^\d+$/),
+                deadline: z.number().int().positive(),
+                signature: z.string().regex(/^0x[0-9a-f]{130}$/i),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     safe(
-      async (a: { chainId: number | string; token: string; spender: string }) =>
-        api.revokeTx(String(cid(a.chainId) ?? a.chainId), a.token, a.spender),
+      async (a) => {
+        if (a.relayedPaymaster) {
+          if (
+            Number(a.chainId) !== 84532 ||
+            a.token.toLowerCase() !== paymentContracts.usdc.toLowerCase() ||
+            a.spender.toLowerCase() !== paymentContracts.paymaster.toLowerCase()
+          )
+            throw new UserError(
+              "Relayed revocation requires the Base Sepolia USDC payment paymaster.",
+            );
+          const { owner, relayer, signed } = a.relayedPaymaster;
+          const result = await api.paymasterCleanup(a.relayedPaymaster);
+          if (
+            result.status === "already_revoked" &&
+            result.remainingMicroUsdc === "0" &&
+            !result.walletRequest
+          )
+            return result;
+          const { deadline, nonce } = z
+            .object({
+              deadline: z
+                .number()
+                .int()
+                .gt(Date.now() / 1000)
+                .max(Math.floor(Date.now() / 1000) + 300),
+              nonce: z.string().regex(/^\d+$/),
+            })
+            .parse(result);
+          const request = signed
+            ? cleanupRelayRequest(
+                owner as ViemAddress,
+                relayer as ViemAddress,
+                deadline,
+                signed.signature as `0x${string}`,
+              )
+            : cleanupOwnerRequest(owner as ViemAddress, nonce, deadline);
+          if (
+            (signed &&
+              (signed.deadline !== deadline ||
+                signed.nonce !== nonce ||
+                result.status !== "relayer_transaction_ready" ||
+                result.simulatedRemainingMicroUsdc !== "0")) ||
+            (!signed && result.status !== "owner_signature_required")
+          )
+            throw new UserError("Revocation differs from the reviewed permit.");
+          return { ...result, walletRequest: request };
+        }
+        return api.revokeTx(String(cid(a.chainId) ?? a.chainId), a.token, a.spender);
+      },
       (a) => ({
         fromChainId: cid(a.chainId),
         toChainId: cid(a.chainId),
-        says: "Here's your revoke tx. Sign it in your wallet and that spender is locked out~",
+        says: a.relayedPaymaster
+          ? "Check the current allowance and the requested signer before continuing."
+          : "Here's your revoke tx. Sign it in your wallet and that spender is locked out~",
         swapUrl: SITE,
       }),
     ),

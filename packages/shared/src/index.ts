@@ -389,3 +389,10 @@ export const PaymentWalletCapabilities = z.record(
     atomic: z.object({ status: z.enum(["supported", "ready", "unsupported"]) }).optional(),
   }),
 );
+
+export {
+  cleanupDomainHash,
+  cleanupOwnerRequest,
+  cleanupRelayRequest,
+  cleanupTypedData,
+} from "./payment-cleanup.js";
