@@ -7,6 +7,19 @@ export type FundingQuote = {
   sourceWallet: { balanceMicroUsdc: string; nativeBalanceWei: string };
   originGas: { estimate: { totalWei: string } | null; atomicEstimateWei?: string | null };
 };
+export function recommendedPaymentStage(
+  q: Pick<FundingQuote, "execution" | "atomicOrigin" | "originGas">,
+) {
+  if (q.execution === "quote_only") return null;
+  const batch = q.atomicOrigin?.estimatedFeeWei;
+  const split = q.originGas.estimate?.totalWei;
+  if (
+    batch &&
+    (!split || q.execution === "unsigned_atomic_origin" || BigInt(batch) < BigInt(split))
+  )
+    return "atomic_origin";
+  return "initial";
+}
 /** Compare fees and exact payout in integer USDC units, preserving both native costs on the quote. */
 export function comparePaymentCosts<T extends FundingQuote>(
   quotes: T[],
@@ -15,6 +28,9 @@ export function comparePaymentCosts<T extends FundingQuote>(
   const scale = 10n ** 18n;
   function fee(q: T) {
     const split = q.originGas.estimate?.totalWei;
+    const stage = recommendedPaymentStage(q);
+    if (stage === "atomic_origin") return q.atomicOrigin!.estimatedFeeWei;
+    if (stage === "initial") return split ?? null;
     const batch = q.atomicOrigin?.estimatedFeeWei ?? q.originGas.atomicEstimateWei;
     if (
       batch &&
@@ -38,6 +54,7 @@ export function comparePaymentCosts<T extends FundingQuote>(
         : BigInt(fundingFeeWei) - BigInt(q.sourceWallet.nativeBalanceWei);
     return {
       ...q,
+      recommendedStage: recommendedPaymentStage(q),
       fundingFeeWei,
       fundingShortfall: {
         microUsdc: String(tokenGap > 0n ? tokenGap : 0n),

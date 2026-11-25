@@ -22,7 +22,7 @@ import {
 import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
-import { comparePaymentCosts } from "./payment-costs.js";
+import { comparePaymentCosts, recommendedPaymentStage } from "./payment-costs.js";
 import { crossPaymentInput, quoteCrossPayment } from "./payment-cross-chain.js";
 import { crossSettlement, settlementInput } from "./payment-cross-settlement.js";
 import { inspectDelegation } from "./payment-delegation.js";
@@ -208,7 +208,10 @@ export function paymentRoutes(
   });
   app.post("/cross-chain/build", async (c) => {
     const body = z
-      .object({ quoteId: z.uuid(), stage: z.enum(["initial", "after_approval", "atomic_origin"]) })
+      .object({
+        quoteId: z.uuid(),
+        stage: z.enum(["initial", "after_approval", "atomic_origin"]).optional(),
+      })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: "invalid_build_request" }, 400);
@@ -219,7 +222,7 @@ export function paymentRoutes(
       if (local.review.expiresAt <= Date.now() / 1000)
         return c.json({ error: "quote_expired" }, 410);
       if (
-        body.data.stage !== "initial" ||
+        (body.data.stage ?? "initial") !== "initial" ||
         local.review.execution !== "unsigned_origin_steps" ||
         !local.review.originGas.estimate
       )
@@ -251,7 +254,8 @@ export function paymentRoutes(
       return c.json({ error: "quote_expired" }, 410);
     if (saved.intent.chainId === 10)
       return c.json({ error: "mainnet_payment_build_disabled" }, 403);
-    const atomic = body.data.stage === "atomic_origin";
+    const stage = body.data.stage ?? recommendedPaymentStage(saved.review);
+    const atomic = stage === "atomic_origin";
     const reviewedGas = saved.review.originGas.estimate;
     if (saved.review.depositLimitIssue)
       return c.json(
@@ -304,7 +308,7 @@ export function paymentRoutes(
             BigInt(saved.review.sourceWallet.requiredApprovalMicroUsdc))
       )
         return c.json({ error: "approval_changed" }, 409);
-      if (body.data.stage === "atomic_origin") {
+      if (atomic) {
         const previous = saved.review.atomicOrigin;
         if (
           !previous ||

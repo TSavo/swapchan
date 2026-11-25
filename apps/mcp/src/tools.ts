@@ -1021,7 +1021,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across. Inspect routes, fundingShortfall and recommendedQuoteId. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Use atomic_origin when atomicOrigin is offered. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
+        "Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across. Inspect routes, fundingShortfall and recommendedQuoteId. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
       inputSchema: z
         .object({
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
@@ -1065,7 +1065,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         });
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
       if (a.chainId !== 84532)
-        return api.crossPaymentBuild({ quoteId: a.quoteId, stage: a.stage ?? "initial" });
+        return api.crossPaymentBuild({
+          quoteId: a.quoteId,
+          ...(a.stage ? { stage: a.stage } : {}),
+        });
       const args = {
         quoteId: a.quoteId,
         ...(a.authorization ? { authorization: a.authorization } : {}),

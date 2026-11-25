@@ -273,6 +273,11 @@ it("offers only the atomic path when the wallet can afford one batch but cannot 
     await post(a, "/quote", { ...intent, sourceChainId: 84532, chainId: 11155420 })
   ).json();
   expect(q.execution).toBe("unsigned_atomic_origin");
+  const defaultBuild = await post(a, "/cross-chain/build", { quoteId: q.quoteId });
+  expect(await defaultBuild.json()).toMatchObject({
+    action: "atomic_origin",
+    estimatedOriginFeeWei: q.atomicOrigin.estimatedFeeWei,
+  });
   expect(
     (await post(a, "/cross-chain/build", { quoteId: q.quoteId, stage: "atomic_origin" })).status,
   ).toBe(200);
