@@ -954,7 +954,7 @@ export function paymentRoutes(
             .filter((c) => c.expiresAt > Date.now() / 1000)
             .map((c) => {
               const batch =
-                c.provider === "across" &&
+                (c.provider === "across" || c.provider === "circle_cctp") &&
                 c.sourceChainId === 84532 &&
                 "atomicOrigin" in c &&
                 c.atomicOrigin &&

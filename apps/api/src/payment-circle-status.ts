@@ -4,9 +4,11 @@ import {
   checkCircleBurn,
   circleMessenger,
   EvmAddress,
+  paymentContracts,
 } from "@swapchan/shared";
 import {
   decodeEventLog,
+  decodeFunctionData,
   encodeFunctionData,
   erc20Abi,
   type Hex,
@@ -15,6 +17,7 @@ import {
   slice,
   toEventSelector,
 } from "viem";
+import { entryPoint08Abi } from "viem/account-abstraction";
 import { z } from "zod";
 import { receiptFees } from "./payment-origin-fees.js";
 
@@ -77,6 +80,60 @@ function transfers(r: z.infer<typeof receipt>, token: string, owner: string) {
   }
   return total;
 }
+// Restrict wallet-bundled receipts to the same reviewed Simple7702Account batch.
+export function circleWalletOperation(
+  input: Hex,
+  logs: z.infer<typeof receipt>["logs"],
+  intent: z.infer<typeof circleStatusInput>,
+) {
+  const decoded = decodeFunctionData({ abi: entryPoint08Abi, data: input });
+  if (decoded.functionName !== "handleOps") throw Error("Unsupported Circle wallet transaction");
+  const [ops] = decoded.args;
+  const matches = ops
+    .map((op, index) => ({ op, index }))
+    .filter(({ op }) => op.sender.toLowerCase() === intent.sender.toLowerCase());
+  if (matches.length !== 1) throw Error("Ambiguous wallet operation");
+  const { op, index } = matches[0]!;
+  if (op.paymasterAndData !== "0x") throw Error("Unreviewed wallet paymaster");
+  const paid = checkCircleBatch(op.callData, intent);
+  const events = logs
+    .map((log, position) => ({ log, position }))
+    .filter(({ log }) => log.address.toLowerCase() === paymentContracts.entry.toLowerCase());
+  const boundaries = events.filter(
+    ({ log }) => log.topics[0] === toEventSelector("BeforeExecution()"),
+  );
+  const completed = events.filter(
+    ({ log }) =>
+      log.topics[0] ===
+      toEventSelector("UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)"),
+  );
+  if (
+    completed.length !== ops.length ||
+    boundaries.length !== 1 ||
+    boundaries[0]!.position >= completed[0]!.position
+  )
+    throw Error("Incomplete wallet operation events");
+  const { log, position } = completed[index]!;
+  const { args: event } = decodeEventLog({
+    abi: entryPoint08Abi,
+    eventName: "UserOperationEvent",
+    topics: log.topics as [Hex, ...Hex[]],
+    data: log.data,
+  });
+  if (
+    !event.success ||
+    event.sender.toLowerCase() !== intent.sender.toLowerCase() ||
+    event.nonce !== op.nonce ||
+    BigInt(event.paymaster) !== 0n
+  )
+    throw Error("Wallet operation failed or changed");
+  const previous = index ? completed[index - 1]! : boundaries[0]!;
+  return {
+    paid,
+    logs: logs.slice(previous.position + 1, position),
+    fees: { userOpHash: event.userOpHash, entryPointGasCostWei: event.actualGasCost.toString() },
+  };
+}
 export async function circleStatus(
   i: z.infer<typeof circleStatusInput>,
   rpc: Rpc,
@@ -132,6 +189,7 @@ export async function circleStatus(
   const origin = await canonical(84532, i.originHash);
   if (!origin) return { status: "awaiting_origin_receipt" };
   let paid: bigint;
+  let walletFees: { userOpHash: Hex; entryPointGasCostWei: string } | undefined;
   if (sponsored) {
     if (origin.r.blockHash !== sponsored.blockHash || i.approvalHash)
       throw Error("Sponsored origin changed");
@@ -141,24 +199,31 @@ export async function circleStatus(
     const tx = z
       .object({ input: data, hash, blockHash: hash, value: quantity })
       .parse(await rpc(84532, "eth_getTransactionByHash", [i.originHash]));
-    const atomic = origin.r.to.toLowerCase() === i.sender.toLowerCase();
-    if (
-      tx.hash !== i.originHash ||
-      tx.blockHash !== origin.r.blockHash ||
-      origin.r.from.toLowerCase() !== i.sender.toLowerCase() ||
-      (!atomic && origin.r.to.toLowerCase() !== circleMessenger.toLowerCase()) ||
-      (atomic && i.approvalHash) ||
-      BigInt(tx.value) !== 0n
-    )
-      throw Error("Unexpected Circle burn");
-    paid = atomic ? checkCircleBatch(tx.input, i) : checkCircleBurn(tx.input, i);
+    if (tx.hash !== i.originHash || tx.blockHash !== origin.r.blockHash || BigInt(tx.value) !== 0n)
+      throw Error("Unexpected Circle transaction");
+    if (origin.r.to.toLowerCase() === paymentContracts.entry.toLowerCase()) {
+      if (i.approvalHash || origin.r.status !== "0x1") throw Error("Invalid Circle wallet batch");
+      const operation = circleWalletOperation(tx.input, origin.r.logs, i);
+      paid = operation.paid;
+      origin.r.logs = operation.logs;
+      walletFees = operation.fees;
+    } else {
+      const atomic = origin.r.to.toLowerCase() === i.sender.toLowerCase();
+      if (
+        origin.r.from.toLowerCase() !== i.sender.toLowerCase() ||
+        (!atomic && origin.r.to.toLowerCase() !== circleMessenger.toLowerCase()) ||
+        (atomic && i.approvalHash)
+      )
+        throw Error("Unexpected Circle burn");
+      paid = atomic ? checkCircleBatch(tx.input, i) : checkCircleBurn(tx.input, i);
+    }
   }
   const base = {
     originHash: i.originHash,
     originFinalized: origin.finalized,
     originFees: sponsored
       ? { gasChargedMicroUsdc: sponsored.gasChargedMicroUsdc }
-      : receiptFees(origin.r),
+      : (walletFees ?? receiptFees(origin.r)),
   };
   if (origin.r.status === "0x0") return { ...base, status: "burn_reverted" };
   const spent =

@@ -1174,7 +1174,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .optional()
             .describe("Build the recommended route from this saved Optimism Sepolia comparison."),
           walletCapabilities: PaymentWalletCapabilities.optional().describe(
-            "Result of wallet_getCapabilities for the signing account. A supported Base Sepolia atomic capability can use wallet_sendCalls for an Across atomic origin.",
+            "Result of wallet_getCapabilities for the signing account. A supported Base Sepolia atomic capability can use wallet_sendCalls for an Across or Circle atomic origin.",
           ),
           walletMethodsByChain: PaymentWalletMethods.optional().describe(
             "Caller-supported signing methods by origin chain for an Optimism Sepolia comparison. Omitted chains are unavailable.",
@@ -1379,7 +1379,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           throw new UserError("Payment build returned an unexpected chain or action.");
         const reviewed = await api.savedPaymentQuote(result.data.quoteId);
         const next = checkPaymentRoute(reviewed, result.data);
-        if (action === "atomic_origin" && reviewed.provider === "across" && useWalletBatch) {
+        if (action === "atomic_origin" && useWalletBatch) {
           const batch = decodeFunctionData({
             abi: batchAbi,
             data: unsignedTransaction.data as `0x${string}`,
@@ -1410,7 +1410,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             next: {
               tool: next.tool,
               arguments: next.arguments,
-              addWalletStatusResultAt: "crossChain.walletCallsStatus",
+              addWalletStatusResultAt:
+                reviewed.provider === "circle_cctp"
+                  ? "circle.walletCallsStatus"
+                  : "crossChain.walletCallsStatus",
               requireAtomic: true,
               requireStatus: 200,
             },
@@ -1584,6 +1587,20 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       api.paymentSubmit(a),
     ),
   );
+  const walletBatchReceipt = z.object({
+    id: z.string().min(1),
+    chainId: z.literal("0x14a34"),
+    atomic: z.boolean(),
+    status: z.number().int(),
+    receipts: z
+      .array(
+        z.object({
+          status: z.string(),
+          transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+        }),
+      )
+      .optional(),
+  });
   server.registerTool(
     "payment_status",
     {
@@ -1607,7 +1624,11 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           solana: z.object({ reviewId: z.uuid() }).strict().optional(),
           circle: z
             .object({
-              originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              originHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+              walletCallsStatus: walletBatchReceipt.optional(),
               approvalHash: z
                 .string()
                 .regex(/^0x[0-9a-f]{64}$/i)
@@ -1619,6 +1640,11 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
             })
             .strict()
+            .refine(
+              (v) =>
+                Boolean(v.originHash) !== Boolean(v.walletCallsStatus) &&
+                !(v.approvalHash && v.walletCallsStatus),
+            )
             .optional(),
           direct: z
             .object({
@@ -1641,22 +1667,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                 .string()
                 .regex(/^0x[0-9a-f]{64}$/i)
                 .optional(),
-              walletCallsStatus: z
-                .object({
-                  id: z.string().min(1),
-                  chainId: z.literal("0x14a34"),
-                  atomic: z.boolean(),
-                  status: z.number().int(),
-                  receipts: z
-                    .array(
-                      z.object({
-                        status: z.string(),
-                        transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
-                      }),
-                    )
-                    .optional(),
-                })
-                .optional(),
+              walletCallsStatus: walletBatchReceipt.optional(),
               reviewedDepositData: z
                 .string()
                 .regex(/^0x(?:[0-9a-f]{2})+$/i)
@@ -1697,9 +1708,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     safe(async (a) => {
-      if (a.crossChain) {
-        const { walletCallsStatus: batch, ...intent } = a.crossChain;
-        if (!batch) return api.crossPaymentStatus(intent);
+      if (a.crossChain || a.circle) {
+        const { walletCallsStatus: batch, ...intent } = (a.circle ?? a.crossChain)!;
+        const lookup = (originHash: string) =>
+          a.circle
+            ? api.circlePaymentStatus({ ...intent, originHash })
+            : api.crossPaymentStatus({ ...intent, originHash });
+        if (!batch) return lookup(intent.originHash!);
         if (batch.status >= 100 && batch.status < 200)
           return { status: "awaiting_wallet_batch", batchId: batch.id };
         if (batch.status >= 400 && batch.status < 600)
@@ -1713,20 +1728,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           throw new UserError(
             "Wallet did not confirm a single successful atomic origin transaction.",
           );
-        return api.crossPaymentStatus({
-          ...intent,
-          originHash: batch.receipts[0]!.transactionHash,
-        });
+        return lookup(batch.receipts[0]!.transactionHash);
       }
       if (a.solanaDevnet) return api.devnetStatus(a.solanaDevnet);
       if (a.tron) return api.tronPaymentStatus(a.tron);
       return a.solana
         ? api.solanaPaymentStatus(a.solana)
-        : a.circle
-          ? api.circlePaymentStatus(a.circle)
-          : a.direct
-            ? api.directPaymentStatus(a.direct)
-            : api.paymentStatus(a.userOpHash!);
+        : a.direct
+          ? api.directPaymentStatus(a.direct)
+          : api.paymentStatus(a.userOpHash!);
     }),
   );
   server.registerTool(
