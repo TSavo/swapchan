@@ -38,6 +38,7 @@ import {
   directReceiptInput,
   quoteDirect,
 } from "./payment-direct.js";
+import { multiFundingInput, multiFundingQuote } from "./payment-multi-funding.js";
 import {
   chainReceipt,
   operationReceipt,
@@ -652,6 +653,27 @@ export function paymentRoutes(
   }
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
+    if (raw?.fundingAddresses !== undefined) {
+      const parsed = multiFundingInput.safeParse(raw);
+      if (!parsed.success) return c.json({ error: "invalid_funding_addresses" }, 400);
+      const { recipient, amountMicroUsdc } = parsed.data;
+      const result = await multiFundingQuote(
+        f,
+        parsed.data,
+        prices,
+        (r) => retain(solanaReviews, r),
+        (chainId, sender) => {
+          const intent = { chainId: 10 as const, sender, recipient, amountMicroUsdc };
+          return chainId === 10
+            ? issueDirect(intent)
+            : issueCross({ ...intent, sourceChainId: 8453 });
+        },
+      );
+      return c.json({
+        ...result,
+        reviewId: retain(comparisons, { data: result, expiresAt: result.expiresAt }),
+      });
+    }
     if (raw?.sourceChainId === 728126428) {
       const parsed = tronPaymentInput.safeParse(raw);
       if (!parsed.success) return c.json({ error: "invalid_tron_payment" }, 400);
