@@ -14,7 +14,7 @@ import {
   paymentGasLimits,
   paymentSignatureRequest,
 } from "@swapchan/shared";
-import { solanaDevnetIntent } from "@swapchan/shared/solana-payment";
+import { circleDevnetIntent, solanaDevnetIntent } from "@swapchan/shared/solana-payment";
 import { Hono } from "hono";
 import {
   decodeFunctionResult,
@@ -29,7 +29,7 @@ import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
 import { bitcoinPaymentInput, quoteBitcoinPayment } from "./payment-bitcoin.js";
-import { quoteCirclePayment } from "./payment-circle.js";
+import { quoteCirclePayment, quoteDevnetCircle } from "./payment-circle.js";
 import { circleStatus, circleStatusInput } from "./payment-circle-status.js";
 import { comparePaymentCosts, recommendedPaymentStage } from "./payment-costs.js";
 import { crossPaymentInput, quoteCrossPayment } from "./payment-cross-chain.js";
@@ -193,6 +193,10 @@ export function paymentRoutes(
     intent: z.infer<typeof destinationIntent>;
     review: Awaited<ReturnType<typeof quoteDirect>>["quote"];
   }>("direct", (v) => v.review.expiresAt);
+  const solanaCircleQuotes = receipts.cache<Awaited<ReturnType<typeof quoteDevnetCircle>>>(
+    "circle-solana",
+    (q) => q.review.expiresAt + 7 * 86400,
+  );
   const circleQuotes = receipts.cache<Awaited<ReturnType<typeof quoteCirclePayment>>>(
     "circle-cctp-build",
     (quote) => quote.review.expiresAt,
@@ -246,10 +250,17 @@ export function paymentRoutes(
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: "invalid_build_request" }, 400);
-    const circle = circleQuotes.get(body.data.quoteId);
+    const circle = circleQuotes.get(body.data.quoteId) ?? solanaCircleQuotes.get(body.data.quoteId);
     if (circle) {
       const previous = circle.review;
-      const stage = body.data.stage ?? recommendedPaymentStage(previous);
+      const stage =
+        body.data.stage ??
+        (previous.chainId === "solana:devnet" ? "initial" : recommendedPaymentStage(previous));
+      if (
+        previous.chainId === "solana:devnet" &&
+        (stage === "atomic_origin" || previous.execution !== "unsigned_origin_steps")
+      )
+        return c.json({ error: "unsupported_origin_mode" }, 422);
       const atomic = stage === "atomic_origin";
       if (
         previous.execution === "quote_only" ||
@@ -258,12 +269,10 @@ export function paymentRoutes(
       )
         return c.json({ error: "funded_quote_required" }, 422);
       try {
-        const { review, calls, atomicTx } = await quoteCirclePayment(
-          f,
-          chain,
-          circle.intent,
-          circle.signedTerms,
-        );
+        const { review, calls, atomicTx } =
+          circle.intent.chainId === "solana:devnet"
+            ? await quoteDevnetCircle(f, chain, circle.intent, circle.signedTerms)
+            : await quoteCirclePayment(f, chain, circle.intent, circle.signedTerms);
         const approval = calls.length === 2;
         const caps = previous.originGas.estimate.perTransactionWei.slice(-calls.length);
         if (
@@ -468,6 +477,42 @@ export function paymentRoutes(
       return c.json({ error: "devnet_payment_simulation_failed" }, 422);
     }
   });
+  app.post("/circle-solana/status", async (c) => {
+    const b = z
+      .object({
+        quoteId: z.uuid(),
+        originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+        approvalHash: z
+          .string()
+          .regex(/^0x[0-9a-f]{64}$/i)
+          .optional(),
+      })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: "invalid_circle_solana_reference" }, 400);
+    const q = solanaCircleQuotes.get(b.data.quoteId);
+    if (!q) return c.json({ error: "unknown_circle_solana_review" }, 404);
+    try {
+      return c.json(
+        await circleStatus(
+          {
+            ...q.intent,
+            originHash: b.data.originHash.toLowerCase() as Hex,
+            ...(b.data.approvalHash
+              ? { approvalHash: b.data.approvalHash.toLowerCase() as Hex }
+              : {}),
+            burnDataHash: q.review.burnDataHash,
+            maxInputMicroUsdc: q.review.maxInputMicroUsdc,
+            solanaRpc: (m, p) => rpc("https://api.devnet.solana.com", m, p),
+          },
+          (id, m, p) => rpc(bridgeRpc[id], m, p),
+          f,
+        ),
+      );
+    } catch {
+      return c.json({ error: "circle_solana_settlement_unverified" }, 502);
+    }
+  });
   app.post("/solana-devnet/status", async (c) => {
     const b = z
       .object({ quoteId: z.uuid(), signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/) })
@@ -592,6 +637,13 @@ export function paymentRoutes(
     if (q) return c.json({ ...q, quoteId: id });
     const route = directQuotes.get(id) ?? crossQuotes.get(id);
     if (route) return c.json({ ...route.review, quoteId: id });
+    const solanaCircle = solanaCircleQuotes.get(id);
+    if (solanaCircle && solanaCircle.review.expiresAt > Date.now() / 1000)
+      return c.json({
+        ...solanaCircle.review,
+        quoteId: id,
+        signedQuote: solanaCircle.signedTerms.signedQuote,
+      });
     const circle = circleQuotes.get(id);
     if (circle) return c.json({ ...circle.review, quoteId: id });
     const saved = comparisons.get(id);
@@ -775,6 +827,22 @@ export function paymentRoutes(
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
     if (raw?.chainId === "solana:devnet") {
+      if (raw.sourceChainId === 84532) {
+        const intent = circleDevnetIntent.safeParse(raw);
+        if (!intent.success) return c.json({ error: "invalid_circle_devnet_intent" }, 400);
+        try {
+          const quote = await quoteDevnetCircle(f, chain, intent.data);
+          if (!testnetEnabled || quote.review.execution !== "unsigned_origin_steps")
+            quote.review.execution = "quote_only";
+          return c.json({
+            ...quote.review,
+            quoteId: retain(solanaCircleQuotes, quote),
+            signedQuote: quote.signedTerms.signedQuote,
+          });
+        } catch {
+          return c.json({ error: "circle_devnet_quote_unavailable" }, 503);
+        }
+      }
       const intent = solanaDevnetIntent.safeParse(raw);
       if (!intent.success) return c.json({ error: "invalid_solana_devnet_payment" }, 400);
       try {

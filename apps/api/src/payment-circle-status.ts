@@ -6,12 +6,14 @@ import {
   EvmAddress,
   paymentContracts,
 } from "@swapchan/shared";
+import { type CircleDevnetIntent, solanaForwardTarget } from "@swapchan/shared/solana-payment";
 import {
   decodeEventLog,
   decodeFunctionData,
   encodeFunctionData,
   erc20Abi,
   type Hex,
+  keccak256,
   pad,
   parseAbi,
   slice,
@@ -19,6 +21,7 @@ import {
 } from "viem";
 import { entryPoint08Abi } from "viem/account-abstraction";
 import { z } from "zod";
+import { solanaCircleMint } from "./payment-circle-solana.js";
 import { receiptFees } from "./payment-origin-fees.js";
 
 const hash = z
@@ -155,7 +158,15 @@ function sameBurnMessage(original: Hex, attested: Hex) {
 }
 
 export async function circleStatus(
-  i: z.infer<typeof circleStatusInput>,
+  i:
+    | z.infer<typeof circleStatusInput>
+    | (CircleDevnetIntent & {
+        originHash: Hex;
+        approvalHash?: Hex;
+        burnDataHash: Hex;
+        maxInputMicroUsdc: string;
+        solanaRpc: (method: string, params: unknown[]) => Promise<unknown>;
+      }),
   rpc: Rpc,
   f: typeof fetch,
   sponsored?: {
@@ -222,7 +233,15 @@ export async function circleStatus(
       .parse(await rpc(84532, "eth_getTransactionByHash", [i.originHash]));
     if (tx.hash !== i.originHash || tx.blockHash !== origin.r.blockHash || BigInt(tx.value) !== 0n)
       throw Error("Unexpected Circle transaction");
-    if (origin.r.to.toLowerCase() === paymentContracts.entry.toLowerCase()) {
+    if ("solanaRpc" in i) {
+      if (
+        origin.r.from.toLowerCase() !== i.sender.toLowerCase() ||
+        origin.r.to.toLowerCase() !== circleMessenger.toLowerCase() ||
+        keccak256(tx.input) !== i.burnDataHash
+      )
+        throw Error("Unexpected Circle burn for Solana");
+      paid = BigInt(i.amountMicroUsdc);
+    } else if (origin.r.to.toLowerCase() === paymentContracts.entry.toLowerCase()) {
       if (i.approvalHash || origin.r.status !== "0x1") throw Error("Invalid Circle wallet batch");
       const operation = circleWalletOperation(tx.input, origin.r.logs, i);
       paid = operation.paid;
@@ -331,7 +350,7 @@ export async function circleStatus(
           z.object({
             eventNonce: hash,
             status: z.string(),
-            forwardTxHash: hash.nullish(),
+            forwardTxHash: z.string().nullish(),
             message: z.string().nullish(),
           }),
         )
@@ -354,10 +373,31 @@ export async function circleStatus(
       status: msg?.status === "complete" ? "awaiting_forward" : "awaiting_attestation",
       providerStatus: msg?.status,
     };
-  const mintHash = msg.forwardTxHash;
+  const attested = data.parse(msg.message);
+  if ("solanaRpc" in i) {
+    const target = solanaForwardTarget(i.recipient);
+    const body = slice(attested, 148);
+    if (
+      slice(attested, 12, 44) !== msg.eventNonce ||
+      BigInt(slice(attested, 4, 8)) !== 6n ||
+      BigInt(slice(attested, 8, 12)) !== 5n ||
+      slice(body, 4, 36) !== pad(acrossTestRoute.sourceToken).toLowerCase() ||
+      slice(body, 36, 68) !== target.mintRecipient ||
+      BigInt(slice(body, 68, 100)) !== paid ||
+      BigInt(slice(body, 164, 196)) !== 0n ||
+      slice(body, 228) !== target.hookData
+    )
+      throw Error("Attested Solana burn differs from review");
+    const dest = await solanaCircleMint(i.solanaRpc, msg.forwardTxHash, attested, i);
+    return {
+      ...progress,
+      ...dest,
+      status: dest.status === "settled" && !origin.finalized ? "awaiting_finality" : dest.status,
+    };
+  }
+  const mintHash = hash.parse(msg.forwardTxHash);
   const dest = await canonical(11155420, mintHash);
   if (!dest) return { ...progress, status: "awaiting_mint_receipt", mintHash };
-  const attested = data.parse(msg.message);
   const received = dest.r.logs.filter(
     (l) =>
       l.address.toLowerCase() === transmitter &&

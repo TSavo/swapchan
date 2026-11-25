@@ -215,6 +215,12 @@ export class SwapChanApi {
       body: JSON.stringify({ quoteId }),
     });
   }
+  circleSolanaStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/circle-solana/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   devnetStatus(body: { quoteId: string; signature: string }) {
     return this.req(z.record(z.string(), z.unknown()), "/payments/solana-devnet/status", {
       method: "POST",

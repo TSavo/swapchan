@@ -6,6 +6,7 @@ import {
   broadcastSummary,
   CHAIN_COUNT,
   COW_NETWORK,
+  circleMessenger,
   fromBaseUnits,
   isAnyAddress,
   isVmAddress,
@@ -31,9 +32,11 @@ import {
 import {
   createPublicClient,
   decodeFunctionData,
+  encodeFunctionData,
   erc20Abi,
   http,
   isAddress,
+  keccak256,
   type SignedAuthorization,
   serializeTypedData,
   type Address as ViemAddress,
@@ -1237,10 +1240,94 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             : {}),
         });
       if (a.chainId === "solana:devnet") {
-        if (!a.quoteId || a.stage) throw new UserError("Supply the Solana payment quote ID.");
-        const { solanaDevnetIntent, devnetTransfer, devnetSources } = await import(
-          "@swapchan/shared/solana-payment"
-        );
+        if (!a.quoteId) throw new UserError("Supply the Solana payment quote ID.");
+        const {
+          solanaDevnetIntent,
+          devnetTransfer,
+          devnetSources,
+          circleDevnetIntent,
+          solanaForwardBurn,
+        } = await import("@swapchan/shared/solana-payment");
+        const review = await api.savedPaymentQuote(a.quoteId);
+        if (review.provider === "circle_cctp") {
+          if (a.stage && !["initial", "after_approval"].includes(a.stage))
+            throw new UserError("Use initial or after_approval for a Solana destination.");
+          const terms = z
+            .object({
+              ...circleDevnetIntent.shape,
+              quoteId: z.literal(a.quoteId),
+              signedQuote: z.string().regex(/^0x(?:[a-f0-9]{2})+$/i),
+              burnDataHash: z.string(),
+              maxInputMicroUsdc: z.string().regex(/^[1-9]\d*$/),
+              expiresAt: z.number(),
+              execution: z.literal("unsigned_origin_steps"),
+              originGas: z.object({ estimate: z.object({ totalWei: z.string().regex(/^\d+$/) }) }),
+              sourceWallet: z.object({ requiredApprovalMicroUsdc: z.string() }),
+            })
+            .parse(review);
+          const build = await api.crossPaymentBuild({
+            quoteId: a.quoteId,
+            stage: a.stage ?? "initial",
+          });
+          const checked = z
+            .object({
+              quoteId: z.literal(a.quoteId),
+              expiresAt: z.number().gt(Date.now() / 1000),
+              action: z.enum(["approve", "burn"]),
+              estimatedOriginFeeWei: z.string().regex(/^\d+$/),
+              originSimulation: z.object({ status: z.literal("succeeded") }),
+              unsignedTransaction: z.object({
+                chainId: z.literal(84532),
+                from: evm,
+                to: evm,
+                value: z.literal("0x0"),
+                data: z.string(),
+              }),
+            })
+            .parse(build);
+          const burn = solanaForwardBurn(terms, terms.signedQuote as `0x${string}`);
+          const approval = checked.action === "approve";
+          const input = approval
+            ? encodeFunctionData({
+                abi: erc20Abi,
+                functionName: "approve",
+                args: [circleMessenger, BigInt(terms.maxInputMicroUsdc)],
+              })
+            : burn;
+          const tx = checked.unsignedTransaction;
+          if (
+            terms.expiresAt < checked.expiresAt ||
+            BigInt(checked.estimatedOriginFeeWei) > BigInt(terms.originGas.estimate.totalWei) ||
+            (approval &&
+              (terms.sourceWallet.requiredApprovalMicroUsdc !== terms.maxInputMicroUsdc ||
+                a.stage === "after_approval")) ||
+            keccak256(burn) !== terms.burnDataHash ||
+            tx.from.toLowerCase() !== terms.sender.toLowerCase() ||
+            tx.to.toLowerCase() !==
+              (approval ? paymentContracts.usdc : circleMessenger).toLowerCase() ||
+            tx.data.toLowerCase() !== input.toLowerCase()
+          )
+            throw new UserError("Circle build differs from the reviewed Solana payment.");
+          return {
+            ...checked,
+            walletRequest: {
+              method: "eth_sendTransaction",
+              params: [{ ...tx, chainId: "0x14a34" }],
+            },
+            next: approval
+              ? {
+                  after: "successful_approval_receipt",
+                  tool: "pay",
+                  arguments: { chainId: a.chainId, quoteId: a.quoteId, stage: "after_approval" },
+                }
+              : {
+                  tool: "payment_status",
+                  arguments: { circleSolana: { quoteId: a.quoteId } },
+                  addTransactionHashAt: "circleSolana.originHash",
+                },
+          };
+        }
+        if (a.stage) throw new UserError("A direct Solana payment has no bridge stage.");
         const saved = z
           .object({
             quoteId: z.literal(a.quoteId),
@@ -1251,7 +1338,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             feeLamports: z.number().int().safe().positive(),
             rentLamports: z.number().int().safe().nonnegative(),
           })
-          .parse(await api.savedPaymentQuote(a.quoteId));
+          .parse(review);
         const built = await api.devnetBuild(a.quoteId);
         const tx = devnetTransfer(
           saved.intent,
@@ -1616,6 +1703,17 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .regex(/^0x[0-9a-f]{64}$/i)
             .optional(),
           tron: z.object({ reviewId: z.uuid() }).strict().optional(),
+          circleSolana: z
+            .object({
+              quoteId: z.uuid(),
+              originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              approvalHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+            })
+            .strict()
+            .optional(),
           solanaDevnet: z
             .object({
               quoteId: z.uuid(),
@@ -1704,6 +1802,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               a.solana,
               a.tron,
               a.solanaDevnet,
+              a.circleSolana,
             ].filter(Boolean).length === 1,
           "Supply one payment reference",
         ),
@@ -1732,6 +1831,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           );
         return lookup(batch.receipts[0]!.transactionHash);
       }
+      if (a.circleSolana) return api.circleSolanaStatus(a.circleSolana);
       if (a.solanaDevnet) return api.devnetStatus(a.solanaDevnet);
       if (a.tron) return api.tronPaymentStatus(a.tron);
       return a.solana

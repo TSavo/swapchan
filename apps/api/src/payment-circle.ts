@@ -4,6 +4,11 @@ import {
   circleMessenger as messenger,
 } from "@swapchan/shared";
 import {
+  type CircleDevnetIntent,
+  solanaForwardBurn,
+  solanaForwardTarget,
+} from "@swapchan/shared/solana-payment";
+import {
   type Address,
   encodeFunctionData,
   erc20Abi,
@@ -41,17 +46,43 @@ export async function quoteCirclePayment(
   },
   retained?: z.infer<typeof quoteSchema>,
 ) {
+  return pricedCirclePayment(f, rpc, intent, 2, retained);
+}
+export function quoteDevnetCircle(
+  f: typeof fetch,
+  rpc: (method: string, params: unknown[]) => Promise<unknown>,
+  intent: CircleDevnetIntent,
+  retained?: z.infer<typeof quoteSchema>,
+) {
+  return pricedCirclePayment(f, rpc, intent, 5, retained);
+}
+async function pricedCirclePayment<
+  I extends Parameters<typeof quoteCirclePayment>[2] | CircleDevnetIntent,
+>(
+  f: typeof fetch,
+  rpc: (method: string, params: unknown[]) => Promise<unknown>,
+  intent: I,
+  domain: 2 | 5,
+  retained?: z.infer<typeof quoteSchema>,
+) {
   const amount = BigInt(intent.amountMicroUsdc);
   const [raw, block] = await Promise.all([
     retained ??
-      getJson(f, "https://iris-api-sandbox.circle.com/v2/quote/burn/usdc/6/2", {
+      getJson(f, "https://iris-api-sandbox.circle.com/v2/quote/burn/usdc/6/" + domain, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: AbortSignal.timeout(10000),
         body: JSON.stringify({
           amount: intent.amountMicroUsdc,
           feeToken: usdc,
-          requests: [{ type: "FORWARD" }],
+          requests: [
+            {
+              type: "FORWARD",
+              ...(intent.chainId === "solana:devnet"
+                ? { params: { hookData: solanaForwardTarget(intent.recipient).hookData } }
+                : {}),
+            },
+          ],
         }),
       }),
     rpc("eth_blockNumber", []).then((v) => hex.parse(v)),
@@ -92,18 +123,21 @@ export async function quoteCirclePayment(
   calls.push({
     from: intent.sender,
     to: messenger,
-    data: encodeFunctionData({
-      abi: burn,
-      functionName: "depositForBurnWithFees",
-      args: [
-        amount,
-        2,
-        pad(intent.recipient),
-        usdc,
-        zeroHash,
-        { signedQuote: quote.signedQuote as Hex, refundAddress: intent.sender },
-      ],
-    }),
+    data:
+      intent.chainId === "solana:devnet"
+        ? solanaForwardBurn(intent, quote.signedQuote as Hex)
+        : encodeFunctionData({
+            abi: burn,
+            functionName: "depositForBurnWithFees",
+            args: [
+              amount,
+              2,
+              pad(intent.recipient),
+              usdc,
+              zeroHash,
+              { signedQuote: quote.signedQuote as Hex, refundAddress: intent.sender },
+            ],
+          }),
   });
   let status = "insufficient_usdc";
   let estimate = null;

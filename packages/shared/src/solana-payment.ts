@@ -4,7 +4,18 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import {
+  type Address,
+  concatHex,
+  encodeFunctionData,
+  type Hex,
+  parseAbi,
+  toHex,
+  zeroHash,
+} from "viem";
 import { z } from "zod";
+import { EvmAddress } from "./index.js";
+import { paymentContracts } from "./payment-batch.js";
 
 export const devnetUsdc = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 const key = z.string().refine((s) => {
@@ -84,4 +95,48 @@ export function devnetTransfer(
     instructions,
   }).compileToV0Message();
   return { transaction: new VersionedTransaction(message), destination, source };
+}
+
+export const circleDevnetIntent = z
+  .object({
+    chainId: z.literal("solana:devnet"),
+    sourceChainId: z.literal(84532),
+    sender: EvmAddress,
+    recipient: key,
+    amountMicroUsdc: z
+      .string()
+      .regex(/^[1-9]\d{0,19}$/)
+      .refine((s) => BigInt(s) <= 0xffffffffffffffffn),
+  })
+  .strict();
+export type CircleDevnetIntent = z.infer<typeof circleDevnetIntent>;
+export function solanaForwardTarget(recipient: string) {
+  const owner = new PublicKey(recipient);
+  const ata = getAssociatedTokenAddressSync(devnetUsdc, owner, true);
+  const hookData = concatHex([
+    toHex("cctp-forward", { size: 24 }),
+    toHex(0, { size: 4 }),
+    toHex(33, { size: 4 }),
+    "0x01",
+    toHex(owner.toBytes()),
+  ]);
+  return { ata: ata.toBase58(), mintRecipient: toHex(ata.toBytes()), hookData };
+}
+export function solanaForwardBurn(intent: CircleDevnetIntent, signedQuote: Hex) {
+  const { mintRecipient, hookData } = solanaForwardTarget(intent.recipient);
+  return encodeFunctionData({
+    abi: parseAbi([
+      "function depositForBurnWithHookAndFees(uint256,uint32,bytes32,address,bytes32,bytes,(bytes signedQuote,address refundAddress) claim)",
+    ]),
+    functionName: "depositForBurnWithHookAndFees",
+    args: [
+      BigInt(intent.amountMicroUsdc),
+      5,
+      mintRecipient,
+      paymentContracts.usdc,
+      zeroHash,
+      hookData,
+      { signedQuote, refundAddress: intent.sender as Address },
+    ],
+  });
 }
