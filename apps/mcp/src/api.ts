@@ -209,6 +209,18 @@ export class SwapChanApi {
       body: JSON.stringify(body),
     });
   }
+  devnetBuild(quoteId: string) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/solana-devnet/build", {
+      method: "POST",
+      body: JSON.stringify({ quoteId }),
+    });
+  }
+  devnetStatus(body: { quoteId: string; signature: string }) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/solana-devnet/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   solanaPaymentStatus(body: Record<string, unknown>) {
     return this.req(z.record(z.string(), z.unknown()), "/payments/solana/status", {
       method: "POST",

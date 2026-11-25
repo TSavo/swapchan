@@ -994,7 +994,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote an exact USDC payment",
       description:
-        "Amounts are integer micro-USDC. For an Optimism-wide funding comparison, supply fundingAddresses with the available evm, solana, bitcoin or tron addresses in place of sender. Native Tron source chain 728126428 estimates deposit, energy and bandwidth costs in sun. Bitcoin source chain 8253038 quotes deposit and miner fees in satoshis for destination chain 10. For a read-only Solana SOL or USDC funding quote use sourceChainId 792703809, the Solana sender, and destination chainId 10. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
+        "Use chainId solana:devnet for a direct Solana devnet USDC transfer. Amounts are integer micro-USDC. For an Optimism-wide funding comparison, supply fundingAddresses with the available evm, solana, bitcoin or tron addresses in place of sender. Native Tron source chain 728126428 estimates deposit, energy and bandwidth costs in sun. Bitcoin source chain 8253038 quotes deposit and miner fees in satoshis for destination chain 10. For a read-only Solana SOL or USDC funding quote use sourceChainId 792703809, the Solana sender, and destination chainId 10. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z
         .object({
           savedId: z
@@ -1003,7 +1003,14 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .describe(
               "On payment-enabled deployments, pass only a previously issued quoteId or comparison reviewId to retrieve its original terms before expiry.",
             ),
-          chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]).optional(),
+          chainId: z
+            .union([
+              z.literal(84532),
+              z.literal(10),
+              z.literal(11155420),
+              z.literal("solana:devnet"),
+            ])
+            .optional(),
           sourceChainId: z
             .union([
               z.literal(8453),
@@ -1036,7 +1043,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .describe(
               "Quote Circle forwarding from Base Sepolia (84532) to Optimism Sepolia (11155420). Fees are paid up front in source USDC.",
             ),
-          recipient: evm.optional(),
+          recipient: z.union([evm, z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)]).optional(),
           amountMicroUsdc: z
             .string()
             .regex(/^[1-9][0-9]{0,37}$/)
@@ -1111,10 +1118,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "For one Optimism payment request across holdings, provide intent.fundingAddresses in place of sender and inspect recommended and sources. For a read-only native TRX quote use sourceChainId 728126428, a Tron sender and destination chainId 10. For a read-only Bitcoin funding quote use sourceChainId 8253038, a Bitcoin sender and destination chainId 10. For read-only Solana funding quotes use sourceChainId 792703809, the Solana sender and destination chainId 10. Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. For Optimism Sepolia, pass the caller's walletMethodsByChain with the intent to compare compatible routes. After review, pass its reviewId and destination chain to build the recommended route. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
+        "For a direct Solana devnet USDC payment, use chainId solana:devnet and Solana addresses. After review pass its quoteId to prepare the checked wallet transaction. For one Optimism payment request across holdings, provide intent.fundingAddresses in place of sender and inspect recommended and sources. For a read-only native TRX quote use sourceChainId 728126428, a Tron sender and destination chainId 10. For a read-only Bitcoin funding quote use sourceChainId 8253038, a Bitcoin sender and destination chainId 10. For read-only Solana funding quotes use sourceChainId 792703809, the Solana sender and destination chainId 10. Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. For Optimism Sepolia, pass the caller's walletMethodsByChain with the intent to compare compatible routes. After review, pass its reviewId and destination chain to build the recommended route. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
       inputSchema: z
         .object({
-          chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
+          chainId: z.union([
+            z.literal(84532),
+            z.literal(10),
+            z.literal(11155420),
+            z.literal("solana:devnet"),
+          ]),
           intent: z
             .object({
               fundingAddresses: fundingAddresses.optional(),
@@ -1132,7 +1144,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                   z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
                 ])
                 .optional(),
-              recipient: evm,
+              recipient: z.union([evm, z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)]),
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
               provider: z
                 .literal("circle_cctp")
@@ -1224,6 +1236,51 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             ? { compareProviders: true }
             : {}),
         });
+      if (a.chainId === "solana:devnet") {
+        if (!a.quoteId || a.stage) throw new UserError("Supply the Solana payment quote ID.");
+        const { solanaDevnetIntent, devnetTransfer } = await import(
+          "@swapchan/shared/solana-payment"
+        );
+        const saved = z
+          .object({
+            quoteId: z.literal(a.quoteId),
+            intent: solanaDevnetIntent,
+            blockhash: z.string(),
+            expiresAt: z.number(),
+            feeLamports: z.number().int().safe().positive(),
+            rentLamports: z.number().int().safe().nonnegative(),
+          })
+          .parse(await api.savedPaymentQuote(a.quoteId));
+        const built = await api.devnetBuild(a.quoteId);
+        const tx = devnetTransfer(
+          saved.intent,
+          saved.blockhash,
+          saved.rentLamports > 0,
+        ).transaction;
+        const bytes = Buffer.from(tx.serialize()).toString("base64");
+        if (
+          built.quoteId !== a.quoteId ||
+          saved.expiresAt <= Date.now() / 1000 ||
+          bytes !== built.serialized ||
+          built.feeLamports !== saved.feeLamports ||
+          built.rentLamports !== saved.rentLamports
+        )
+          throw new UserError("Solana transaction differs from review.");
+        return {
+          ...saved,
+          walletRequest: {
+            feature: "solana:signAndSendTransaction",
+            chain: saved.intent.chainId,
+            accountAddress: saved.intent.sender,
+            transactionBase64: bytes,
+          },
+          next: {
+            tool: "payment_status",
+            arguments: { solanaDevnet: { quoteId: a.quoteId } },
+            addBase58SignatureAt: "solanaDevnet.signature",
+          },
+        };
+      }
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
       let quoteId = a.quoteId;
       let stage = a.stage;
@@ -1540,6 +1597,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .regex(/^0x[0-9a-f]{64}$/i)
             .optional(),
           tron: z.object({ reviewId: z.uuid() }).strict().optional(),
+          solanaDevnet: z
+            .object({
+              quoteId: z.uuid(),
+              signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/),
+            })
+            .strict()
+            .optional(),
           solana: z.object({ reviewId: z.uuid() }).strict().optional(),
           circle: z
             .object({
@@ -1619,8 +1683,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         })
         .refine(
           (a) =>
-            [a.userOpHash, a.crossChain, a.direct, a.circle, a.solana, a.tron].filter(Boolean)
-              .length === 1,
+            [
+              a.userOpHash,
+              a.crossChain,
+              a.direct,
+              a.circle,
+              a.solana,
+              a.tron,
+              a.solanaDevnet,
+            ].filter(Boolean).length === 1,
           "Supply one payment reference",
         ),
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -1647,6 +1718,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           originHash: batch.receipts[0]!.transactionHash,
         });
       }
+      if (a.solanaDevnet) return api.devnetStatus(a.solanaDevnet);
       if (a.tron) return api.tronPaymentStatus(a.tron);
       return a.solana
         ? api.solanaPaymentStatus(a.solana)

@@ -14,6 +14,7 @@ import {
   paymentGasLimits,
   paymentSignatureRequest,
 } from "@swapchan/shared";
+import { solanaDevnetIntent } from "@swapchan/shared/solana-payment";
 import { Hono } from "hono";
 import {
   decodeFunctionResult,
@@ -48,6 +49,7 @@ import {
   reconcilePayment,
 } from "./payment-receipt.js";
 import { quoteSolanaPayment, solanaPaymentInput } from "./payment-solana.js";
+import { type DevnetReview, devnetPayment } from "./payment-solana-devnet.js";
 import { type ReviewedSolanaPayment, solanaPaymentStatus } from "./payment-solana-status.js";
 import { openPaymentStore } from "./payment-store.js";
 import {
@@ -445,6 +447,41 @@ export function paymentRoutes(
       return c.json({ error: "settlement_unverified" }, 502);
     }
   });
+  const devnet = devnetPayment((method, params) =>
+    rpc("https://api.devnet.solana.com", method, params),
+  );
+  const devnetReviews = receipts.cache<DevnetReview>(
+    "devnet-payment",
+    (r) => r.expiresAt + 7 * 86400,
+  );
+  app.post("/solana-devnet/build", async (c) => {
+    const b = z
+      .object({ quoteId: z.uuid() })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: "invalid_devnet_review" }, 400);
+    const r = devnetReviews.get(b.data.quoteId);
+    if (!r || r.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
+    try {
+      return c.json({ ...(await devnet.build(r)), quoteId: b.data.quoteId });
+    } catch {
+      return c.json({ error: "devnet_payment_simulation_failed" }, 422);
+    }
+  });
+  app.post("/solana-devnet/status", async (c) => {
+    const b = z
+      .object({ quoteId: z.uuid(), signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/) })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: "invalid_devnet_reference" }, 400);
+    const r = devnetReviews.get(b.data.quoteId);
+    if (!r) return c.json({ error: "unknown_devnet_payment" }, 404);
+    try {
+      return c.json(await devnet.status(r, b.data.signature));
+    } catch {
+      return c.json({ error: "devnet_settlement_unverified" }, 502);
+    }
+  });
   const solanaReviews = receipts.cache<ReviewedSolanaPayment>(
     "solana-receipts",
     (r) => r.expiresAt,
@@ -548,6 +585,9 @@ export function paymentRoutes(
     if (!testnetEnabled || !z.uuid().safeParse(id).success)
       return c.json({ error: "review_unavailable" }, 404);
     c.header("Cache-Control", "no-store");
+    const devnetReview = devnetReviews.get(id);
+    if (devnetReview && devnetReview.expiresAt > Date.now() / 1000)
+      return c.json({ ...devnetReview, quoteId: id });
     const q = issued.get(id);
     if (q) return c.json({ ...q, quoteId: id });
     const route = directQuotes.get(id) ?? crossQuotes.get(id);
@@ -734,6 +774,21 @@ export function paymentRoutes(
   }
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
+    if (raw?.chainId === "solana:devnet") {
+      const intent = solanaDevnetIntent.safeParse(raw);
+      if (!intent.success) return c.json({ error: "invalid_solana_devnet_payment" }, 400);
+      try {
+        const review = await devnet.quote(intent.data);
+        return c.json({
+          ...review,
+          quoteId: retain(devnetReviews, review),
+          execution: testnetEnabled ? "unsigned_transfer" : "quote_only",
+          requiredSignatures: 1,
+        });
+      } catch {
+        return c.json({ error: "solana_devnet_quote_unavailable" }, 422);
+      }
+    }
     if (raw?.fundingAddresses !== undefined) {
       const parsed = multiFundingInput.safeParse(raw);
       if (!parsed.success) return c.json({ error: "invalid_funding_addresses" }, 400);
