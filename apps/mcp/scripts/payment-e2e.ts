@@ -189,6 +189,7 @@ try {
         circle: {
           originHash: "0xcf331e1f2d8b01990521a2b08bdc698e7e04d47747aa5f44eb6e57d9ba2ddb2a",
           burnDataHash: "0xe44406a988fec3f855190c10d9d4f905ad771ee11f7a7e8ae86ab98daad8b9f2",
+          approvalHash: "0x7aeef45c912dc6cbcee766634a1f20819ba878e889c7acf94f126dbfd90e123d",
           sender: "0x182764751e965C703E2219FC9619326E11376747",
           recipient,
           amountMicroUsdc: "1",

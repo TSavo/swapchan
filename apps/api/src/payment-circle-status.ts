@@ -2,6 +2,7 @@ import { acrossTestRoute, EvmAddress } from "@swapchan/shared";
 import {
   decodeEventLog,
   decodeFunctionData,
+  encodeFunctionData,
   erc20Abi,
   type Hex,
   keccak256,
@@ -28,6 +29,7 @@ const amount = z.string().regex(/^[1-9][0-9]{0,37}$/);
 export const circleStatusInput = z
   .object({
     originHash: hash,
+    approvalHash: hash.optional(),
     burnDataHash: hash,
     sender: EvmAddress,
     recipient: EvmAddress,
@@ -44,6 +46,7 @@ const receipt = z.object({
   transactionHash: hash,
   blockHash: hash,
   blockNumber: quantity,
+  transactionIndex: quantity,
   from: EvmAddress,
   to: EvmAddress,
   status: quantity,
@@ -85,13 +88,38 @@ export async function circleStatus(
       rpc(chain, "eth_getBlockByNumber", [r.blockNumber, false]),
       rpc(chain, "eth_getBlockByNumber", ["finalized", false]),
     ]);
-    if (r.transactionHash !== tx || z.object({ hash }).parse(b).hash !== r.blockHash)
+    const block = z.object({ hash, parentHash: hash }).parse(b);
+    if (r.transactionHash !== tx || block.hash !== r.blockHash)
       throw Error("Noncanonical Circle receipt");
     return {
       r,
+      parentHash: block.parentHash,
       finalized:
         BigInt(z.object({ number: quantity }).parse(final).number) >= BigInt(r.blockNumber),
     };
+  }
+  async function balances(chain: 84532 | 11155420, owner: Hex, before: Hex, after: Hex) {
+    const token = chain === 84532 ? acrossTestRoute.sourceToken : acrossTestRoute.destinationToken;
+    async function at(blockHash: Hex) {
+      const block = { blockHash, requireCanonical: true };
+      const [eth, usd] = await Promise.all([
+        rpc(chain, "eth_getBalance", [owner, block]),
+        rpc(chain, "eth_call", [
+          {
+            to: token,
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [owner] }),
+          },
+          block,
+        ]),
+      ]);
+      return {
+        blockHash,
+        ethWei: String(BigInt(quantity.parse(eth))),
+        microUsdc: String(BigInt(hash.parse(usd))),
+      };
+    }
+    const [first, last] = await Promise.all([at(before), at(after)]);
+    return { before: first, after: last };
   }
   const origin = await canonical(84532, i.originHash);
   if (!origin) return { status: "awaiting_origin_receipt" };
@@ -141,8 +169,44 @@ export async function circleStatus(
     topics: sent[0]!.topics as [Hex, ...Hex[]],
     data: sent[0]!.data,
   }).args.message;
+  let start = origin.parentHash;
+  let approval;
+  if (i.approvalHash) {
+    const a = await canonical(84532, i.approvalHash);
+    if (
+      !a ||
+      a.r.status !== "0x1" ||
+      a.r.from.toLowerCase() !== i.sender.toLowerCase() ||
+      a.r.to.toLowerCase() !== acrossTestRoute.sourceToken.toLowerCase() ||
+      BigInt(a.r.blockNumber) > BigInt(origin.r.blockNumber) ||
+      (a.r.blockNumber === origin.r.blockNumber &&
+        BigInt(a.r.transactionIndex) >= BigInt(origin.r.transactionIndex))
+    )
+      throw Error("Unexpected Circle approval receipt");
+    const mined = z
+      .object({ hash, blockHash: hash, value: quantity, input: data })
+      .parse(await rpc(84532, "eth_getTransactionByHash", [i.approvalHash]));
+    const expected = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [circleMessenger, spent],
+    });
+    if (
+      mined.hash !== i.approvalHash ||
+      mined.blockHash !== a.r.blockHash ||
+      BigInt(mined.value) !== 0n ||
+      mined.input !== expected.toLowerCase()
+    )
+      throw Error("Approval differs from Circle spend");
+    start = a.parentHash;
+    approval = { transactionHash: i.approvalHash, fees: receiptFees(a.r), finalized: a.finalized };
+  }
   const progress = {
     ...base,
+    ...(approval ? { approval } : {}),
+    sourceBlockBalances: await balances(84532, i.sender, start, origin.r.blockHash).catch(
+      () => null,
+    ),
     spentMicroUsdc: String(spent),
     forwardFeeMicroUsdc: String(spent - paid),
   };
@@ -214,5 +278,11 @@ export async function circleStatus(
     destinationFinalized: dest.finalized,
     mintHash,
     paidMicroUsdc: String(paid),
+    destinationBlockBalances: await balances(
+      11155420,
+      i.recipient,
+      dest.parentHash,
+      dest.r.blockHash,
+    ).catch(() => null),
   };
 }

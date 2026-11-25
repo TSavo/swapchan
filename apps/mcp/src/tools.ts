@@ -1199,6 +1199,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           circle: z
             .object({
               originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              approvalHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
               burnDataHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
               sender: evm,
               recipient: evm,
