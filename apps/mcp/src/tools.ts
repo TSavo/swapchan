@@ -962,7 +962,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote an exact USDC payment",
       description:
-        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare a direct transfer with an Across bridge by available USDC and estimated ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
+        "Amounts are integer micro-USDC. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z
         .object({
           savedId: z
@@ -1046,7 +1046,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across. Inspect routes, fundingShortfall and recommendedQuoteId. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
+        "Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. Inspect routes, fundingShortfall and recommendedQuoteId. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
       inputSchema: z
         .object({
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),

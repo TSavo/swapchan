@@ -457,6 +457,11 @@ export function paymentRoutes(
       ? c.json({ ...saved.data, reviewId: id })
       : c.json({ error: "quote_expired" }, 410);
   });
+  async function issueCircle(intent: Parameters<typeof quoteCirclePayment>[2]) {
+    const quote = await quoteCirclePayment(f, chain, intent);
+    if (!testnetEnabled) quote.review.execution = "quote_only";
+    return { ...quote.review, quoteId: retain(circleQuotes, quote) };
+  }
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
     if (raw?.provider === "circle_cctp") {
@@ -470,9 +475,7 @@ export function paymentRoutes(
       if (!parsed.success) return c.json({ error: "unsupported_circle_payment" }, 400);
       try {
         const { provider, ...intent } = parsed.data;
-        const quote = await quoteCirclePayment(f, chain, intent);
-        if (!testnetEnabled) quote.review.execution = "quote_only";
-        return c.json({ ...quote.review, quoteId: retain(circleQuotes, quote) });
+        return c.json(await issueCircle(intent));
       } catch {
         return c.json({ error: "circle_quote_unavailable" }, 503);
       }
@@ -504,19 +507,28 @@ export function paymentRoutes(
           return c.json({ error: "direct_quote_unavailable" }, 503);
         }
       }
-      const [direct, bridge] = await Promise.allSettled([issueDirect(i), issueCross(cross)]);
+      const [direct, bridge, circle] = await Promise.allSettled([
+        issueDirect(i),
+        issueCross(cross),
+        issueCircle({ ...i, chainId: i.chainId, sourceChainId: 84532 }),
+      ]);
       type Candidate =
         | Awaited<ReturnType<typeof issueDirect>>
-        | Awaited<ReturnType<typeof issueCross>>;
+        | Awaited<ReturnType<typeof issueCross>>
+        | Awaited<ReturnType<typeof issueCircle>>;
       const candidates: Candidate[] = [];
-      const unavailableSourceChainIds: number[] = [];
-      for (const [result, origin] of [
-        [direct, i.chainId],
-        [bridge, cross.sourceChainId],
+      const unavailableProviders: string[] = [];
+      for (const [result, provider] of [
+        [direct, "direct_transfer"],
+        [bridge, "across"],
+        [circle, "circle_cctp"],
       ] as const) {
         if (result.status === "fulfilled") candidates.push(result.value);
-        else unavailableSourceChainIds.push(origin);
+        else unavailableProviders.push(provider);
       }
+      const unavailableSourceChainIds = [i.chainId, cross.sourceChainId].filter(
+        (id) => !candidates.some((q) => q.sourceChainId === id),
+      );
       if (!candidates.length) return c.json({ error: "no_verified_quotes" }, 503);
       const rate =
         candidates.filter((c) => c.execution !== "quote_only").length > 1
@@ -528,6 +540,7 @@ export function paymentRoutes(
           rate,
         ),
         unavailableSourceChainIds,
+        unavailableProviders,
         gasConversionSource: rate ? "Base Sepolia WETH/USDC pool reference" : null,
       };
       if (!comparison.routes.length) return c.json({ error: "quote_expired" }, 410);

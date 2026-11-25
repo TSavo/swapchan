@@ -47,6 +47,7 @@ try {
     assert.deepEqual(comparison.routes.map((r) => [r.sourceChainId, r.provider]).sort(), [
       [11155420, "direct_transfer"],
       [84532, "across"],
+      [84532, "circle_cctp"],
     ]);
     for (const route of comparison.routes) {
       const terms = routeSchema.omit({ fundingShortfall: true });

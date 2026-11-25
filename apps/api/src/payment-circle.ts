@@ -163,6 +163,7 @@ export async function quoteCirclePayment(
     atomic: false,
     expiresAt: quote.expiry.expiresAt,
     maxInputMicroUsdc: String(cost),
+    inputMicroUsdc: String(cost),
     forwardFeeMicroUsdc: quote.feeTotalAmount,
     sourceWallet: {
       blockNumber: block,
