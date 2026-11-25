@@ -1238,13 +1238,14 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         });
       if (a.chainId === "solana:devnet") {
         if (!a.quoteId || a.stage) throw new UserError("Supply the Solana payment quote ID.");
-        const { solanaDevnetIntent, devnetTransfer } = await import(
+        const { solanaDevnetIntent, devnetTransfer, devnetSources } = await import(
           "@swapchan/shared/solana-payment"
         );
         const saved = z
           .object({
             quoteId: z.literal(a.quoteId),
             intent: solanaDevnetIntent,
+            sources: devnetSources.optional(),
             blockhash: z.string(),
             expiresAt: z.number(),
             feeLamports: z.number().int().safe().positive(),
@@ -1256,6 +1257,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           saved.intent,
           saved.blockhash,
           saved.rentLamports > 0,
+          saved.sources,
         ).transaction;
         const bytes = Buffer.from(tx.serialize()).toString("base64");
         if (

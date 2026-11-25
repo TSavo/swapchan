@@ -779,6 +779,7 @@ export function paymentRoutes(
       if (!intent.success) return c.json({ error: "invalid_solana_devnet_payment" }, 400);
       try {
         const review = await devnet.quote(intent.data);
+        if (review.status !== "simulated") return c.json({ ...review, execution: "quote_only" });
         return c.json({
           ...review,
           quoteId: retain(devnetReviews, review),

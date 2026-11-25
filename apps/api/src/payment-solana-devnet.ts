@@ -1,6 +1,11 @@
 import { base58 } from "@scure/base";
 import { VersionedTransaction } from "@solana/web3.js";
-import { type DevnetIntent, devnetTransfer, devnetUsdc } from "@swapchan/shared/solana-payment";
+import {
+  type DevnetIntent,
+  type DevnetSources,
+  devnetTransfer,
+  devnetUsdc,
+} from "@swapchan/shared/solana-payment";
 import { z } from "zod";
 import { checkTokenChanges, tokenBalance } from "./payment-solana-simulation.js";
 
@@ -16,6 +21,7 @@ const outcomes = z.object({
 type Rpc = (method: string, params: unknown[]) => Promise<unknown>;
 export type DevnetReview = {
   intent: DevnetIntent;
+  sources?: DevnetSources;
   blockhash: string;
   lastValidBlockHeight: number;
   slot: number;
@@ -23,6 +29,53 @@ export type DevnetReview = {
   rentLamports: number;
   expiresAt: number;
 };
+const tokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+export function selectDevnetFunding(accountsRaw: unknown, sender: string, payout: bigint) {
+  const accounts = z
+    .object({
+      value: z.array(
+        z.object({
+          pubkey: z.string(),
+          account: z.object({
+            owner: z.literal(tokenProgram),
+            data: z.object({
+              parsed: z.object({
+                type: z.literal("account"),
+                info: z.object({
+                  owner: z.literal(sender),
+                  mint: z.literal(devnetUsdc.toBase58()),
+                  state: z.enum(["initialized", "frozen"]),
+                  tokenAmount: z.object({
+                    amount: z.string().regex(/^\d+$/),
+                    decimals: z.literal(6),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      ),
+    })
+    .parse(accountsRaw).value;
+  const candidates = accounts
+    .filter((a) => a.account.data.parsed.info.state === "initialized")
+    .map((a) => ({
+      account: a.pubkey,
+      units: BigInt(a.account.data.parsed.info.tokenAmount.amount),
+    }))
+    .sort((a, b) =>
+      a.units === b.units ? a.account.localeCompare(b.account) : a.units > b.units ? -1 : 1,
+    );
+  let needed = payout;
+  const sources: DevnetSources = [];
+  for (const candidate of candidates) {
+    if (!needed || !candidate.units) break;
+    const use = candidate.units < needed ? candidate.units : needed;
+    sources.push({ account: candidate.account, amountMicroUsdc: String(use) });
+    needed -= use;
+  }
+  return { sources, needed, spendable: candidates.reduce((sum, c) => sum + c.units, 0n) };
+}
 export function devnetPayment(rpc: Rpc) {
   async function network() {
     if ((await rpc("getGenesisHash", [])) !== "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG")
@@ -33,9 +86,15 @@ export function devnetPayment(rpc: Rpc) {
     blockhash: string,
     createDestination: boolean,
     raw: unknown,
+    sources?: DevnetSources,
   ) {
     const m = outcomes.parse(raw);
-    const { transaction, destination } = devnetTransfer(intent, blockhash, createDestination);
+    const { transaction, destination } = devnetTransfer(
+      intent,
+      blockhash,
+      createDestination,
+      sources,
+    );
     const i = transaction.message.staticAccountKeys.findIndex((k) => k.equals(destination));
     const rent = integer.parse(m.postBalances[i]) - integer.parse(m.preBalances[i]);
     if (
@@ -75,8 +134,9 @@ export function devnetPayment(rpc: Rpc) {
     blockhash: string,
     slot: number,
     createDestination: boolean,
+    sources?: DevnetSources,
   ) {
-    const { transaction } = devnetTransfer(intent, blockhash, createDestination);
+    const { transaction } = devnetTransfer(intent, blockhash, createDestination, sources);
     const serialized = Buffer.from(transaction.serialize()).toString("base64");
     const response = z.object({ value: z.unknown() }).parse(
       await rpc("simulateTransaction", [
@@ -90,10 +150,10 @@ export function devnetPayment(rpc: Rpc) {
         },
       ]),
     );
-    return { serialized, ...verify(intent, blockhash, createDestination, response.value) };
+    return { serialized, ...verify(intent, blockhash, createDestination, response.value, sources) };
   }
   return {
-    async quote(intent: DevnetIntent): Promise<DevnetReview> {
+    async quote(intent: DevnetIntent) {
       await network();
       const { value, context } = z
         .object({
@@ -101,12 +161,88 @@ export function devnetPayment(rpc: Rpc) {
           value: z.object({ blockhash: z.string(), lastValidBlockHeight: integer }),
         })
         .parse(await rpc("getLatestBlockhash", [{ commitment: "confirmed" }]));
-      const withCreation = await simulate(intent, value.blockhash, context.slot, true);
-      const costs = withCreation.rentLamports
-        ? withCreation
-        : await simulate(intent, value.blockhash, context.slot, false);
-      return {
+      const config = { commitment: "confirmed", minContextSlot: context.slot };
+      const { destination } = devnetTransfer(intent, value.blockhash, true);
+      const mint = devnetUsdc.toBase58();
+
+      const [accountsRaw, nativeRaw, destinationRaw] = await Promise.all([
+        rpc("getTokenAccountsByOwner", [
+          intent.sender,
+          { mint },
+          { ...config, encoding: "jsonParsed" },
+        ]),
+        rpc("getBalance", [intent.sender, config]),
+        rpc("getAccountInfo", [
+          destination.toBase58(),
+          { ...config, encoding: "base64", dataSlice: { offset: 0, length: 0 } },
+        ]),
+      ]);
+      const { sources, needed, spendable } = selectDevnetFunding(
+        accountsRaw,
+        intent.sender,
+        BigInt(intent.amountMicroUsdc),
+      );
+      const native = z.object({ value: integer }).parse(nativeRaw).value;
+      const createDestination =
+        z
+          .object({ value: z.object({ owner: z.literal(tokenProgram) }).nullable() })
+          .parse(destinationRaw).value === null;
+      const sourceWallet = {
+        spendableMicroUsdc: String(spendable),
+        lamports: native,
+      };
+      if (sources.length > 32)
+        return { intent, sourceWallet, status: "too_many_source_accounts" as const };
+      const { transaction } = devnetTransfer(
         intent,
+        value.blockhash,
+        createDestination,
+        needed ? undefined : sources,
+      );
+      let bytes: Uint8Array;
+      try {
+        bytes = transaction.serialize();
+      } catch {
+        return { intent, sourceWallet, status: "too_many_source_accounts" as const };
+      }
+      if (bytes.length > 1232)
+        return { intent, sourceWallet, status: "too_many_source_accounts" as const };
+      const [feeResult, rentLamports] = await Promise.all([
+        rpc("getFeeForMessage", [
+          Buffer.from(transaction.message.serialize()).toString("base64"),
+          config,
+        ]),
+        createDestination
+          ? rpc("getMinimumBalanceForRentExemption", [165, { commitment: "confirmed" }]).then((v) =>
+              integer.parse(v),
+            )
+          : 0,
+      ]);
+      const feeLamports = z.object({ value: integer.positive() }).parse(feeResult).value;
+      const lamports = Math.max(0, feeLamports + rentLamports - native);
+      if (needed || lamports)
+        return {
+          intent,
+          sourceWallet,
+          status: "insufficient_funds" as const,
+          fundingShortfall: { microUsdc: String(needed), lamports },
+          feeLamports,
+          rentLamports,
+        };
+      const costs = await simulate(
+        intent,
+        value.blockhash,
+        context.slot,
+        createDestination,
+        sources,
+      );
+      if (createDestination !== costs.rentLamports > 0)
+        throw Error("Recipient account changed during simulation");
+      return {
+        status: "simulated" as const,
+        intent,
+        sources,
+        sourceWallet,
         ...value,
         slot: context.slot,
         feeLamports: costs.feeLamports,
@@ -122,7 +258,7 @@ export function devnetPayment(rpc: Rpc) {
           r.lastValidBlockHeight
       )
         throw Error("Expired review");
-      const check = await simulate(r.intent, r.blockhash, r.slot, r.rentLamports > 0);
+      const check = await simulate(r.intent, r.blockhash, r.slot, r.rentLamports > 0, r.sources);
       if (
         check.feeLamports > r.feeLamports ||
         check.rentLamports > r.rentLamports ||
@@ -147,7 +283,12 @@ export function devnetPayment(rpc: Rpc) {
         })
         .parse(record);
       const tx = VersionedTransaction.deserialize(Buffer.from(transaction[0], "base64"));
-      const expected = devnetTransfer(r.intent, r.blockhash, r.rentLamports > 0).transaction;
+      const expected = devnetTransfer(
+        r.intent,
+        r.blockhash,
+        r.rentLamports > 0,
+        r.sources,
+      ).transaction;
       if (
         tx.signatures.length !== 1 ||
         base58.encode(tx.signatures[0]!) !== signature ||
@@ -156,7 +297,7 @@ export function devnetPayment(rpc: Rpc) {
         throw Error("Transaction differs from review");
       if (meta.err !== null)
         return { status: "origin_failed", signature, slot, feeLamports: integer.parse(meta.fee) };
-      const costs = verify(r.intent, r.blockhash, r.rentLamports > 0, meta);
+      const costs = verify(r.intent, r.blockhash, r.rentLamports > 0, meta, r.sources);
       if (costs.feeLamports > r.feeLamports || costs.rentLamports > r.rentLamports)
         throw Error("Actual fee exceeds review");
       const canonical = z

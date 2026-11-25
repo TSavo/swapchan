@@ -2,9 +2,43 @@ import { base58 } from "@scure/base";
 import { Keypair } from "@solana/web3.js";
 import { devnetTransfer, devnetUsdc } from "@swapchan/shared/solana-payment";
 import { describe, expect, it } from "vitest";
-import { devnetPayment } from "./payment-solana-devnet.js";
+import { devnetPayment, selectDevnetFunding } from "./payment-solana-devnet.js";
 
 describe("devnet exact payment receipts", () => {
+  it("splits the exact payment across the fewest spendable USDC accounts", () => {
+    const sender = Keypair.generate().publicKey.toBase58();
+    const row = (pubkey: string, amount: string, state = "initialized") => ({
+      pubkey,
+      account: {
+        owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        data: {
+          parsed: {
+            type: "account",
+            info: {
+              owner: sender,
+              mint: devnetUsdc.toBase58(),
+              tokenAmount: { amount, decimals: 6 },
+              state,
+            },
+          },
+        },
+      },
+    });
+    const rows = [
+      row("one", "1"),
+      row("two", "2"),
+      row("five", "5"),
+      row("frozen", "100", "frozen"),
+    ];
+    expect(selectDevnetFunding({ value: rows }, sender, 6n)).toEqual({
+      sources: [
+        { account: "five", amountMicroUsdc: "5" },
+        { account: "two", amountMicroUsdc: "1" },
+      ],
+      needed: 0n,
+      spendable: 8n,
+    });
+  });
   it("binds the wallet signature, message and finalized recipient gain to the review", async () => {
     const signer = Keypair.generate(),
       recipient = Keypair.generate().publicKey.toBase58();
