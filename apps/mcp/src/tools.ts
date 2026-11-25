@@ -997,7 +997,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote an exact USDC payment",
       description:
-        "Use chainId solana:devnet for a direct Solana devnet USDC transfer. Amounts are integer micro-USDC. For an Optimism-wide funding comparison, supply fundingAddresses with the available evm, solana, bitcoin or tron addresses in place of sender. Native Tron source chain 728126428 estimates deposit, energy and bandwidth costs in sun. Bitcoin source chain 8253038 quotes deposit and miner fees in satoshis for destination chain 10. For a read-only Solana SOL or USDC funding quote use sourceChainId 792703809, the Solana sender, and destination chainId 10. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
+        "For chainId solana:devnet, provide a Solana sender for a local transfer, sourceChainId 84532 and an EVM sender for Circle forwarding, or fundingAddresses.solana and/or fundingAddresses.evm to compare the two. Amounts are integer micro-USDC. For an Optimism-wide funding comparison, supply fundingAddresses with the available evm, solana, bitcoin or tron addresses in place of sender. Native Tron source chain 728126428 estimates deposit, energy and bandwidth costs in sun. Bitcoin source chain 8253038 quotes deposit and miner fees in satoshis for destination chain 10. For a read-only Solana SOL or USDC funding quote use sourceChainId 792703809, the Solana sender, and destination chainId 10. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z
         .object({
           savedId: z
@@ -1062,7 +1062,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                     a.recipient &&
                     a.amountMicroUsdc &&
                     (a.fundingAddresses
-                      ? a.chainId === 10 &&
+                      ? (a.chainId === 10 || a.chainId === "solana:devnet") &&
                         !a.sender &&
                         !a.sourceMint &&
                         !a.sourceChainId &&
@@ -1202,7 +1202,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         .refine(
           (a) =>
             [a.intent, a.reviewId, a.quoteId].filter(Boolean).length === 1 &&
-            (!a.reviewId || a.chainId === 11155420) &&
+            (!a.reviewId || a.chainId === 11155420 || a.chainId === "solana:devnet") &&
             (!a.walletCapabilities ||
               (a.chainId === 11155420 &&
                 (!a.intent || (!!a.walletMethodsByChain && !a.intent.provider)))) &&
@@ -1213,7 +1213,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                 (!a.intent.sourceChainId || a.intent.sourceChainId === 84532))) &&
             (!a.intent ||
               (a.intent.fundingAddresses
-                ? a.chainId === 10 &&
+                ? (a.chainId === 10 || a.chainId === "solana:devnet") &&
                   !a.intent.sender &&
                   !a.intent.provider &&
                   !a.intent.sourceChainId &&
@@ -1240,6 +1240,39 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             : {}),
         });
       if (a.chainId === "solana:devnet") {
+        let selected: { sender: string; recipient: string; amountMicroUsdc: string } | undefined;
+        if (a.reviewId) {
+          const comparison = z
+            .object({
+              reviewId: z.literal(a.reviewId),
+              chainId: z.literal("solana:devnet"),
+              recipient: z.string(),
+              amountMicroUsdc: z.string(),
+              recommendedQuoteId: z.uuid(),
+              expiresAt: z.number().gt(Date.now() / 1000),
+              routes: z.array(
+                z.object({
+                  quoteId: z.uuid().optional(),
+                  sender: z.string(),
+                  execution: z.string(),
+                }),
+              ),
+            })
+            .safeParse(await api.savedPaymentQuote(a.reviewId));
+          if (!comparison.success)
+            throw new UserError("No current executable Solana recommendation.");
+          const q = comparison.data,
+            route = q.routes.find(
+              (r) => r.quoteId === q.recommendedQuoteId && r.execution.startsWith("unsigned_"),
+            );
+          if (!route) throw new UserError("Selected funding route is unavailable.");
+          a.quoteId = q.recommendedQuoteId;
+          selected = {
+            sender: route.sender,
+            recipient: q.recipient,
+            amountMicroUsdc: q.amountMicroUsdc,
+          };
+        }
         if (!a.quoteId) throw new UserError("Supply the Solana payment quote ID.");
         const {
           solanaDevnetIntent,
@@ -1249,6 +1282,17 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           solanaForwardBurn,
         } = await import("@swapchan/shared/solana-payment");
         const review = await api.savedPaymentQuote(a.quoteId);
+        if (selected) {
+          const intent = z
+            .object({ sender: z.string(), recipient: z.string(), amountMicroUsdc: z.string() })
+            .parse(review.intent ?? review);
+          if (
+            intent.sender !== selected.sender ||
+            intent.recipient !== selected.recipient ||
+            intent.amountMicroUsdc !== selected.amountMicroUsdc
+          )
+            throw new UserError("Selected quote differs from the funding comparison.");
+        }
         if (review.provider === "circle_cctp") {
           if (a.stage && !["initial", "after_approval"].includes(a.stage))
             throw new UserError("Use initial or after_approval for a Solana destination.");
@@ -1695,7 +1739,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Check payment settlement",
       description:
-        "Use solana.reviewId from a simulated Solana funding quote to track its reviewed deposit and Optimism payout. Track a Base Sepolia payment by userOpHash, an Optimism USDC transfer with direct, an Across deposit with crossChain, or a Circle burn and mint with circle. Use the tracking arguments returned by pay and add the transaction hash. Include approvalHash for split bridge transactions to reconcile approval fees. Circle and Across settle only after the destination payout matches the reviewed intent and both receipts finalize.",
+        "Use circleSolana with the quoteId and Base Sepolia burn hash to verify a Solana devnet payout. Use solana.reviewId from a simulated Solana funding quote to track its reviewed deposit and Optimism payout. Track a Base Sepolia payment by userOpHash, an Optimism USDC transfer with direct, an Across deposit with crossChain, or a Circle burn and mint with circle. Use the tracking arguments returned by pay and add the transaction hash. Include approvalHash for split bridge transactions to reconcile approval fees. Circle and Across settle only after the destination payout matches the reviewed intent and both receipts finalize.",
       inputSchema: z
         .object({
           userOpHash: z

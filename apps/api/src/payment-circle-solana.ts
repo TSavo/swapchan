@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { base58 } from "@scure/base";
+import { PublicKey } from "@solana/web3.js";
 import {
   type CircleDevnetIntent,
   devnetUsdc,
@@ -11,14 +12,52 @@ import { tokenBalance } from "./payment-solana-simulation.js";
 const transmitter = "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC";
 const receive = createHash("sha256").update("global:receive_message").digest().subarray(0, 8);
 const instruction = z.object({ programId: z.string(), data: z.string().optional() });
+type MintResult = {
+  status: "awaiting_forward" | "awaiting_mint_receipt" | "awaiting_finality" | "settled";
+  destinationFinalized?: boolean;
+  mintHash?: string;
+  destinationSlot?: number;
+  paidMicroUsdc?: string;
+  recipientTokenAccount?: string;
+  destinationBalances?: { beforeMicroUsdc: string; afterMicroUsdc: string };
+  forwarderFeeLamports?: number;
+};
 export async function solanaCircleMint(
   rpc: (method: string, params: unknown[]) => Promise<unknown>,
-  hash: string,
+  hash: string | undefined,
   message: string,
   intent: CircleDevnetIntent,
-) {
+): Promise<MintResult> {
   if ((await rpc("getGenesisHash", [])) !== "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG")
     throw Error("Wrong mint network");
+  // A successful receive initializes the unique nonce PDA. Its history also works
+  // when the Circle index has the attestation but no forwarder signature yet.
+  if (!hash) {
+    const nonce = Buffer.from(message.slice(26, 90), "hex");
+    const [account] = PublicKey.findProgramAddressSync(
+      [Buffer.from("used_nonce"), nonce],
+      new PublicKey(transmitter),
+    );
+    const history = z
+      .array(z.object({ signature: z.string(), err: z.unknown() }))
+      .parse(
+        await rpc("getSignaturesForAddress", [
+          account.toBase58(),
+          { limit: 10, commitment: "confirmed" },
+        ]),
+      );
+    // An account can be mentioned by unrelated transactions. Only trust the
+    // receipt after checking its complete receive instruction and token delta.
+    for (const row of history.filter((v) => v.err === null)) {
+      try {
+        const found = await solanaCircleMint(rpc, row.signature, message, intent);
+        if (found.destinationSlot !== undefined) return found;
+      } catch {
+        // Another transaction mentioning this nonce cannot establish settlement.
+      }
+    }
+    return { status: "awaiting_forward" };
+  }
   const signature = /^(?:0x)?[0-9a-f]{128}$/i.test(hash)
     ? base58.encode(Buffer.from(hash.replace(/^0x/, ""), "hex"))
     : hash;

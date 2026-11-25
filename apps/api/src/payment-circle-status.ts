@@ -367,7 +367,10 @@ export async function circleStatus(
     (index.messages.length === 1 && !index.messages[0]?.forwardTxHash
       ? index.messages[0]
       : undefined);
-  if (!msg?.forwardTxHash)
+  if (
+    !msg ||
+    (!msg.forwardTxHash && !("solanaRpc" in i && matches[0] && msg.status === "complete"))
+  )
     return {
       ...progress,
       status: msg?.status === "complete" ? "awaiting_forward" : "awaiting_attestation",
@@ -388,7 +391,7 @@ export async function circleStatus(
       slice(body, 228) !== target.hookData
     )
       throw Error("Attested Solana burn differs from review");
-    const dest = await solanaCircleMint(i.solanaRpc, msg.forwardTxHash, attested, i);
+    const dest = await solanaCircleMint(i.solanaRpc, msg.forwardTxHash ?? undefined, attested, i);
     return {
       ...progress,
       ...dest,

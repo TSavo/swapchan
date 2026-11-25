@@ -824,21 +824,138 @@ export function paymentRoutes(
     const saved = { ...quote, review: { ...quote.review, sponsoredOrigin } };
     return { ...saved.review, quoteId: retain(circleQuotes, saved) };
   }
+  async function issueSolanaCircle(intent: z.infer<typeof circleDevnetIntent>) {
+    const quote = await quoteDevnetCircle(f, chain, intent);
+    if (!testnetEnabled || quote.review.execution !== "unsigned_origin_steps")
+      quote.review.execution = "quote_only";
+    return {
+      ...quote.review,
+      quoteId: retain(solanaCircleQuotes, quote),
+      signedQuote: quote.signedTerms.signedQuote,
+    };
+  }
+  async function issueDevnet(intent: z.infer<typeof solanaDevnetIntent>) {
+    const review = await devnet.quote(intent);
+    if (review.status !== "simulated") return { ...review, execution: "quote_only" };
+    return {
+      ...review,
+      quoteId: retain(devnetReviews, review),
+      execution: testnetEnabled ? "unsigned_transfer" : "quote_only",
+      requiredSignatures: 1,
+    };
+  }
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
     if (raw?.chainId === "solana:devnet") {
+      if (raw.fundingAddresses !== undefined) {
+        const parsed = z
+          .object({
+            chainId: z.literal("solana:devnet"),
+            recipient: circleDevnetIntent.shape.recipient,
+            amountMicroUsdc: circleDevnetIntent.shape.amountMicroUsdc,
+            fundingAddresses: z
+              .object({
+                evm: EvmAddress.optional(),
+                solana: solanaDevnetIntent.shape.sender.optional(),
+              })
+              .strict()
+              .refine((v) => v.evm || v.solana),
+          })
+          .strict()
+          .safeParse(raw);
+        if (!parsed.success) return c.json({ error: "invalid_devnet_funding_addresses" }, 400);
+        const { fundingAddresses, ...dest } = parsed.data;
+        const sources = Object.entries(fundingAddresses);
+        const routes = await Promise.all(
+          sources.map(async ([network, sender]) => {
+            try {
+              if (network === "evm") {
+                const q = await issueSolanaCircle({
+                  ...dest,
+                  sender: EvmAddress.parse(sender),
+                  sourceChainId: 84532,
+                });
+                const fee =
+                  q.originGas.estimate &&
+                  (await prices.usd(
+                    8453,
+                    "0x0000000000000000000000000000000000000000",
+                    q.originGas.estimate.totalWei,
+                  ));
+                return {
+                  network,
+                  sender,
+                  quoteId: q.quoteId,
+                  execution: q.execution,
+                  expiresAt: q.expiresAt,
+                  inputMicroUsdc: q.maxInputMicroUsdc,
+                  nativeFeeWei: q.originGas.estimate?.totalWei,
+                  referenceCostUsd: fee === null ? null : Number(q.maxInputMicroUsdc) / 1e6 + fee,
+                };
+              }
+              const q = await issueDevnet(solanaDevnetIntent.parse({ ...dest, sender }));
+              if (q.status !== "simulated")
+                return {
+                  network,
+                  sender,
+                  execution: q.execution,
+                  reason: q.status,
+                  fundingShortfall: q.fundingShortfall,
+                  referenceCostUsd: null,
+                };
+              const fee = await prices.usd(
+                792703809,
+                "11111111111111111111111111111111",
+                BigInt(q.feeLamports + q.rentLamports),
+              );
+              return {
+                network,
+                sender,
+                quoteId: q.quoteId,
+                execution: q.execution,
+                expiresAt: q.expiresAt,
+                inputMicroUsdc: dest.amountMicroUsdc,
+                feeLamports: q.feeLamports,
+                rentLamports: q.rentLamports,
+
+                referenceCostUsd: fee === null ? null : Number(dest.amountMicroUsdc) / 1e6 + fee,
+              };
+            } catch {
+              return { network, sender, execution: "unavailable", referenceCostUsd: null };
+            }
+          }),
+        );
+        const now = Date.now() / 1000;
+        const eligible = routes.filter(
+          (r) =>
+            r.quoteId && r.expiresAt && r.expiresAt > now && r.execution.startsWith("unsigned_"),
+        );
+        const ranked = eligible
+          .filter((r) => r.referenceCostUsd !== null)
+          .sort((a, b) => a.referenceCostUsd! - b.referenceCostUsd!);
+        const winner =
+          eligible.length === 1
+            ? eligible[0]
+            : ranked.length === eligible.length
+              ? ranked[0]
+              : undefined;
+        const expiresAt = Math.min(Math.floor(now) + 60, ...eligible.map((r) => r.expiresAt!));
+        const result = {
+          ...dest,
+          fundingAddresses,
+          routes,
+          recommendedQuoteId: winner?.quoteId ?? null,
+          expiresAt,
+          costBasis:
+            "Mainnet native-token reference prices and one USD per test USDC. Includes destination account rent when required.",
+        };
+        return c.json({ ...result, reviewId: retain(comparisons, { data: result, expiresAt }) });
+      }
       if (raw.sourceChainId === 84532) {
         const intent = circleDevnetIntent.safeParse(raw);
         if (!intent.success) return c.json({ error: "invalid_circle_devnet_intent" }, 400);
         try {
-          const quote = await quoteDevnetCircle(f, chain, intent.data);
-          if (!testnetEnabled || quote.review.execution !== "unsigned_origin_steps")
-            quote.review.execution = "quote_only";
-          return c.json({
-            ...quote.review,
-            quoteId: retain(solanaCircleQuotes, quote),
-            signedQuote: quote.signedTerms.signedQuote,
-          });
+          return c.json(await issueSolanaCircle(intent.data));
         } catch {
           return c.json({ error: "circle_devnet_quote_unavailable" }, 503);
         }
@@ -846,14 +963,7 @@ export function paymentRoutes(
       const intent = solanaDevnetIntent.safeParse(raw);
       if (!intent.success) return c.json({ error: "invalid_solana_devnet_payment" }, 400);
       try {
-        const review = await devnet.quote(intent.data);
-        if (review.status !== "simulated") return c.json({ ...review, execution: "quote_only" });
-        return c.json({
-          ...review,
-          quoteId: retain(devnetReviews, review),
-          execution: testnetEnabled ? "unsigned_transfer" : "quote_only",
-          requiredSignatures: 1,
-        });
+        return c.json(await issueDevnet(intent.data));
       } catch {
         return c.json({ error: "solana_devnet_quote_unavailable" }, 422);
       }
