@@ -1,4 +1,12 @@
-import { type Address, encodeFunctionData, erc20Abi, type Hex, parseAbi } from "viem";
+import {
+  type Address,
+  encodeFunctionData,
+  erc20Abi,
+  formatEther,
+  formatUnits,
+  type Hex,
+  parseAbi,
+} from "viem";
 import { checkCircleBurn, circleMessenger } from "./circle-payment.js";
 
 export const paymentContracts = {
@@ -120,4 +128,27 @@ export function paymentBatch(q: PaymentQuote) {
   // Overwrite residual allowance so the fee pull for this operation is bounded.
   approve(usdc, paymaster, BigInt(q.maxGasMicroUsdc));
   return encodeFunctionData({ abi: batchAbi, functionName: "executeBatch", args: [calls] });
+}
+
+export function explainSponsoredPayment(q: PaymentQuote) {
+  const usdcAmount = (units: string) => formatUnits(BigInt(units), 6);
+  const steps: string[] = [];
+  if (BigInt(q.wrapNativeWei ?? "0"))
+    steps.push(`Wrap ${formatEther(BigInt(q.wrapNativeWei!))} ETH into WETH.`);
+  if (BigInt(q.maxWethWei))
+    steps.push(
+      `Approve ${router} for at most ${formatEther(BigInt(q.maxWethWei))} WETH, buy exactly ${usdcAmount(q.swapOutputMicroUsdc)} USDC, then clear the router allowance.`,
+    );
+  if (q.circle)
+    steps.push(
+      `Approve Circle at ${circleMessenger} for ${usdcAmount(q.circle.maxInputMicroUsdc)} USDC. This includes the ${usdcAmount(q.amountMicroUsdc)} USDC payout to ${q.recipient} on Optimism Sepolia. Track the destination mint after the Base Sepolia burn.`,
+    );
+  else
+    steps.push(
+      `Transfer exactly ${usdcAmount(q.amountMicroUsdc)} USDC to ${q.recipient} on Base Sepolia.`,
+    );
+  steps.push(
+    `Approve the paymaster at ${paymaster} to collect up to ${usdcAmount(q.maxGasMicroUsdc)} USDC for gas after execution. The receipt reports its actual charge and any remaining allowance.`,
+  );
+  return steps;
 }

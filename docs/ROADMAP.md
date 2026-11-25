@@ -144,7 +144,7 @@ Cross-chain payments are a later milestone. Track the source transaction through
 
 ## What already exists
 
-SwapChan already has a SmartWallet agent, and it already has most of the safety primitives a 7702 payment needs — just not wired as one unsigned bundle. All of the following was read in the repo at `9ecca307` and, for MCP tools, also seen on the live server.
+The following table records the starting point at main commit `9ecca307` on November 24. The branch coverage and receipts above describe the implemented payment tools.
 
 | What                                       | Status         | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------------------------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -156,12 +156,13 @@ SwapChan already has a SmartWallet agent, and it already has most of the safety 
 | `compare_routes` and CoW limits            | Partial        | `compare_routes` already ranks every provider, including CoW, by net USD received, and can compare same-chain vs cross-chain destinations. CoW limit orders are gasless for the user (solvers pay gas) but still need a prior approve and an EIP-712 signature, not a 7702 bundle. There is no tool that labels intent/solver vs classic routes.                                                                                                                                  |
 | `bytecode_inspect` and blocktools          | Decode only    | `bytecode_inspect` classifies EIP-7702 delegations offline. blocktools can decode type-4 transactions (`authorizationList` included). Its signing path refuses type 4 with `eip7702_unsupported`, and refuses ERC-4337 / Barz user operations. There is no MCP tool that builds a type-4 transaction or a `wallet_sendCalls` batch.                                                                                                                                               |
 
-Safety-layer status as of this audit:
-- [x] Simulate before returning a tx — Exists for a single swap or raw tx. Missing for a 7702 bundle or paymaster.
-- [x] Plain-English explanation — `verify_tx` summary for unsigned txs; `explain_transaction` for mined hashes. No bundle explainer. `describeTx` is not an MCP tool (blocktools wasm + API `describeTxCall` for recovery claims).
-- [x] Approval safety check — `verify_tx`, `contract_approve_call`, `check_approvals`, exact-amount approve in `build_swap_tx`. Not applied to approve+swap+pay as one artifact.
-- [ ] One-signature approve + swap/bridge + pay — SmartWallet forbids bundling. No type-4 builder. No pay tool.
-- [ ] Gas paid in USDC via a paymaster — No paymaster, `quote_gas_in_token`, or sponsorship code in the repo.
+### Implemented payment checks
+
+- `pay` and `verify_bundle` simulate the sponsored Base Sepolia operation and check the exact sender, recipient, source spend, paymaster cap and approved delegate before returning signing data.
+- The signer receives an ordered explanation of the wrap, swap, payout or bridge, and the paymaster pull that apply to the quoted payment. The delegation review identifies the persistent permission and how to revoke it.
+- `build_7702_bundle` and `verify_bundle` also support the EIP-5792 atomic origin on the verified Base Sepolia delegate. The verifier rebuilds both calls and checks the supplied wallet request against the freshly simulated quote.
+- `quote_payment` and `quote_gas_in_token` expose the cost before signing. `check_7702_delegation` inspects the runtime and revocation terms. `compare_intents` identifies the execution mechanism for competing routes.
+- First use of the tested sponsored flow takes a delegation signature and a payment signature. The repeat payment takes one signature. Cross-chain completion requires a verified destination receipt.
 
 ## Current MCP tools
 

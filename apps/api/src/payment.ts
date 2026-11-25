@@ -6,6 +6,7 @@ import {
   checkCircleBurn,
   circleMessenger,
   EvmAddress,
+  explainSponsoredPayment,
   type PaymentQuote,
   PaymentWalletCapabilities,
   PaymentWalletMethods,
@@ -1523,6 +1524,7 @@ export function paymentRoutes(
       if (q.expiresAt <= Date.now() / 1000) return c.json({ error: "quote_expired" }, 410);
       return c.json({
         status: "verified",
+        explanation: explainSponsoredPayment(q),
         delegation,
         quoteId,
         typedData: jsonSigningRequest(typed),

@@ -11,7 +11,7 @@ import {
   paymentContracts,
   paymentDelegationNotice,
 } from "@swapchan/shared";
-import { decodeFunctionData, encodeFunctionData, erc20Abi, type Hex } from "viem";
+import { decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, type Hex } from "viem";
 import { z } from "zod";
 
 const units = z.string().regex(/^\d+$/);
@@ -232,6 +232,10 @@ export function atomicWalletPayment(
     walletRequest,
     verification: {
       status: "verified",
+      explanation: [
+        `Approve ${approval.args[0]} for exactly ${formatUnits(approval.args[1], 6)} USDC and execute the bridge call in one Base Sepolia transaction.`,
+        `The wallet pays source gas in ETH. Expected origin cost is ${build.estimatedOriginFeeWei} wei. Verify the separate Optimism Sepolia payout of ${formatUnits(BigInt(String(review.amountMicroUsdc)), 6)} USDC to ${review.recipient} using payment_status.`,
+      ],
       delegate,
       delegation: paymentDelegationNotice,
       recipient: review.recipient,
