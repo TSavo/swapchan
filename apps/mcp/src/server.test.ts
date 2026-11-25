@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { NATIVE_TOKEN, SOLANA } from "@swapchan/shared";
+import { acrossTestRoute, NATIVE_TOKEN, SOLANA } from "@swapchan/shared";
+import { encodeFunctionData, erc20Abi } from "viem";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SwapChanApi } from "./api.js";
 import { RateLimiter } from "./auth.js";
@@ -128,26 +129,63 @@ describe("swapchan mcp over streamable http", () => {
   it("only returns fresh simulated Optimism payment builds for the requested stage", async () => {
     const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
     const address = "0x" + "12".repeat(20);
-    const tx = { from: address, to: address, chainId: 84532, value: "0x0", data: "0x12345678" };
+    const approvalData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [acrossTestRoute.pool, 185n],
+    });
+    const tx = {
+      from: address,
+      to: acrossTestRoute.sourceToken,
+      chainId: 84532,
+      value: "0x0",
+      data: approvalData,
+    };
     const deposit = {
       quoteId,
-      action: "deposit",
+      action: "approve",
       unsignedTransaction: tx,
       estimatedOriginFeeWei: "125",
       originSimulation: { status: "succeeded" },
       expiresAt: Math.floor(Date.now() / 1000) + 60,
     };
     const build = vi.spyOn(SwapChanApi.prototype, "crossPaymentBuild").mockResolvedValue(deposit);
+    const saved = vi.spyOn(SwapChanApi.prototype, "savedPaymentQuote").mockResolvedValue({
+      quoteId,
+      chainId: 11155420,
+      sourceChainId: 84532,
+      provider: "across",
+      sender: address,
+      recipient: address,
+      execution: "unsigned_origin_steps",
+      amountMicroUsdc: "1",
+      maxInputMicroUsdc: "185",
+      expiresAt: deposit.expiresAt,
+      fillDeadline: deposit.expiresAt + 60,
+      sourceWallet: { requiredApprovalMicroUsdc: "185" },
+      originGas: { estimate: { totalWei: "125" } },
+    });
     const client = await connect();
     const pay = () =>
       client.callTool({
         name: "pay",
-        arguments: { chainId: 11155420, quoteId, stage: "after_approval" },
+        arguments: { chainId: 11155420, quoteId, stage: "initial" },
       });
     try {
       expect(data(await pay())).toEqual(deposit);
       for (const change of [
-        { action: "approve" },
+        { action: "atomic_origin" },
+        { estimatedOriginFeeWei: "126" },
+        {
+          unsignedTransaction: {
+            ...tx,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "approve",
+              args: [acrossTestRoute.pool, 186n],
+            }),
+          },
+        },
         { unsignedTransaction: { ...tx, chainId: 1 } },
         { originSimulation: { status: "failed" } },
         { quoteId: "other" },
@@ -159,6 +197,7 @@ describe("swapchan mcp over streamable http", () => {
         expect(text(refused)).not.toContain("unsignedTransaction");
       }
     } finally {
+      saved.mockRestore();
       build.mockRestore();
       await client.close();
     }

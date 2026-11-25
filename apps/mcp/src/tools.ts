@@ -26,6 +26,7 @@ import { z } from "zod";
 import { ApiError, type SwapChanApi } from "./api.js";
 import { imageData, mascotsFor, SITE, SWAP_CHAN, swapUrl } from "./art.js";
 import type { Config } from "./config.js";
+import { checkPaymentRoute } from "./payment-route.js";
 
 export const SERVER_NAME = "swapchan";
 export const SERVER_VERSION = "0.3.0";
@@ -1123,6 +1124,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           (a.stage === "initial" && action === "atomic_origin")
         )
           throw new UserError("Payment build returned an unexpected chain or action.");
+        checkPaymentRoute(await api.savedPaymentQuote(result.data.quoteId), result.data);
         return result.data;
       }
       const args = {
