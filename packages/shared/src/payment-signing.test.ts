@@ -1,11 +1,11 @@
+import { hashTypedData } from "viem";
+import { describe, expect, it } from "vitest";
 import {
   type PaymentQuote,
   paymentBatch,
   paymentContracts,
   paymentSignatureRequest,
 } from "./index.js";
-import { hashTypedData } from "viem";
-import { describe, expect, it } from "vitest";
 
 // Public fields from the settled Base Sepolia repeat payment.
 const hash = "0xd95146b6e3d1539be4e4e385d77db365aced558b8d065a74c8eb02414b1f7b54";
