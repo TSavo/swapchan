@@ -123,12 +123,16 @@ try {
         "fill_deadline_passed",
         "expiry_reported",
         "recovery_reported",
+        "awaiting_refund_finality",
+        "refunded",
         "awaiting_destination_receipt",
         "awaiting_finality",
         "settled",
       ]),
       providerStatus: z.string().optional(),
       destinationFinalized: z.boolean().optional(),
+      refundFinalized: z.boolean().optional(),
+      returnedMicroUsdc: units.optional(),
       paidMicroUsdc: units.optional(),
     })
     .parse(
@@ -148,6 +152,10 @@ try {
   if (testDeposit.status === "settled") {
     assert.equal(testDeposit.destinationFinalized, true);
     assert.equal(testDeposit.paidMicroUsdc, "1");
+  }
+  if (testDeposit.status === "refunded") {
+    assert.equal(testDeposit.refundFinalized, true);
+    assert.equal(testDeposit.returnedMicroUsdc, "185");
   }
   console.log("payment_status", JSON.stringify(testDeposit));
 } finally {

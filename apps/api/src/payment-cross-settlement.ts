@@ -245,11 +245,13 @@ export async function crossSettlement(
         delta(refund.r, route.sourceToken, intent.sender) !== d.inputAmount
       )
         return { ...reported, refundHash };
+      const refundFinalized = origin.final && refund.final;
       return {
         ...reported,
+        status: refundFinalized ? "refunded" : "awaiting_refund_finality",
         refundHash,
         returnedMicroUsdc: String(d.inputAmount),
-        refundFinalized: origin.final && refund.final,
+        refundFinalized,
       };
     }
     if (hint.status !== "filled" || !hint.fillTxnRef)

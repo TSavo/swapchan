@@ -75,7 +75,7 @@ it("checks the provider-linked return against the origin token, sender, amount a
   const transfer = structuredClone(sample.origin.logs[0]!);
   const [signature, senderTopic, poolTopic] = transfer.topics;
   transfer.topics = [signature!, poolTopic!, senderTopic!];
-  const verifyReturn = () =>
+  const verifyReturn = (finalizedHeight = "0x8000000") =>
     crossSettlement(
       async (chain, method, params) => {
         expect(chain).toBe(8453);
@@ -88,7 +88,7 @@ it("checks the provider-linked return against the origin token, sender, amount a
                 logs: [transfer],
               }
             : sample.origin;
-        return { number: "0x8000000", hash: sample.origin.blockHash, timestamp: "0xffffffff" };
+        return { number: finalizedHeight, hash: sample.origin.blockHash, timestamp: "0xffffffff" };
       },
       { ...intent, fillHash: undefined },
       async () =>
@@ -100,9 +100,13 @@ it("checks the provider-linked return against the origin token, sender, amount a
         }),
     );
   expect(await verifyReturn()).toMatchObject({
-    status: "recovery_reported",
+    status: "refunded",
     returnedMicroUsdc: "13442407",
     refundFinalized: true,
+  });
+  expect(await verifyReturn("0x7ffffff")).toMatchObject({
+    status: "awaiting_refund_finality",
+    refundFinalized: false,
   });
   transfer.topics[2] = poolTopic!;
   expect(await verifyReturn()).not.toHaveProperty("returnedMicroUsdc");
