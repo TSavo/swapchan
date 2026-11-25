@@ -168,6 +168,39 @@ try {
     assert.equal(testDeposit.returnedMicroUsdc, "185");
   }
   console.log("payment_status", JSON.stringify(testDeposit));
+  const circle = z
+    .object({
+      status: z.enum([
+        "awaiting_attestation",
+        "awaiting_forward",
+        "awaiting_mint_receipt",
+        "awaiting_finality",
+        "settled",
+      ]),
+      spentMicroUsdc: z.literal("67944"),
+      forwardFeeMicroUsdc: z.literal("67943"),
+      originFinalized: z.boolean(),
+      destinationFinalized: z.boolean().optional(),
+      paidMicroUsdc: units.optional(),
+    })
+    .parse(
+      await call("payment_status", {
+        circle: {
+          originHash: "0xcf331e1f2d8b01990521a2b08bdc698e7e04d47747aa5f44eb6e57d9ba2ddb2a",
+          burnDataHash: "0xe44406a988fec3f855190c10d9d4f905ad771ee11f7a7e8ae86ab98daad8b9f2",
+          sender: "0x182764751e965C703E2219FC9619326E11376747",
+          recipient,
+          amountMicroUsdc: "1",
+          maxInputMicroUsdc: "67944",
+        },
+      }),
+    );
+  if (circle.status === "settled") {
+    assert.equal(circle.originFinalized, true);
+    assert.equal(circle.destinationFinalized, true);
+    assert.equal(circle.paidMicroUsdc, "1");
+  }
+  console.log("circle payment_status", JSON.stringify(circle));
 } finally {
   await client.close();
 }

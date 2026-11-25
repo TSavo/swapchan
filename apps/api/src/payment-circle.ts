@@ -18,6 +18,9 @@ const usdc = acrossTestRoute.sourceToken;
 const burn = parseAbi([
   "function depositForBurnWithFees(uint256 amount,uint32 destinationDomain,bytes32 mintRecipient,address burnToken,bytes32 destinationCaller,(bytes signedQuote,address refundAddress) claim) payable",
 ]);
+
+export { burn as circleBurnAbi, messenger as circleMessenger };
+
 const uint = z.string().regex(/^\d+$/);
 const hex = z.string().regex(/^0x[0-9a-f]+$/i);
 const quoteSchema = z.object({

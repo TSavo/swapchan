@@ -89,11 +89,17 @@ export function checkPaymentRoute(
     )
       return {
         after: "successful_burn_receipt",
-        attestationUrl: "https://iris-api-sandbox.circle.com/v2/messages/6",
-        transactionHashParameter: "transactionHash",
-        destinationChainId: q.chainId,
-        recipient: q.recipient,
-        amountMicroUsdc: q.amountMicroUsdc,
+        tool: "payment_status",
+        arguments: {
+          circle: {
+            sender,
+            recipient,
+            amountMicroUsdc,
+            maxInputMicroUsdc: q.maxInputMicroUsdc,
+            burnDataHash: q.burnDataHash,
+          },
+        },
+        addTransactionHashAt: "circle.originHash",
       };
     const approvalData = encodeFunctionData({
       abi: erc20Abi,

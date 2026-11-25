@@ -203,6 +203,12 @@ export class SwapChanApi {
       body: JSON.stringify(body),
     });
   }
+  circlePaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/circle/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
   limitOrders(chainId: number, owner: string): Promise<Record<string, unknown>[]> {
     return this.req(
       z.array(z.record(z.string(), z.unknown())),

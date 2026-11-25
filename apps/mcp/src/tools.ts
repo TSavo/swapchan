@@ -1196,6 +1196,17 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .string()
             .regex(/^0x[0-9a-f]{64}$/i)
             .optional(),
+          circle: z
+            .object({
+              originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              burnDataHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              sender: evm,
+              recipient: evm,
+              amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+            })
+            .strict()
+            .optional(),
           direct: z
             .object({
               chainId: z.union([z.literal(10), z.literal(11155420)]),
@@ -1230,17 +1241,19 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .optional(),
         })
         .refine(
-          (a) => [a.userOpHash, a.crossChain, a.direct].filter(Boolean).length === 1,
+          (a) => [a.userOpHash, a.crossChain, a.direct, a.circle].filter(Boolean).length === 1,
           "Supply one payment reference",
         ),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     safe(async (a) =>
-      a.direct
-        ? api.directPaymentStatus(a.direct)
-        : a.crossChain
-          ? api.crossPaymentStatus(a.crossChain)
-          : api.paymentStatus(a.userOpHash!),
+      a.circle
+        ? api.circlePaymentStatus(a.circle)
+        : a.direct
+          ? api.directPaymentStatus(a.direct)
+          : a.crossChain
+            ? api.crossPaymentStatus(a.crossChain)
+            : api.paymentStatus(a.userOpHash!),
     ),
   );
   server.registerTool(

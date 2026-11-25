@@ -240,6 +240,8 @@ On Base Sepolia, MCP can build one unsigned ERC-4337 payment operation for a del
 
 The remaining cross-chain milestone is an exact USDC payout on the destination. An origin deposit alone leaves the payment pending. Verify the destination transfer and finality before reporting settlement.
 
+On 25 November 2026 the funder signed two Base Sepolia transactions locally with its disposable Block Tools key. There were zero interactive prompts. The first approved 0.067944 USDC. The second burned 0.000001 USDC for the Optimism Sepolia recipient and paid the quoted 0.067943 USDC forwarding fee. The sender's USDC balance went from 19.984022 to 19.916078. Its ETH went from 0.000117512143599005 to 0.000105060847164578, a total gas cost of 0.000012451296434427 ETH. The first status check returned `awaiting_attestation`. Use MCP `payment_status.circle` to reconcile the burn with the destination mint. [Approval](https://sepolia.basescan.org/tx/0x7aeef45c912dc6cbcee766634a1f20819ba878e889c7acf94f126dbfd90e123d) · [Burn](https://sepolia.basescan.org/tx/0xcf331e1f2d8b01990521a2b08bdc698e7e04d47747aa5f44eb6e57d9ba2ddb2a)
+
 MCP `quote_payment` accepts `provider: "circle_cctp"` for Base Sepolia to Optimism Sepolia. Circle quotes its destination forwarding fee separately in source USDC. For a 0.000001 USDC payout, the funded account simulated approval and burn at Base Sepolia block 63,504,526 with a 0.063355 USDC forwarding fee and 0.000010338545172823 ETH estimated origin gas. This route has quote and simulation evidence. A destination mint receipt remains open. [Circle upfront fees](https://developers.circle.com/cctp/concepts/upfront-fees)
 
 ### Agent-safe execution

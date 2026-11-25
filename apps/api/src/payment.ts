@@ -23,6 +23,7 @@ import { getUserOperationTypedData } from "viem/account-abstraction";
 import { recoverAuthorizationAddress } from "viem/utils";
 import { z } from "zod";
 import { quoteCirclePayment } from "./payment-circle.js";
+import { circleStatus, circleStatusInput } from "./payment-circle-status.js";
 import { comparePaymentCosts, recommendedPaymentStage } from "./payment-costs.js";
 import { crossPaymentInput, quoteCrossPayment } from "./payment-cross-chain.js";
 import { crossSettlement, settlementInput } from "./payment-cross-settlement.js";
@@ -397,6 +398,15 @@ export function paymentRoutes(
       return c.json(await crossSettlement((id, m, p) => rpc(bridgeRpc[id], m, p), parsed.data, f));
     } catch {
       return c.json({ error: "settlement_unverified" }, 502);
+    }
+  });
+  app.post("/circle/status", async (c) => {
+    const i = circleStatusInput.safeParse(await c.req.json().catch(() => null));
+    if (!i.success) return c.json({ error: "invalid_circle_status" }, 400);
+    try {
+      return c.json(await circleStatus(i.data, (id, m, p) => rpc(bridgeRpc[id], m, p), f));
+    } catch {
+      return c.json({ error: "circle_settlement_unverified" }, 502);
     }
   });
   app.post("/gas-quote", async (c) => {
