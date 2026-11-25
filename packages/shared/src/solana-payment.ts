@@ -7,6 +7,7 @@ import { PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web
 import {
   type Address,
   concatHex,
+  decodeFunctionData,
   encodeFunctionData,
   type Hex,
   parseAbi,
@@ -128,12 +129,18 @@ export function solanaForwardTarget(recipient: string) {
   ]);
   return { ata: ata.toBase58(), mintRecipient: toHex(ata.toBytes()), hookData };
 }
+const solanaBurnAbi = parseAbi([
+  "function depositForBurnWithHookAndFees(uint256,uint32,bytes32,address,bytes32,bytes,(bytes signedQuote,address refundAddress) claim)",
+]);
+export function matchesSolanaForwardBurn(intent: CircleDevnetIntent, data: Hex) {
+  const { args } = decodeFunctionData({ abi: solanaBurnAbi, data });
+  const signed = args[6].signedQuote;
+  return signed !== "0x" && solanaForwardBurn(intent, signed).toLowerCase() === data.toLowerCase();
+}
 export function solanaForwardBurn(intent: CircleDevnetIntent, signedQuote: Hex) {
   const { mintRecipient, hookData } = solanaForwardTarget(intent.recipient);
   return encodeFunctionData({
-    abi: parseAbi([
-      "function depositForBurnWithHookAndFees(uint256,uint32,bytes32,address,bytes32,bytes,(bytes signedQuote,address refundAddress) claim)",
-    ]),
+    abi: solanaBurnAbi,
     functionName: "depositForBurnWithHookAndFees",
     args: [
       BigInt(intent.amountMicroUsdc),

@@ -6,7 +6,11 @@ import {
   EvmAddress,
   paymentContracts,
 } from "@swapchan/shared";
-import { type CircleDevnetIntent, solanaForwardTarget } from "@swapchan/shared/solana-payment";
+import {
+  type CircleDevnetIntent,
+  matchesSolanaForwardBurn,
+  solanaForwardTarget,
+} from "@swapchan/shared/solana-payment";
 import {
   decodeEventLog,
   decodeFunctionData,
@@ -237,7 +241,8 @@ export async function circleStatus(
       if (
         origin.r.from.toLowerCase() !== i.sender.toLowerCase() ||
         origin.r.to.toLowerCase() !== circleMessenger.toLowerCase() ||
-        keccak256(tx.input) !== i.burnDataHash
+        keccak256(tx.input) !== i.burnDataHash ||
+        !matchesSolanaForwardBurn(i, tx.input)
       )
         throw Error("Unexpected Circle burn for Solana");
       paid = BigInt(i.amountMicroUsdc);
@@ -351,6 +356,8 @@ export async function circleStatus(
             eventNonce: hash,
             status: z.string(),
             forwardTxHash: z.string().nullish(),
+            forwardState: z.string().nullish(),
+            delayReason: z.string().nullish(),
             message: z.string().nullish(),
           }),
         )
@@ -375,6 +382,8 @@ export async function circleStatus(
       ...progress,
       status: msg?.status === "complete" ? "awaiting_forward" : "awaiting_attestation",
       providerStatus: msg?.status,
+      providerForwardState: msg?.forwardState ?? undefined,
+      providerDelayReason: msg?.delayReason ?? undefined,
     };
   const attested = data.parse(msg.message);
   if ("solanaRpc" in i) {

@@ -1391,6 +1391,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             throw new UserError("Circle build differs from the reviewed Solana payment.");
           return {
             ...checked,
+            receiptReference: {
+              chainId: terms.chainId,
+              sourceChainId: terms.sourceChainId,
+              sender: terms.sender,
+              recipient: terms.recipient,
+              amountMicroUsdc: terms.amountMicroUsdc,
+              maxInputMicroUsdc: terms.maxInputMicroUsdc,
+              burnDataHash: terms.burnDataHash,
+            },
             walletRequest: {
               method: "eth_sendTransaction",
               params: [{ ...tx, chainId: "0x14a34" }],
@@ -1828,7 +1837,19 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           tron: z.object({ reviewId: z.uuid() }).strict().optional(),
           circleSolana: z
             .object({
-              quoteId: z.uuid(),
+              quoteId: z.uuid().optional(),
+              review: z
+                .object({
+                  sender: evm,
+                  recipient: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+                  chainId: z.literal("solana:devnet"),
+                  sourceChainId: z.literal(84532),
+                  amountMicroUsdc: z.string().regex(/^[1-9]\d{0,19}$/),
+                  maxInputMicroUsdc: z.string().regex(/^[1-9]\d{0,77}$/),
+                  burnDataHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+                })
+                .strict()
+                .optional(),
               originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
               approvalHash: z
                 .string()
@@ -1836,6 +1857,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                 .optional(),
             })
             .strict()
+            .refine((v) => Boolean(v.quoteId) !== Boolean(v.review))
             .optional(),
           solanaDevnet: z
             .object({

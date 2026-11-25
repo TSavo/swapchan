@@ -98,6 +98,22 @@ For an exact Optimism Sepolia payment (`chainId: 11155420`), omit `intent.source
 
 With Circle, the quoted USDC spend includes the exact payout and the forwarding fee. Origin gas is priced in Base Sepolia ETH. Build the selected quote with `pay`. If the build returns an approval, wait for its successful receipt before requesting the burn. After broadcasting the burn, add its hash to the returned `payment_status.circle` arguments. A settled response verifies the original burn and the recipient’s exact USDC gain on Optimism Sepolia after both blocks finalize.
 
+For Solana devnet, the following `pay` intent compares the total cost of spending local USDC and forwarding USDC from Base Sepolia. Supply addresses whose wallets you can ask to sign.
+
+```json
+{
+  "chainId": "solana:devnet",
+  "intent": {
+    "recipient": "<Solana recipient>",
+    "amountMicroUsdc": "1",
+    "fundingAddresses": { "solana": "<Solana owner>", "evm": "<Base Sepolia owner>" }
+  }
+}
+```
+
+Call `pay` a second time with the same destination chain and the returned `reviewId` to build the recommended route. A local transfer uses Wallet Standard. To cover SOL fees from another wallet, add `intent.feePayer`. The owner signs first. Return its signed bytes in `senderSignedTransaction` with the quote ID so the fee payer can sign and send. Track the signature with `payment_status.solanaDevnet`. On the Circle route, the Base wallet approves the exact input if needed and submits the burn. Track the returned quote ID and burn hash with `payment_status.circleSolana`. The destination wallet can receive USDC with zero SOL.
+
+For a leftover Base Sepolia paymaster allowance, call `build_revoke_tx` with the token and spender from the receipt. Add `relayedPaymaster: { owner, relayer }` if another account will pay gas. The owner signs the zero-value USDC permit. Repeat the call with its `nonce`, `deadline`, and `signature` in `relayedPaymaster.signed`. The relayer receives the simulated transaction and estimated fee. Calling again after confirmation returns `already_revoked`.
 ## Tests
 
 Run `pnpm --filter @swapchan/mcp e2e:payments` against a running MCP server and API to check the live payment flow. Set `MCP_URL` if the server uses a different URL from `http://127.0.0.1:8788/mcp`, and set `MCP_KEY` if it requires authentication. The check compares the three Optimism Sepolia funding routes through `pay` and `quote_payment`. It verifies a historical finalized Base-to-Optimism transfer and reports the settlement states of the roadmap’s Across deposit and Circle burn. It uses public wallet addresses and requires no signing key.

@@ -491,7 +491,10 @@ export function paymentRoutes(
   app.post("/circle-solana/status", async (c) => {
     const b = z
       .object({
-        quoteId: z.uuid(),
+        quoteId: z.uuid().optional(),
+        review: circleDevnetIntent
+          .extend({ burnDataHash: sigWord, maxInputMicroUsdc: z.string().regex(/^[1-9]\d{0,77}$/) })
+          .optional(),
         originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
         approvalHash: z
           .string()
@@ -499,21 +502,28 @@ export function paymentRoutes(
           .optional(),
       })
       .strict()
+      .refine((v) => Boolean(v.quoteId) !== Boolean(v.review))
       .safeParse(await c.req.json().catch(() => null));
     if (!b.success) return c.json({ error: "invalid_circle_solana_reference" }, 400);
-    const q = solanaCircleQuotes.get(b.data.quoteId);
-    if (!q) return c.json({ error: "unknown_circle_solana_review" }, 404);
+    const q = b.data.quoteId ? solanaCircleQuotes.get(b.data.quoteId) : undefined;
+    const review = q
+      ? {
+          ...q.intent,
+          burnDataHash: q.review.burnDataHash,
+          maxInputMicroUsdc: q.review.maxInputMicroUsdc,
+        }
+      : b.data.review;
+    if (!review) return c.json({ error: "unknown_circle_solana_review" }, 404);
     try {
       return c.json(
         await circleStatus(
           {
-            ...q.intent,
+            ...review,
             originHash: b.data.originHash.toLowerCase() as Hex,
             ...(b.data.approvalHash
               ? { approvalHash: b.data.approvalHash.toLowerCase() as Hex }
               : {}),
-            burnDataHash: q.review.burnDataHash,
-            maxInputMicroUsdc: q.review.maxInputMicroUsdc,
+            burnDataHash: review.burnDataHash.toLowerCase() as Hex,
             solanaRpc: (m, p) => rpc("https://api.devnet.solana.com", m, p),
           },
           (id, m, p) => rpc(bridgeRpc[id], m, p),
@@ -966,7 +976,10 @@ export function paymentRoutes(
         return c.json({ ...result, reviewId: retain(comparisons, { data: result, expiresAt }) });
       }
       if (raw.sourceChainId === 84532) {
-        const intent = circleDevnetIntent.safeParse(raw);
+        const { provider, ...request } = raw;
+        if (provider !== undefined && provider !== "circle_cctp")
+          return c.json({ error: "unsupported_devnet_provider" }, 400);
+        const intent = circleDevnetIntent.safeParse(request);
         if (!intent.success) return c.json({ error: "invalid_circle_devnet_intent" }, 400);
         try {
           return c.json(await issueSolanaCircle(intent.data));
