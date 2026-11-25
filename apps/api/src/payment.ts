@@ -253,6 +253,11 @@ export function paymentRoutes(
       return c.json({ error: "mainnet_payment_build_disabled" }, 403);
     const atomic = body.data.stage === "atomic_origin";
     const reviewedGas = saved.review.originGas.estimate;
+    if (saved.review.depositLimitIssue)
+      return c.json(
+        { error: saved.review.depositLimitIssue, depositLimits: saved.review.depositLimits },
+        422,
+      );
     if (
       !reviewedGas ||
       (!atomic && saved.review.originGas.estimatedShortfallWei !== "0") ||
@@ -267,6 +272,8 @@ export function paymentRoutes(
       );
       if (saved.review.expiresAt <= Date.now() / 1000)
         return c.json({ error: "quote_expired" }, 410);
+      if (quote.depositLimitIssue)
+        return c.json({ error: quote.depositLimitIssue, depositLimits: quote.depositLimits }, 422);
       if (
         quote.originSimulation.status !== "succeeded" ||
         !quote.originGas.estimate ||

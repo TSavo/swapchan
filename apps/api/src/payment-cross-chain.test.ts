@@ -21,6 +21,7 @@ function app(
   feeUnavailable = false,
   native = "0x0",
   delegation: "none" | "verified" | "changed" | "revert" = "none",
+  limits = { minDeposit: "1", maxDeposit: "1000000000000" },
 ) {
   const fixture = result.swapTx.chainId === 84532 ? sepolia : sample;
   const route = acrossRoute(result.swapTx.chainId === 84532 ? 11155420 : 10);
@@ -129,6 +130,10 @@ function app(
         });
       }
       const p = new URL(String(url)).searchParams;
+      if (new URL(String(url)).pathname.endsWith("/limits")) {
+        expect(p.get("amount")).toBe(result.inputAmount);
+        return Response.json(limits);
+      }
       expect(p.get("tradeType")).toBe("exactOutput");
       expect(p.get("recipient")).toBe(intent.recipient);
       return Response.json(result);
@@ -179,6 +184,19 @@ it.each([false, true])(
     ).toBe(approved ? 200 : 409);
   },
 );
+it("refuses a reviewed deposit if the route minimum rises before building", async () => {
+  const amount = BigInt(sepolia.inputAmount);
+  const limits = { minDeposit: String(amount), maxDeposit: String(amount) };
+  const a = app(sepolia, amount, amount, false, false, "0xffff", "none", limits);
+  const q = await (
+    await post(a, "/quote", { ...intent, sourceChainId: 84532, chainId: 11155420 })
+  ).json();
+  expect(q.execution).toBe("unsigned_origin_steps");
+  limits.minDeposit = limits.maxDeposit = String(amount + 1n);
+  const build = await post(a, "/cross-chain/build", { quoteId: q.quoteId, stage: "initial" });
+  expect(build.status).toBe(422);
+  expect(await build.json()).toMatchObject({ error: "below_minimum" });
+});
 it.each(["none", "verified", "changed", "revert"] as const)(
   "binds atomic origin execution to a verified delegate and successful outer simulation (%s)",
   async (mode) => {

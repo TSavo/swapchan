@@ -90,7 +90,15 @@ export async function quoteCrossPayment(
         .regex(/^0x[0-9a-f]{64}$/i)
         .parse(await sourceRpc("eth_call", [{ to: sourceToken, data }, block])),
     );
-  const [balance, allowance, native] = await Promise.all([
+  const limitParams = new URLSearchParams({
+    inputToken: sourceToken,
+    outputToken: destinationToken,
+    originChainId: String(route.origin),
+    destinationChainId: String(route.destination),
+    amount: String(amountIn),
+  });
+  const limitUnits = z.string().regex(/^(0|[1-9][0-9]{0,77})$/);
+  const [balance, allowance, native, depositLimits] = await Promise.all([
     readUsdc(
       encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [intent.sender] }),
     ),
@@ -98,11 +106,22 @@ export async function quoteCrossPayment(
       encodeFunctionData({ abi: erc20Abi, functionName: "allowance", args: [intent.sender, pool] }),
     ),
     sourceRpc("eth_getBalance", [intent.sender, block]).then((v) => BigInt(quantity.parse(v))),
+    getJson(f, route.api + "/limits?" + limitParams, { signal: AbortSignal.timeout(10000) })
+      .then((value) => z.object({ minDeposit: limitUnits, maxDeposit: limitUnits }).parse(value))
+      .catch(() => null),
   ]);
+  const depositLimitIssue = !depositLimits
+    ? "limits_unavailable"
+    : amountIn < BigInt(depositLimits.minDeposit)
+      ? "below_minimum"
+      : amountIn > BigInt(depositLimits.maxDeposit)
+        ? "above_maximum"
+        : null;
   let originSimulation: { status: string; gasUsed?: string[] };
   let feeEstimate: Awaited<ReturnType<typeof estimateOriginFees>> | null = null;
   const calls: { from: Hex; to: Hex; data: Hex }[] = [];
-  if (balance < amountIn) originSimulation = { status: "insufficient_usdc" };
+  if (depositLimitIssue) originSimulation = { status: "not_run" };
+  else if (balance < amountIn) originSimulation = { status: "insufficient_usdc" };
   else {
     if (allowance < amountIn)
       calls.push({
@@ -223,6 +242,8 @@ export async function quoteCrossPayment(
   const quote = {
     ...intent,
     provider: "across",
+    depositLimits,
+    depositLimitIssue,
     execution:
       feeEstimate && native >= BigInt(feeEstimate.totalWei)
         ? "unsigned_origin_steps"
