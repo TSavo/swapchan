@@ -169,8 +169,8 @@ export function paymentRoutes(
     review: Awaited<ReturnType<typeof quoteDirect>>["quote"];
   }>("direct", (v) => v.review.expiresAt);
   const circleQuotes = receipts.cache<Awaited<ReturnType<typeof quoteCirclePayment>>>(
-    "circle-cctp",
-    (quote) => quote.expiresAt,
+    "circle-cctp-build",
+    (quote) => quote.review.expiresAt,
   );
   function retain<T>(cache: { set(id: string, entry: T): void }, entry: T) {
     const id = randomUUID();
@@ -221,6 +221,50 @@ export function paymentRoutes(
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: "invalid_build_request" }, 400);
+    const circle = circleQuotes.get(body.data.quoteId);
+    if (circle) {
+      const previous = circle.review;
+      if (
+        previous.execution === "quote_only" ||
+        !previous.originGas.estimate ||
+        body.data.stage === "atomic_origin"
+      )
+        return c.json({ error: "funded_quote_required" }, 422);
+      try {
+        const { review, calls } = await quoteCirclePayment(
+          f,
+          chain,
+          circle.intent,
+          circle.signedTerms,
+        );
+        const approval = calls.length === 2;
+        const caps = previous.originGas.estimate.perTransactionWei.slice(-calls.length);
+        if (
+          review.execution === "quote_only" ||
+          !review.originGas.estimate ||
+          caps.length !== calls.length ||
+          review.originGas.estimate.perTransactionWei.some(
+            (v, i) => BigInt(v) > BigInt(caps[i]!),
+          ) ||
+          review.burnDataHash !== previous.burnDataHash ||
+          review.maxInputMicroUsdc !== previous.maxInputMicroUsdc ||
+          (approval &&
+            (previous.sourceWallet.requiredApprovalMicroUsdc === "0" ||
+              body.data.stage === "after_approval"))
+        )
+          return c.json({ error: "payment_terms_changed" }, 409);
+        return c.json({
+          quoteId: body.data.quoteId,
+          action: approval ? "approve" : "burn",
+          unsignedTransaction: { ...calls[0], chainId: 84532, value: "0x0" },
+          expiresAt: review.expiresAt,
+          originSimulation: review.originSimulation,
+          estimatedOriginFeeWei: review.originGas.estimate.totalWei,
+        });
+      } catch {
+        return c.json({ error: "circle_build_unavailable" }, 503);
+      }
+    }
     const local = directQuotes.get(body.data.quoteId);
     if (local) {
       if (local.intent.chainId === 10)
@@ -397,7 +441,7 @@ export function paymentRoutes(
     const route = directQuotes.get(id) ?? crossQuotes.get(id);
     if (route) return c.json({ ...route.review, quoteId: id });
     const circle = circleQuotes.get(id);
-    if (circle) return c.json({ ...circle, quoteId: id });
+    if (circle) return c.json({ ...circle.review, quoteId: id });
     const saved = comparisons.get(id);
     return saved
       ? c.json({ ...saved.data, reviewId: id })
@@ -417,7 +461,8 @@ export function paymentRoutes(
       try {
         const { provider, ...intent } = parsed.data;
         const quote = await quoteCirclePayment(f, chain, intent);
-        return c.json({ ...quote, quoteId: retain(circleQuotes, quote) });
+        if (!testnetEnabled) quote.review.execution = "quote_only";
+        return c.json({ ...quote.review, quoteId: retain(circleQuotes, quote) });
       } catch {
         return c.json({ error: "circle_quote_unavailable" }, 503);
       }

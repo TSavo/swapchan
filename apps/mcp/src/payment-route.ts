@@ -5,7 +5,7 @@ import {
   checkAcrossDeposit,
   EvmAddress,
 } from "@swapchan/shared";
-import { encodeFunctionData, erc20Abi, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, type Hex, keccak256 } from "viem";
 import { z } from "zod";
 
 const units = z.string().regex(/^\d+$/);
@@ -13,7 +13,11 @@ const reviewedRoute = z.object({
   quoteId: z.uuid(),
   chainId: z.literal(11155420),
   sourceChainId: z.number().int(),
-  provider: z.enum(["direct_transfer", "across"]),
+  provider: z.enum(["direct_transfer", "across", "circle_cctp"]),
+  burnDataHash: z
+    .string()
+    .regex(/^0x[a-f0-9]{64}$/i)
+    .optional(),
   sender: EvmAddress,
   recipient: EvmAddress,
   execution: z.enum(["unsigned_origin_steps", "unsigned_atomic_origin"]),
@@ -30,7 +34,7 @@ export function checkPaymentRoute(
   raw: unknown,
   build: {
     quoteId: string;
-    action: "transfer" | "approve" | "deposit" | "atomic_origin";
+    action: "transfer" | "approve" | "deposit" | "atomic_origin" | "burn";
     expiresAt: number;
     estimatedOriginFeeWei: string;
     unsignedTransaction: { chainId: number; from: string; to: string; value: string; data: string };
@@ -74,11 +78,40 @@ export function checkPaymentRoute(
       addTransactionHashAt: "direct.transactionHash",
     };
   }
-  if (q.provider !== "across" || q.sourceChainId !== acrossTestRoute.origin || !q.fillDeadline)
-    throw Error("Unexpected bridge route.");
+  if (q.sourceChainId !== acrossTestRoute.origin) throw Error("Unexpected bridge route.");
   const cap = q.sourceWallet.requiredApprovalMicroUsdc;
+  if (q.provider === "circle_cctp") {
+    const messenger = "0x8745D906D67C346E5eb1aEEED38Eb87F34DF0C0A";
+    if (
+      build.action === "burn" &&
+      tx.to.toLowerCase() === messenger.toLowerCase() &&
+      keccak256(tx.data) === q.burnDataHash
+    )
+      return {
+        after: "successful_burn_receipt",
+        attestationUrl: "https://iris-api-sandbox.circle.com/v2/messages/6",
+        transactionHashParameter: "transactionHash",
+        destinationChainId: q.chainId,
+        recipient: q.recipient,
+        amountMicroUsdc: q.amountMicroUsdc,
+      };
+    const approvalData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [messenger, BigInt(cap)],
+    });
+    if (
+      build.action !== "approve" ||
+      cap === "0" ||
+      cap !== q.maxInputMicroUsdc ||
+      tx.to.toLowerCase() !== acrossTestRoute.sourceToken.toLowerCase() ||
+      tx.data.toLowerCase() !== approvalData.toLowerCase()
+    )
+      throw Error("Circle transaction differs from the saved payment.");
+  } else if (q.provider !== "across" || !q.fillDeadline || build.action === "burn")
+    throw Error("Unexpected bridge action.");
   if (build.action === "approve") {
-    checkAcrossApproval(tx, cap, q.chainId);
+    if (q.provider === "across") checkAcrossApproval(tx, cap, q.chainId);
     return {
       tool: "pay",
       after: "successful_approval_receipt",

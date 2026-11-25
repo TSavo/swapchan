@@ -4,6 +4,7 @@ import {
   encodeFunctionData,
   erc20Abi,
   type Hex,
+  keccak256,
   pad,
   parseAbi,
   zeroHash,
@@ -37,19 +38,21 @@ export async function quoteCirclePayment(
     recipient: Address;
     amountMicroUsdc: string;
   },
+  retained?: z.infer<typeof quoteSchema>,
 ) {
   const amount = BigInt(intent.amountMicroUsdc);
   const [raw, block] = await Promise.all([
-    getJson(f, "https://iris-api-sandbox.circle.com/v2/quote/burn/usdc/6/2", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(10000),
-      body: JSON.stringify({
-        amount: intent.amountMicroUsdc,
-        feeToken: usdc,
-        requests: [{ type: "FORWARD" }],
+    retained ??
+      getJson(f, "https://iris-api-sandbox.circle.com/v2/quote/burn/usdc/6/2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({
+          amount: intent.amountMicroUsdc,
+          feeToken: usdc,
+          requests: [{ type: "FORWARD" }],
+        }),
       }),
-    }),
     rpc("eth_blockNumber", []).then((v) => hex.parse(v)),
   ]);
   const quote = quoteSchema.parse(raw);
@@ -106,11 +109,33 @@ export async function quoteCirclePayment(
         }),
       ])
       .parse(
-        await rpc("eth_simulateV1", [{ blockStateCalls: [{ calls }], validation: false }, block]),
+        await rpc("eth_simulateV1", [
+          {
+            blockStateCalls: [
+              {
+                calls: [
+                  ...calls,
+                  {
+                    from: intent.sender,
+                    to: usdc,
+                    data: encodeFunctionData({
+                      abi: erc20Abi,
+                      functionName: "balanceOf",
+                      args: [intent.sender],
+                    }),
+                  },
+                ],
+              },
+            ],
+            validation: false,
+          },
+          block,
+        ]),
       );
     const ok =
-      simulation.calls.length === calls.length &&
+      simulation.calls.length === calls.length + 1 &&
       simulation.calls.every((r) => r.status === "0x1" && BigInt(r.gasUsed) > 0n) &&
+      BigInt(simulation.calls[calls.length]!.returnData) === balance - cost &&
       (allowance >= cost || /^0x0{63}1$/i.test(simulation.calls[0]!.returnData));
     status = ok ? "succeeded" : "reverted";
     if (ok)
@@ -123,10 +148,15 @@ export async function quoteCirclePayment(
       );
   }
   if (quote.expiry.expiresAt <= Date.now() / 1000) throw Error("Circle quote expired");
-  return {
+  const review = {
     ...intent,
     provider: "circle_cctp",
-    execution: "quote_only",
+    execution:
+      status === "succeeded" && estimate && native >= BigInt(estimate.totalWei)
+        ? "unsigned_origin_steps"
+        : "quote_only",
+    burnTarget: messenger,
+    burnDataHash: keccak256(calls[calls.length - 1]!.data),
     atomic: false,
     expiresAt: quote.expiry.expiresAt,
     maxInputMicroUsdc: String(cost),
@@ -141,4 +171,5 @@ export async function quoteCirclePayment(
     originGas: { token: "ETH", estimate },
     destinationGasPaidBy: "circle_forwarder",
   };
+  return { review, signedTerms: quote, calls, intent };
 }

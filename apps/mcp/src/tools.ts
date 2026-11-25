@@ -980,7 +980,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .literal("circle_cctp")
             .optional()
             .describe(
-              "Quote Circle forwarding from Base Sepolia (84532) to Optimism Sepolia (11155420). Fees are paid up front in source USDC. Quote only.",
+              "Quote Circle forwarding from Base Sepolia (84532) to Optimism Sepolia (11155420). Fees are paid up front in source USDC.",
             ),
           recipient: evm.optional(),
           amountMicroUsdc: z
@@ -1055,6 +1055,12 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               sender: evm,
               recipient: evm,
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              provider: z
+                .literal("circle_cctp")
+                .optional()
+                .describe(
+                  "Use Circle forwarding with sourceChainId 84532 and destination chainId 11155420.",
+                ),
               sourceChainId: z
                 .union([z.literal(84532), z.literal(11155420), z.literal(10)])
                 .optional()
@@ -1103,7 +1109,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         const result = z
           .object({
             quoteId: z.literal(a.quoteId!),
-            action: z.enum(["transfer", "approve", "deposit", "atomic_origin"]),
+            action: z.enum(["transfer", "approve", "deposit", "atomic_origin", "burn"]),
             expiresAt: z
               .number()
               .int()
@@ -1125,7 +1131,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         const sourceChainId = action === "transfer" ? a.chainId : 84532;
         if (
           unsignedTransaction.chainId !== sourceChainId ||
-          (a.stage === "after_approval" && action !== "deposit") ||
+          (a.stage === "after_approval" && action !== "deposit" && action !== "burn") ||
           (a.stage === "atomic_origin" && action !== "atomic_origin") ||
           (a.stage === "initial" && action === "atomic_origin")
         )
