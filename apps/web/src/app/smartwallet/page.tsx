@@ -162,6 +162,8 @@ export default function SmartWalletPage() {
       } else if (e.kind === "agent_activity") {
         // A per-tool action line ("Getting a quote…"): a muted, persistent record of what she did.
         setLines((ls) => [...ls, { id: e.id, role: "activity", text: String(d.text ?? "") }]);
+      } else if (e.kind === "payment_progress") {
+        setLines((ls) => [...ls, { id: e.id, role: "chain", text: String(d.display ?? "") }]);
       } else if (e.kind === "settled") {
         setThinking(true); // settlement re-wakes the agent for the next step
         const aid = String(d.action_id ?? "");
@@ -347,11 +349,24 @@ export default function SmartWalletPage() {
   const report = useCallback(
     async (actionId: string, data: Record<string, unknown>) => {
       if (!address) return;
+      const progress = data.status === "payment_progress";
+      const key = progress
+        ? [
+            actionId,
+            data.status,
+            data.originHash,
+            data.phase,
+            data.fillHash,
+            data.refundHash,
+            data.returnedMicroUsdc,
+            data.refundFinalized,
+          ].join(":")
+        : `${actionId}:${String(data.status)}:${String(data.hash ?? "")}`;
       const result = await postEvent({
         address,
-        kind: "wallet_result",
+        kind: progress ? "payment_progress" : "wallet_result",
         data: { action_id: actionId, ...data },
-        idempotencyKey: `${actionId}:${String(data.status)}:${String(data.hash ?? "")}`,
+        idempotencyKey: key,
       });
       if (!result.ok)
         throw new Error(`Could not record the wallet result (HTTP ${result.status}).`);

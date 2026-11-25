@@ -90,6 +90,7 @@ export function CrossPaymentPanel({
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
+  const lastProgress = useRef("");
   const [message, setMessage] = useState("");
   const [recovery, setRecovery] = useState("");
   const [destinationHash, setDestinationHash] = useState("");
@@ -468,28 +469,46 @@ export function CrossPaymentPanel({
     const deadline = result.fillDeadline
       ? " Fill deadline " + new Date(result.fillDeadline * 1000).toLocaleString() + "."
       : "";
-    setMessage(
+    const summary =
       (details[result.status as keyof typeof details] ?? result.status) +
-        deadline +
-        (result.refundHash ? " Reported refund transaction " + result.refundHash + "." : "") +
-        (result.spentMicroUsdc ? " Source deposit " + usdc(result.spentMicroUsdc) + " USDC." : "") +
-        (result.approval === null ? " Separate approval receipt could not be matched." : "") +
-        (result.approval?.fees.executionWei
-          ? " Approval execution fee " +
-            formatEther(BigInt(result.approval.fees.executionWei)) +
-            " ETH."
-          : "") +
-        (result.approval?.fees.l1DataWei
-          ? " Approval L1 data fee " + formatEther(BigInt(result.approval.fees.l1DataWei)) + " ETH."
-          : "") +
-        (result.depositExecutionFeeWei
-          ? " Deposit execution fee " + formatEther(BigInt(result.depositExecutionFeeWei)) + " ETH."
-          : "") +
-        (result.depositL1DataFeeWei
-          ? " Deposit L1 data fee " + formatEther(BigInt(result.depositL1DataFeeWei)) + " ETH."
-          : "") +
-        (result.fillHash ? " Destination transaction " + result.fillHash : ""),
-    );
+      deadline +
+      (result.refundHash ? " Reported refund transaction " + result.refundHash + "." : "") +
+      (result.spentMicroUsdc ? " Source deposit " + usdc(result.spentMicroUsdc) + " USDC." : "") +
+      (result.approval === null ? " Separate approval receipt could not be matched." : "") +
+      (result.approval?.fees.executionWei
+        ? " Approval execution fee " +
+          formatEther(BigInt(result.approval.fees.executionWei)) +
+          " ETH."
+        : "") +
+      (result.approval?.fees.l1DataWei
+        ? " Approval L1 data fee " + formatEther(BigInt(result.approval.fees.l1DataWei)) + " ETH."
+        : "") +
+      (result.depositExecutionFeeWei
+        ? " Deposit execution fee " + formatEther(BigInt(result.depositExecutionFeeWei)) + " ETH."
+        : "") +
+      (result.depositL1DataFeeWei
+        ? " Deposit L1 data fee " + formatEther(BigInt(result.depositL1DataFeeWei)) + " ETH."
+        : "") +
+      (result.fillHash ? " Destination transaction " + result.fillHash : "");
+    setMessage(summary);
+    const fingerprint = hash + summary;
+    if (
+      result.originFinalized &&
+      result.status !== "settled" &&
+      lastProgress.current !== fingerprint
+    ) {
+      await report(proposal.actionId, {
+        status: "payment_progress",
+        phase: result.status,
+        originHash: hash,
+        fillHash: result.fillHash,
+        refundHash: result.refundHash,
+        returnedMicroUsdc: result.returnedMicroUsdc,
+        refundFinalized: result.refundFinalized,
+        display: summary,
+      });
+      lastProgress.current = fingerprint;
+    }
   }
   const refreshStatus = useEffectEvent(() => {
     if (!lock.current) void run(check);

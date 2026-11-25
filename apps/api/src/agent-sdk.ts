@@ -168,8 +168,42 @@ function renderEvent(e: SessionEvent): string {
       return `YOU (earlier): ${String(d.text ?? "")}`;
     case "action_proposed":
       return `YOU PROPOSED: ${JSON.stringify(d.action)}`;
-    case "wallet_result":
-      return `WALLET: action ${String(d.action_id)} ${String(d.status)}${d.hash ? ` (tx ${String(d.hash)})` : ""}`;
+    case "wallet_result": {
+      const result = `WALLET: action ${String(d.action_id)} ${String(d.status)}${d.hash ? ` (tx ${String(d.hash)})` : ""}`;
+      if (d.status !== "confirmed" || typeof d.paidMicroUsdc !== "string") return result;
+      const {
+        chainId,
+        userOpHash,
+        paidMicroUsdc,
+        gasChargedMicroUsdc,
+        spentMicroUsdc,
+        originHash,
+        approvalHash,
+        approvalFees,
+        depositExecutionFeeWei,
+        depositL1DataFeeWei,
+        fees,
+      } = d;
+      return (
+        result +
+        " Payment receipt details: " +
+        JSON.stringify({
+          chainId,
+          userOpHash,
+          paidMicroUsdc,
+          gasChargedMicroUsdc,
+          spentMicroUsdc,
+          originHash,
+          approvalHash,
+          approvalFees,
+          depositExecutionFeeWei,
+          depositL1DataFeeWei,
+          fees,
+        })
+      );
+    }
+    case "payment_progress":
+      return `WALLET PAYMENT UPDATE for action ${String(d.action_id)} (origin ${String(d.originHash)}): ${String(d.display)}`;
     case "settled":
       // The watcher writes a ready-to-read prompt: "Transaction <hash> just cleared ... do the next step."
       return `CHAIN: ${String(d.text ?? `settlement for action ${String(d.action_id)}: ${JSON.stringify(d)}`)}`;

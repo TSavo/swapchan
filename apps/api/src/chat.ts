@@ -52,7 +52,7 @@ const CHAT_MSGS_PER_MIN = Number(process.env.SWAPCHAN_CHAT_RATE_PER_MIN ?? "2");
 
 // The only event kinds a browser client is allowed to write. The agent and the chain watcher
 // write their own kinds server-side; a client cannot forge an `action_proposed` or `settled`.
-const ClientKind = z.enum(["user_message", "wallet_result"]);
+const ClientKind = z.enum(["user_message", "wallet_result", "payment_progress"]);
 
 const PostBody = z.object({
   address: z.string().trim().min(1),

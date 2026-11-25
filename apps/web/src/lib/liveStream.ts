@@ -120,7 +120,7 @@ export function streamSession(opts: {
 /** POST a client event (user message, or wallet result) to the channel. */
 export async function postEvent(body: {
   address: string;
-  kind: "user_message" | "wallet_result";
+  kind: "user_message" | "wallet_result" | "payment_progress";
   data: unknown;
   idempotencyKey?: string;
 }): Promise<{ ok: boolean; status: number; retryAfter?: number }> {

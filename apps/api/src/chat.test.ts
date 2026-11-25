@@ -121,6 +121,38 @@ describe("chat route", () => {
     });
     expect(res.status).toBe(400);
   });
+  it("replays one expiry update and preserves the open payment review", async () => {
+    const { app, store, bus } = setup();
+    appendEvent(store, bus, {
+      address: A,
+      kind: "action_proposed",
+      data: { action: { type: "review_payment", actionId: "pay-1" } },
+    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await app.request("/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: COOKIE },
+        body: JSON.stringify({
+          address: A,
+          kind: "payment_progress",
+          idempotencyKey: "pay-1:deadline",
+          data: {
+            action_id: "pay-1",
+            phase: "fill_deadline_passed",
+            display: "Deposit finalized. Fill deadline passed.",
+          },
+        }),
+      });
+      expect(response.status).toBe(200);
+    }
+    const replay = await app.request(`/chat/stream?address=${A}`, { headers: { cookie: COOKIE } });
+    expect((await readFrames(replay, 2)).map((e) => e.kind)).toEqual([
+      "action_proposed",
+      "payment_progress",
+    ]);
+    expect(store.all(A)).toHaveLength(2);
+    store.close();
+  });
 
   it("GET /stream catches up prior events from the cursor", async () => {
     const { store, bus, app } = setup();
