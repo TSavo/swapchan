@@ -875,6 +875,16 @@ export function paymentRoutes(
         ...result,
         finalized,
         paymasterAllowanceAfterBlockMicroUsdc,
+        ...(paymasterAllowanceAfterBlockMicroUsdc && paymasterAllowanceAfterBlockMicroUsdc !== "0"
+          ? {
+              allowanceCleanup: {
+                tool: "build_revoke_tx",
+                arguments: { chainId: 84532, token: usdc, spender: paymaster },
+                sender: saved.quote.sender,
+                requiresNativeGas: true,
+              },
+            }
+          : {}),
         blockBalances,
         paymaster,
       });

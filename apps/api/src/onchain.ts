@@ -750,8 +750,9 @@ interface GpApproval {
     address_info?: SpenderInfo;
   }[];
 }
-export function revokeTx(chainId: number, token: string, spender: string) {
-  if (!CHAINS[chainId]) throw new BadRequest("revoke is EVM-only");
+export function revokeTx(chain: number | string, token: string, spender: string) {
+  const chainId = String(chain) === "84532" ? 84532 : chainOf(chain);
+  if (chainId !== 84532 && !CHAINS[chainId]) throw new BadRequest("revoke is EVM-only");
   if (!isAddress(token) || !isAddress(spender))
     throw new BadRequest("token and spender must be EVM addresses");
   const tx = {
@@ -2340,7 +2341,7 @@ export function onchainRoutes(f: F, env: NodeJS.ProcessEnv, db: DatabaseSync, be
   app.get("/revoke", (c) =>
     run(c, () =>
       revokeTx(
-        chainOf(need(c.req.query("chainId"), "chainId")),
+        need(c.req.query("chainId"), "chainId"),
         need(c.req.query("token"), "token"),
         need(c.req.query("spender"), "spender"),
       ),
