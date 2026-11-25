@@ -22,7 +22,7 @@ import { thorMemoMismatch } from "../guard/index.js";
 import { type Pricer, ZERO_ADDRESS } from "../pricing.js";
 import { RouteRefused, UTXO_DEST, validateUtxoRecipient } from "../utxodest.js";
 import { buildUtxoSend, MEMO_LIMIT } from "../utxosend.js";
-import { tronUsdcSettlement } from "./thorchain-tron-settlement.js";
+import { tronRefund, tronUsdcSettlement } from "./thorchain-tron-settlement.js";
 import { type Fetch, getJson, type ProviderAdapter, placeholderFor } from "./types.js";
 
 /** THORChain's error when memo + refund + affiliate exceed the source chain's memo limit (BTC: 80 bytes). */
@@ -509,8 +509,19 @@ export function thorchain(
     },
     async status(req, signal) {
       const result = await track(req.txHash, signal);
-      if (result.state === "refunded")
-        return { status: "failed", receivingTxHash: null, refundTxHash: result.payout?.txid };
+      if (result.state === "refunded") {
+        const refundTxHash = result.payout?.txid;
+        const verified =
+          req.fromChainId === TRON && result.payout?.chain === "TRON" && refundTxHash
+            ? await tronRefund(f, signal, req.txHash, refundTxHash).catch(() => null)
+            : null;
+        return {
+          status: "failed",
+          receivingTxHash: null,
+          refundTxHash,
+          ...(verified ? { tronRefund: verified } : {}),
+        };
+      }
       if (result.state === "paid_out") {
         const receivingTxHash = result.payout?.txid ?? null;
         const verified =

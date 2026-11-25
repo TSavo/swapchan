@@ -295,6 +295,14 @@ export const StatusResponse = z.object({
   receivingTxHash: z.string().nullable(),
   /** Provider-reported return of funds on the origin chain. */
   refundTxHash: z.string().optional(),
+  tronRefund: z
+    .object({
+      status: z.literal("refunded"),
+      recipient: z.string(),
+      depositedSun: z.string(),
+      returnedSun: z.string(),
+    })
+    .optional(),
   tronUsdcSettlement: z
     .object({
       status: z.enum(["settled", "awaiting_finality"]),

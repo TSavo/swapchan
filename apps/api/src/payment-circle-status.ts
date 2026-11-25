@@ -4,6 +4,7 @@ import {
   encodeFunctionData,
   erc20Abi,
   type Hex,
+  pad,
   parseAbi,
   slice,
   toEventSelector,
@@ -248,10 +249,19 @@ export async function circleStatus(
     topics: received[0]!.topics as [Hex, ...Hex[]],
     data: received[0]!.data,
   }).args;
+  // BurnMessageV2 encodes token, mint recipient, amount and fee executed at fixed byte offsets.
+  const body = event.messageBody;
   if (
     event.sourceDomain !== 6 ||
+    BigInt(slice(attested, 4, 8)) !== 6n ||
+    BigInt(slice(attested, 8, 12)) !== 2n ||
+    event.finalityThresholdExecuted !== Number(slice(attested, 144, 148)) ||
     event.sender !== slice(attested, 44, 76) ||
-    event.messageBody !== slice(attested, 148) ||
+    body !== slice(attested, 148) ||
+    slice(body, 4, 36) !== pad(acrossTestRoute.sourceToken).toLowerCase() ||
+    slice(body, 36, 68) !== pad(i.recipient).toLowerCase() ||
+    BigInt(slice(body, 68, 100)) !== paid ||
+    BigInt(slice(body, 164, 196)) !== 0n ||
     transfers(dest.r, acrossTestRoute.destinationToken, i.recipient) !== paid
   )
     throw Error("Mint differs from payment");

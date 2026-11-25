@@ -20,36 +20,19 @@ const bytes = z
   .transform((v) => v.toLowerCase() as Hex);
 const uint = z.number().int().nonnegative().safe();
 const quantity = z.string().regex(/^0x[0-9a-f]+$/i);
-/** Verify a THORChain-reported native TRX swap that paid Ethereum USDC. */
-export async function tronUsdcSettlement(
-  f: Fetch,
-  signal: AbortSignal,
-  inbound: string,
-  outbound: string,
-  ethereumRpc: string,
-) {
-  const origin = inbound.replace(/^0x/i, "").toLowerCase();
-  const hash = "0x" + outbound.replace(/^0x/i, "").toLowerCase();
-  const post = (url: string, body: unknown) =>
-    getJson<unknown>(f, url, {
-      method: "POST",
-      signal,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  const tron = (method: string) =>
-    post("https://api.trongrid.io/walletsolidity/" + method, { value: origin, visible: true });
-  const eth = async (method: string, params: unknown[]) =>
-    z
-      .object({ result: z.unknown() })
-      .parse(await post(ethereumRpc, { jsonrpc: "2.0", id: 1, method, params })).result;
-  const [raw, info, txRaw, receiptRaw, finalRaw] = await Promise.all([
-    tron("gettransactionbyid"),
-    tron("gettransactioninfobyid"),
-    eth("eth_getTransactionByHash", [hash]),
-    eth("eth_getTransactionReceipt", [hash]),
-    eth("eth_getBlockByNumber", ["finalized", false]),
-  ]);
+const post = (f: Fetch, signal: AbortSignal, url: string, body: unknown) =>
+  getJson<unknown>(f, url, {
+    method: "POST",
+    signal,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+async function solidTransfer(f: Fetch, signal: AbortSignal, origin: string) {
+  const raw = await post(f, signal, "https://api.trongrid.io/walletsolidity/gettransactionbyid", {
+    value: origin,
+    visible: true,
+  });
   const src = z
     .object({
       txID: z.string(),
@@ -62,23 +45,54 @@ export async function tronUsdcSettlement(
           z.object({
             type: z.literal("TransferContract"),
             parameter: z.object({
-              value: z.object({ owner_address: z.string(), amount: uint.positive() }),
+              value: z.object({
+                owner_address: z.string(),
+                to_address: z.string(),
+                amount: uint.positive(),
+              }),
             }),
           }),
         ]),
       }),
     })
     .parse(raw);
-  const sourceReceipt = z
-    .object({ id: z.string(), blockNumber: uint, fee: uint.optional() })
-    .parse(info);
   if (
     src.txID.toLowerCase() !== origin ||
-    sourceReceipt.id.toLowerCase() !== origin ||
     createHash("sha256").update(Buffer.from(src.raw_data_hex, "hex")).digest("hex") !== origin
   )
     throw Error("Tron transaction mismatch");
   const memo = Buffer.from(src.raw_data.data, "hex").toString("utf8");
+  return { src, memo };
+}
+
+/** Verify a THORChain-reported native TRX swap that paid Ethereum USDC. */
+export async function tronUsdcSettlement(
+  f: Fetch,
+  signal: AbortSignal,
+  inbound: string,
+  outbound: string,
+  ethereumRpc: string,
+) {
+  const origin = inbound.replace(/^0x/i, "").toLowerCase();
+  const hash = "0x" + outbound.replace(/^0x/i, "").toLowerCase();
+  const eth = async (method: string, params: unknown[]) =>
+    z
+      .object({ result: z.unknown() })
+      .parse(await post(f, signal, ethereumRpc, { jsonrpc: "2.0", id: 1, method, params })).result;
+  const [{ src, memo }, info, txRaw, receiptRaw, finalRaw] = await Promise.all([
+    solidTransfer(f, signal, origin),
+    post(f, signal, "https://api.trongrid.io/walletsolidity/gettransactioninfobyid", {
+      value: origin,
+      visible: true,
+    }),
+    eth("eth_getTransactionByHash", [hash]),
+    eth("eth_getTransactionReceipt", [hash]),
+    eth("eth_getBlockByNumber", ["finalized", false]),
+  ]);
+  const sourceReceipt = z
+    .object({ id: z.string(), blockNumber: uint, fee: uint.optional() })
+    .parse(info);
+  if (sourceReceipt.id.toLowerCase() !== origin) throw Error("Tron receipt mismatch");
   const [kind, asset, addresses] = memo.split(":");
   const recipient = addresses?.split("/")[0]?.toLowerCase();
   if (
@@ -161,5 +175,27 @@ export async function tronUsdcSettlement(
     recipient,
     paidMicroUsdc: String(delta),
     outboundExecutionFeeWei: String(BigInt(r.gasUsed) * BigInt(r.effectiveGasPrice)),
+  };
+}
+
+export async function tronRefund(f: Fetch, signal: AbortSignal, inbound: string, refund: string) {
+  const origin = inbound.replace(/^0x/i, "").toLowerCase();
+  const [deposit, returned] = await Promise.all([
+    solidTransfer(f, signal, origin),
+    solidTransfer(f, signal, refund.replace(/^0x/i, "").toLowerCase()),
+  ]);
+  const input = deposit.src.raw_data.contract[0].parameter.value;
+  const output = returned.src.raw_data.contract[0].parameter.value;
+  if (
+    returned.memo.toUpperCase() !== "REFUND:" + origin.toUpperCase() ||
+    output.to_address !== input.owner_address ||
+    output.amount > input.amount
+  )
+    throw Error("Tron refund differs from deposit");
+  return {
+    status: "refunded" as const,
+    recipient: output.to_address,
+    depositedSun: String(input.amount),
+    returnedSun: String(output.amount),
   };
 }

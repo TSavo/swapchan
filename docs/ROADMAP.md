@@ -38,6 +38,8 @@ For Solana-origin swaps, the web wallet compiles the reviewed instructions or de
 
 For a native TRX swap to Ethereum USDC, `get_route_status` can verify a historical payout against both chains. In the verified example, one Tron signature sent 6.726933 TRX with a 1 TRX transaction fee. The Ethereum router referenced that Tron transaction in its outbound memo and paid 1.765526 USDC to the recipient named in the inbound memo. Ethereum block 26,493,279 finalized. This replays a public swap with variable output. [Confirmed Tron deposit](https://tronscan.org/#/transaction/3d78de8c3b44ba21cb6aa3eaa5dd9f4890b57302f66654f97487755865920e7c) · [Ethereum payout](https://etherscan.io/tx/0xb0912b9de14422e0160b6c000cfafbb2189fde75a1975cec7710a104fccb2e47)
 
+For a native TRX refund to the original sender, MCP checks both confirmed Tron transactions and the inbound transaction ID in the refund memo. A historical 7,600 TRX deposit returned 7,598.639214 TRX to the depositor. The swap status remains failed and the verified amount is available in `tronRefund.returnedSun`. [Deposit](https://tronscan.org/#/transaction/ac7a2d63a4d06fe133d10cddee5e360ee50f8ce30091f9f61925a5bb37795e1e) · [Refund](https://tronscan.org/#/transaction/16dc4f1e80aedcdd784ffab9926ebd1a7306cf5b7a0546ab312f41c88cc37b03)
+
 ## Milestone 1 — one same-chain payment
 
 ### Payment coverage on this branch

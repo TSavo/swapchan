@@ -912,11 +912,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             ? `Ethereum finalized a payout of ${r.tronUsdcSettlement.paidMicroUsdc} micro-USDC to ${r.tronUsdcSettlement.recipient}. The outbound references the confirmed Tron deposit.`
             : r.status === "done"
               ? "The route provider reports completion. Check the destination transaction for settlement."
-              : r.refundTxHash
-                ? "The provider reports a refund. Check the refund transaction on the source chain."
-                : r.status === "failed"
-                  ? "Uwaa, that one failed. Check the source tx."
-                  : "Still in flight, I'm watching the arrival gate~",
+              : r.tronRefund
+                ? `Tron confirmed a return of ${r.tronRefund.returnedSun} sun to ${r.tronRefund.recipient} for this deposit.`
+                : r.refundTxHash
+                  ? "The provider reports a refund. Check the refund transaction on the source chain."
+                  : r.status === "failed"
+                    ? "Uwaa, that one failed. Check the source tx."
+                    : "Still in flight, I'm watching the arrival gate~",
       }),
     ),
   );
@@ -1194,7 +1196,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Check payment settlement",
       description:
-        "Check a Base Sepolia userOpHash, a direct Optimism USDC transfer using direct and its transactionHash, or an Across deposit using crossChain and its originHash. An optional destination fillHash bypasses the Across index. Cross-chain settlement requires finalized receipts, matching deposit and fill events, and exact token movements.",
+        "Track a Base Sepolia payment by userOpHash, an Optimism USDC transfer with direct, an Across deposit with crossChain, or a Circle burn and mint with circle. Use the tracking arguments returned by pay and add the transaction hash. Include approvalHash for split bridge transactions to reconcile approval fees. Circle and Across settle only after the destination payout matches the reviewed intent and both receipts finalize.",
       inputSchema: z
         .object({
           userOpHash: z
