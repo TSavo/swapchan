@@ -171,18 +171,24 @@ try {
   console.log("payment_status", JSON.stringify(testDeposit));
   const circle = z
     .object({
-      status: z.enum([
-        "awaiting_attestation",
-        "awaiting_forward",
-        "awaiting_mint_receipt",
-        "awaiting_finality",
-        "settled",
-      ]),
+      status: z.enum(["awaiting_finality", "settled"]),
+      mintHash: z.literal("0x77f6fec920441eb44f802dad1ab2a1a4c90093b697d2917028d4401ef69fb373"),
+      destinationBlockBalances: z.object({
+        before: z.object({ ethWei: z.literal("0"), microUsdc: z.literal("0") }),
+        after: z.object({ ethWei: z.literal("0"), microUsdc: z.literal("1") }),
+      }),
+      sourceBlockBalances: z.object({
+        before: z.object({
+          ethWei: z.literal("117512143599005"),
+          microUsdc: z.literal("19984022"),
+        }),
+        after: z.object({ ethWei: z.literal("105060847164578"), microUsdc: z.literal("19916078") }),
+      }),
       spentMicroUsdc: z.literal("67944"),
       forwardFeeMicroUsdc: z.literal("67943"),
-      originFinalized: z.boolean(),
-      destinationFinalized: z.boolean().optional(),
-      paidMicroUsdc: units.optional(),
+      originFinalized: z.literal(true),
+      destinationFinalized: z.boolean(),
+      paidMicroUsdc: z.literal("1"),
     })
     .parse(
       await call("payment_status", {
