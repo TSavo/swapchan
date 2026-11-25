@@ -134,6 +134,26 @@ export function circleWalletOperation(
     fees: { userOpHash: event.userOpHash, entryPointGasCostWei: event.actualGasCost.toString() },
   };
 }
+// Circle fills nonce, executed finality, fee and expiry after the origin burn.
+function sameBurnMessage(original: Hex, attested: Hex) {
+  return (
+    original.length === attested.length &&
+    original.length >= 2 + 376 * 2 &&
+    (
+      [
+        [0, 12],
+        [44, 144],
+        [148, 312],
+        [376, undefined],
+      ] as const
+    ).every(
+      ([start, end]) =>
+        original.slice(2 + 2 * start, end === undefined ? undefined : 2 + 2 * end) ===
+        attested.slice(2 + 2 * start, end === undefined ? undefined : 2 + 2 * end),
+    )
+  );
+}
+
 export async function circleStatus(
   i: z.infer<typeof circleStatusInput>,
   rpc: Rpc,
@@ -188,6 +208,7 @@ export async function circleStatus(
   }
   const origin = await canonical(84532, i.originHash);
   if (!origin) return { status: "awaiting_origin_receipt" };
+  const allOriginLogs = origin.r.logs;
   let paid: bigint;
   let walletFees: { userOpHash: Hex; entryPointGasCostWei: string } | undefined;
   if (sponsored) {
@@ -245,6 +266,19 @@ export async function circleStatus(
     topics: sent[0]!.topics as [Hex, ...Hex[]],
     data: sent[0]!.data,
   }).args.message;
+  const matchingBurns = allOriginLogs
+    .filter(
+      (l) => l.address.toLowerCase() === transmitter && l.topics[0] === toEventSelector(events[0]),
+    )
+    .filter((l) => {
+      const message = decodeEventLog({
+        abi: [events[0]],
+        topics: l.topics as [Hex, ...Hex[]],
+        data: l.data,
+      }).args.message;
+      return sameBurnMessage(original, message);
+    });
+  if (matchingBurns.length !== 1) throw Error("Ambiguous Circle burn in origin transaction");
   let start = origin.parentHash;
   let approval;
   if (i.approvalHash) {
@@ -301,10 +335,19 @@ export async function circleStatus(
             message: z.string().nullish(),
           }),
         )
-        .max(1),
+        .max(128),
     })
     .parse(await response.json());
-  const msg = index.messages[0];
+  const matches = index.messages.filter((m) => {
+    const v = data.safeParse(m.message);
+    return v.success && sameBurnMessage(original, v.data);
+  });
+  if (matches.length > 1) throw Error("Ambiguous Circle attestation");
+  const msg =
+    matches[0] ??
+    (index.messages.length === 1 && !index.messages[0]?.forwardTxHash
+      ? index.messages[0]
+      : undefined);
   if (!msg?.forwardTxHash)
     return {
       ...progress,
@@ -315,15 +358,6 @@ export async function circleStatus(
   const dest = await canonical(11155420, mintHash);
   if (!dest) return { ...progress, status: "awaiting_mint_receipt", mintHash };
   const attested = data.parse(msg.message);
-  // CCTP v2 fills in nonce, executed finality, fee and expiration. All other bytes must match the origin event.
-  for (const [start, end] of [
-    [0, 12],
-    [44, 144],
-    [148, 312],
-    [376, undefined],
-  ] as const)
-    if (slice(original, start, end) !== slice(attested, start, end))
-      throw Error("Attestation differs from origin");
   const received = dest.r.logs.filter(
     (l) =>
       l.address.toLowerCase() === transmitter &&
