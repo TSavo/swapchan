@@ -47,6 +47,7 @@ import {
 import { quoteSolanaPayment, solanaPaymentInput } from "./payment-solana.js";
 import { type ReviewedSolanaPayment, solanaPaymentStatus } from "./payment-solana-status.js";
 import { openPaymentStore } from "./payment-store.js";
+import { quoteTronPayment, tronPaymentInput } from "./payment-tron.js";
 import { llamaPricer } from "./pricing.js";
 
 const { weth, usdc, paymaster, entry, delegate } = paymentContracts;
@@ -651,6 +652,15 @@ export function paymentRoutes(
   }
   app.post("/quote", async (c) => {
     const raw = await c.req.json().catch(() => null);
+    if (raw?.sourceChainId === 728126428) {
+      const parsed = tronPaymentInput.safeParse(raw);
+      if (!parsed.success) return c.json({ error: "invalid_tron_payment" }, 400);
+      try {
+        return c.json(await quoteTronPayment(f, parsed.data));
+      } catch {
+        return c.json({ error: "tron_quote_unverified" }, 503);
+      }
+    }
     if (raw?.sourceChainId === 8253038) {
       const parsed = bitcoinPaymentInput.safeParse(raw);
       if (!parsed.success) return c.json({ error: "invalid_bitcoin_payment" }, 400);

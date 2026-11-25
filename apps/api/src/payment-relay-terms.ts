@@ -2,7 +2,7 @@ import { getOrderId } from "@relay-protocol/settlement-sdk";
 import { acrossRoute } from "@swapchan/shared";
 import { z } from "zod";
 export function checkRelayPaymentTerms(
-  sourceChain: "solana" | "bitcoin",
+  sourceChain: "solana" | "bitcoin" | "tron",
   orderData: unknown,
   orderId: string,
   sender: string,
@@ -64,6 +64,7 @@ export function checkRelayPaymentTerms(
   const computed = getOrderId(orderData as Parameters<typeof getOrderId>[0], {
     solana: "solana-vm",
     bitcoin: "bitcoin-vm",
+    tron: "tron-vm",
     optimism: "ethereum-vm",
     base: "ethereum-vm",
   });

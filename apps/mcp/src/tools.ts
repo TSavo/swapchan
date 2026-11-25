@@ -966,7 +966,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Quote an exact USDC payment",
       description:
-        "Amounts are integer micro-USDC. Bitcoin source chain 8253038 quotes deposit and miner fees in satoshis for destination chain 10. For a read-only Solana SOL or USDC funding quote use sourceChainId 792703809, the Solana sender, and destination chainId 10. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
+        "Amounts are integer micro-USDC. Native Tron source chain 728126428 estimates deposit, energy and bandwidth costs in sun. Bitcoin source chain 8253038 quotes deposit and miner fees in satoshis for destination chain 10. For a read-only Solana SOL or USDC funding quote use sourceChainId 792703809, the Solana sender, and destination chainId 10. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
       inputSchema: z
         .object({
           savedId: z
@@ -984,6 +984,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               z.literal(11155420),
               z.literal(792703809),
               z.literal(8253038),
+              z.literal(728126428),
             ])
             .optional(),
           sourceMint: z
@@ -1070,7 +1071,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Prepare an exact USDC payment for wallet review",
       description:
-        "For a read-only Bitcoin funding quote use sourceChainId 8253038, a Bitcoin sender and destination chainId 10. For read-only Solana funding quotes use sourceChainId 792703809, the Solana sender and destination chainId 10. Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. Inspect routes, fundingShortfall and recommendedQuoteId. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
+        "For a read-only native TRX quote use sourceChainId 728126428, a Tron sender and destination chainId 10. For a read-only Bitcoin funding quote use sourceChainId 8253038, a Bitcoin sender and destination chainId 10. For read-only Solana funding quotes use sourceChainId 792703809, the Solana sender and destination chainId 10. Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. Inspect routes, fundingShortfall and recommendedQuoteId. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
       inputSchema: z
         .object({
           chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
@@ -1103,6 +1104,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                   z.literal(10),
                   z.literal(792703809),
                   z.literal(8253038),
+                  z.literal(728126428),
                 ])
                 .optional()
                 .describe(
