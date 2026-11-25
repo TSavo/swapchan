@@ -365,6 +365,13 @@ export function createApp(
       return c.json({ error: "Quote expired. Review a new quote." }, 410);
     const pin = payoutFor(q.request, taker, body.recipient, body.allowForeignRecipient === true);
     if ("error" in pin) return c.json({ error: pin.error, verified: false }, 400);
+    if (body.strictRoute && q.request.recipient) {
+      const payout = pin.recipient ?? taker;
+      const matches = isEvmChain(q.request.toChainId)
+        ? payout.toLowerCase() === q.request.recipient.toLowerCase()
+        : payout === q.request.recipient;
+      if (!matches) return c.json({ error: "Payout differs from the reviewed recipient." }, 409);
+    }
     let recipient = pin.recipient;
     if (isReceiveOnly(q.request.toChainId) && recipient) {
       const v = validateUtxoRecipient(q.request.toChainId, recipient);
@@ -633,7 +640,12 @@ export function payoutFor(
     const r = recipient ?? qreq.recipient;
     return r ? { recipient: r } : { error: "cross-VM route: pass recipient" };
   }
-  if (!recipient || recipient.toLowerCase() === taker.toLowerCase())
+  if (
+    !recipient ||
+    (isEvmChain(qreq.toChainId)
+      ? recipient.toLowerCase() === taker.toLowerCase()
+      : recipient === taker)
+  )
     return { recipient: undefined };
   if (!allowForeign)
     return {

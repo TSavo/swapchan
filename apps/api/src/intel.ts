@@ -226,6 +226,7 @@ export const SimulateBody = z.object({
   value: z.string().optional(),
   /** Solana: base64 versioned tx. */
   tx: z.string().optional(),
+  replaceRecentBlockhash: z.boolean().optional(),
   /** Optional ERC-20 approve to run first, so ERC-20 sells don't revert on allowance. */
   approve: z.object({ token: z.string(), spender: z.string(), amount: z.string() }).optional(),
 });
@@ -250,7 +251,7 @@ export async function simulateSwap(
       {
         encoding: "base64",
         sigVerify: false,
-        replaceRecentBlockhash: true,
+        replaceRecentBlockhash: body.replaceRecentBlockhash ?? true,
         accounts: { encoding: "base64", addresses: [body.from] },
       },
     ]);

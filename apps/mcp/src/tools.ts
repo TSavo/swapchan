@@ -14,6 +14,7 @@ import {
   playbookInstructions,
   type Quote,
   type QuoteRequest,
+  SOLANA,
   StatusRequest,
   type Token,
   toBaseUnits,
@@ -2055,6 +2056,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       inputSchema: z.object({
         quoteId: z.string().optional(),
         taker: z.string().optional(),
+        recipient: addr
+          .optional()
+          .describe("Reviewed payout address when different from the signer"),
+        allowForeignRecipient: z.boolean().optional(),
         chainId: chainArg.optional(),
         from: z.string().optional(),
         to: z.string().optional(),
@@ -2068,6 +2073,8 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       async (a: {
         quoteId?: string | undefined;
         taker?: string | undefined;
+        recipient?: string | undefined;
+        allowForeignRecipient?: boolean | undefined;
         chainId?: number | string | undefined;
         from?: string | undefined;
         to?: string | undefined;
@@ -2077,24 +2084,51 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       }) => {
         if (a.quoteId) {
           if (!a.taker) throw new UserError("taker is required with quoteId");
-          const b = await api.build(a.quoteId, a.taker);
+          const b = await api.build(a.quoteId, a.taker, a.recipient, a.allowForeignRecipient);
+          if (b.verified !== true || b.quoteId !== a.quoteId || b.fallbackFrom)
+            throw new UserError("The API could not verify the selected quote for simulation.");
+          if (b.execution === "order")
+            throw new UserError(
+              "This route signs a solver order. There is no source swap transaction to simulate.",
+            );
+          if (b.execution === "nonevm" && !b.nonEvmTx)
+            throw new UserError("The selected build has no native wallet transaction to simulate.");
           if (b.nonEvmTx) {
-            const t = b.nonEvmTx as { chainId?: number; tx?: string; serialized?: string };
+            const payload = b.nonEvmTx;
+            if (payload.vm !== "svm" || b.chainId !== SOLANA)
+              throw new UserError(
+                "Source transaction simulation is available for EVM and Solana only.",
+              );
+            if (payload.kind === "svm-instructions")
+              throw new UserError(
+                "Compile the reviewed instructions in the Solana wallet, then pass the serialized transaction as tx with chainId and from.",
+              );
+            if (payload.kind !== "svm-base64" || typeof payload.data !== "string" || !payload.data)
+              throw new UserError("Missing serialized Solana transaction in the selected build.");
             return api.simulate({
-              chainId: t.chainId ?? 792703809,
+              chainId: b.chainId,
               from: a.taker,
-              tx: t.tx ?? t.serialized,
+              tx: payload.data,
+              replaceRecentBlockhash: false,
             });
           }
           const ap = b.approval;
-          const approve =
-            ap?.data && ap.data.length >= 138
-              ? {
-                  token: ap.to,
-                  spender: `0x${ap.data.slice(34, 74)}`,
-                  amount: BigInt(`0x${ap.data.slice(74, 138)}`).toString(),
-                }
-              : undefined;
+          if (
+            ap &&
+            (!/^0x095ea7b3000000000000000000000000[0-9a-f]{104}$/i.test(ap.data) ||
+              ap.chainId !== b.chainId ||
+              BigInt(ap.value) !== 0n)
+          )
+            throw new UserError(
+              "The quoted approval cannot be simulated as an exact ERC-20 approve transaction.",
+            );
+          const approve = ap
+            ? {
+                token: ap.to,
+                spender: `0x${ap.data.slice(34, 74)}`,
+                amount: BigInt(`0x${ap.data.slice(74, 138)}`).toString(),
+              }
+            : undefined;
           return api.simulate({
             chainId: b.chainId,
             from: a.taker,
@@ -2108,12 +2142,16 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           throw new UserError(
             "pass quoteId+taker, or chainId+from+to+data (EVM) / chainId+from+tx (Solana)",
           );
-        return api.simulate({ ...a, chainId: cid(a.chainId) ?? a.chainId });
+        return api.simulate({
+          ...a,
+          chainId: cid(a.chainId) ?? a.chainId,
+          ...(a.tx ? { replaceRecentBlockhash: false } : {}),
+        });
       },
       (_a, r) => ({
         ...(typeof r.chainId === "number" ? { fromChainId: r.chainId, toChainId: r.chainId } : {}),
         says: r.ok
-          ? "Simulation passed: here's exactly what moves. Safe to sign if it matches~"
+          ? "Simulation succeeded. Review the reported changes and coverage before signing."
           : `Simulation reverted: ${String(r.revertReason ?? "unknown")}. Don't sign that one!`,
         swapUrl: nx(r).swapUrl,
       }),

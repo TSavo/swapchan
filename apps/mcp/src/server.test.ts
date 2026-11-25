@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { NATIVE_TOKEN } from "@swapchan/shared";
+import { NATIVE_TOKEN, SOLANA } from "@swapchan/shared";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SwapChanApi } from "./api.js";
 import { RateLimiter } from "./auth.js";
@@ -51,6 +51,40 @@ const ethToUsdc = {
 };
 
 describe("swapchan mcp over streamable http", () => {
+  it("passes the selected Solana transaction bytes and blockhash through to simulation", async () => {
+    const quoteId = "solana-route";
+    const tx = "AQIDBA==";
+    const from = "11111111111111111111111111111111";
+    const build = vi.spyOn(SwapChanApi.prototype, "build").mockResolvedValue({
+      quoteId,
+      chainId: SOLANA,
+      verified: true,
+      to: USDC,
+      data: "0x",
+      value: "0",
+      execution: "nonevm",
+      nonEvmTx: { vm: "svm", kind: "svm-base64", data: tx },
+    });
+    const simulate = vi.spyOn(SwapChanApi.prototype, "simulate").mockResolvedValue({ ok: true });
+    const c = await connect();
+    try {
+      const result = await c.callTool({
+        name: "simulate_swap",
+        arguments: { quoteId, taker: from },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(simulate).toHaveBeenCalledWith({
+        chainId: SOLANA,
+        from,
+        tx,
+        replaceRecentBlockhash: false,
+      });
+    } finally {
+      build.mockRestore();
+      simulate.mockRestore();
+      await c.close();
+    }
+  });
   it("returns signing data only from a fresh verification of the exact payment build", async () => {
     const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
     const userOpHash = "0x" + "11".repeat(32);

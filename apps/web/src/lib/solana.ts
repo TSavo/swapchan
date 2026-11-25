@@ -15,8 +15,10 @@ interface RelayIx {
 }
 
 const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-const fromHex = (h: string) =>
-  Uint8Array.from((h.replace(/^0x/, "").match(/../g) ?? []).map((b) => Number.parseInt(b, 16)));
+const fromHex = (h: string) => {
+  if (!/^(?:0x)?(?:[0-9a-f]{2})*$/i.test(h)) throw new Error("Invalid Solana instruction bytes");
+  return Buffer.from(h.replace(/^0x/i, ""), "hex");
+};
 
 /** Turn a provider's Solana payload into an unsigned VersionedTransaction for the wallet. */
 export async function toSolanaTx(
@@ -32,7 +34,7 @@ export async function toSolanaTx(
       new TransactionInstruction({
         programId: new PublicKey(ix.programId),
         keys: ix.keys.map((k) => ({ ...k, pubkey: new PublicKey(k.pubkey) })),
-        data: Buffer.from(fromHex(ix.data)),
+        data: fromHex(ix.data),
       }),
   );
   const luts = await Promise.all(
