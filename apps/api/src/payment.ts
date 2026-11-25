@@ -571,13 +571,21 @@ export function paymentRoutes(
     const { review, intent } = quote;
     const block = review.sourceWallet.blockNumber;
     const code = await chain("eth_getCode", [intent.sender, block]);
+    const requiresDelegation = code === "0x";
     if (
-      typeof code !== "string" ||
-      code.toLowerCase() !== "0xef0100" + delegate.slice(2).toLowerCase()
+      !requiresDelegation &&
+      (typeof code !== "string" ||
+        code.toLowerCase() !== "0xef0100" + delegate.slice(2).toLowerCase())
     )
-      return { status: "known_delegation_required" as const };
+      return { status: "unverified_delegate" as const };
     const delegation = await inspectDelegation(chain, intent.sender, delegate);
-    if (!delegation.existing?.known) return { status: "unverified_delegate" as const };
+    if (
+      !delegation.proposed ||
+      !("known" in delegation.proposed) ||
+      !delegation.proposed.known ||
+      (requiresDelegation ? delegation.accountType !== "undelegated" : !delegation.existing?.known)
+    )
+      return { status: "unverified_delegate" as const };
     const gas = await quoteGasInUsdc();
     const burn = quote.calls[quote.calls.length - 1]!;
     const maxGasMicroUsdc = gas.maxGasMicroUsdc.circle;
@@ -617,7 +625,7 @@ export function paymentRoutes(
       recipient: intent.recipient,
       amountMicroUsdc: intent.amountMicroUsdc,
       chainId: 84532,
-      requiresDelegation: false,
+      requiresDelegation,
       maxWethWei: String(maxWeth),
       wrapNativeWei: String(wrapNative),
       swapOutputMicroUsdc: String(missing),
@@ -632,6 +640,24 @@ export function paymentRoutes(
         maxInputMicroUsdc: review.maxInputMicroUsdc,
       },
     };
+    if (requiresDelegation) {
+      const quoteId = retain(issued, payment);
+      return {
+        ...budget,
+        status: "delegation_required" as const,
+        quoteId,
+        destinationChainId: 11155420,
+        sender: payment.sender,
+        recipient: payment.recipient,
+        amountMicroUsdc: payment.amountMicroUsdc,
+        maxWethWei: payment.maxWethWei,
+        wrapNativeWei: payment.wrapNativeWei,
+        swapOutputMicroUsdc: payment.swapOutputMicroUsdc,
+        maxBridgeInputMicroUsdc: review.maxInputMicroUsdc,
+        paymaster,
+        next: { tool: "pay", arguments: { chainId: 11155420, quoteId, stage: "sponsored_origin" } },
+      };
+    }
     const callData = paymentBatch(payment);
     const op: RpcOp = {
       sender: intent.sender,

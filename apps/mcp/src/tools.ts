@@ -1205,7 +1205,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                   !a.intent.sourceMint
                 : Boolean(a.intent.sender))) &&
             (!a.stage || (a.quoteId && a.chainId !== 84532)) &&
-            (!a.authorization || (a.quoteId && a.chainId === 84532)),
+            (!a.authorization ||
+              (a.quoteId &&
+                (a.chainId === 84532 ||
+                  (a.chainId === 11155420 && a.stage === "sponsored_origin")))),
           "Supply a payment intent or a reviewed quote ID with its chain-specific build arguments.",
         ),
       annotations: ro,
@@ -1395,7 +1398,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           .parse(built);
         if (
           a.authorization ||
-          sponsored ||
+          Boolean(saved.circle) !== sponsored ||
           saved.quoteId !== quoteId ||
           saved.chainId !== 84532 ||
           saved.requiresDelegation !== true ||
@@ -1409,13 +1412,25 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           status: "delegation_required",
           sender: saved.sender,
           authorization: { ...pending.authorization, nonce: Number(pending.authorization.nonce) },
+          payment: {
+            destinationChainId: a.chainId,
+            recipient: saved.recipient,
+            amountMicroUsdc: saved.amountMicroUsdc,
+            maxGasMicroUsdc: saved.maxGasMicroUsdc,
+            maxWethWei: saved.maxWethWei,
+            wrapNativeWei: saved.wrapNativeWei ?? "0",
+          },
           permission: paymentDelegationNotice.permission,
           howToRevoke: paymentDelegationNotice.revoke,
           signingInstruction:
             "Use the sender's wallet to sign this EIP-7702 authorization for Base Sepolia.",
           next: {
             tool: "pay",
-            arguments: { chainId: 84532, quoteId },
+            arguments: {
+              chainId: a.chainId,
+              quoteId,
+              ...(sponsored ? { stage: "sponsored_origin" } : {}),
+            },
             addWalletResultAt: "authorization",
           },
         };
