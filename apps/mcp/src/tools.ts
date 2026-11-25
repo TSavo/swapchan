@@ -411,8 +411,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     },
   );
   // Every tool points agents at the playbook that explains how to combine them.
-  const PLAYBOOK_REF =
-    " How to combine this with the other tools: swapchan_playbook (workflows: pay, find-money, best-swap, rebalance, revoke-approvals, bridge-stuck, token-safety, recover-old-wallet).";
+  const PLAYBOOK_REF = " See swapchan_playbook for workflows that combine these tools.";
   const register = server.registerTool.bind(server);
   (server as { registerTool: unknown }).registerTool = ((
     name: string,

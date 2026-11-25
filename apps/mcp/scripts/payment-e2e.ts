@@ -193,6 +193,12 @@ try {
         destinationFinalized: z.literal(true),
         paidMicroUsdc: z.literal("1"),
         forwardFeeMicroUsdc: z.literal("208164"),
+        recipientNativeBalances: z.object({
+          beforeLamports: z.literal(0),
+          afterLamports: z.literal(0),
+        }),
+        recipientAccountRentLamports: z.literal(1488440),
+        forwarderFeeLamports: z.literal(77781),
         mintHash: z.literal(
           "2Lfr9NQ3J7MUQnxTtk4P8Qamd83Tf8dQBQB8GCw1vcH3qJ64N2Zdmv4WboimgsXxzXFc2H4X27SJ6SBYijKMqMvo",
         ),

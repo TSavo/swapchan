@@ -1683,7 +1683,6 @@ export function paymentRoutes(
       const finalized =
         BigInt(z.object({ number: hex }).parse(finalizedBlock).number) >=
         BigInt(canonical.blockNumber);
-      if (!finalized) return c.json({ ...result, status: "awaiting_finality", finalized });
       const balances =
         inclusion.parentHash && result.status === "settled"
           ? Promise.all([
@@ -1699,6 +1698,7 @@ export function paymentRoutes(
       ]);
       return c.json({
         ...result,
+        status: finalized ? result.status : "awaiting_finality",
         finalized,
         ...allowance,
         blockBalances,

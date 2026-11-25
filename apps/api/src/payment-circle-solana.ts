@@ -21,6 +21,8 @@ type MintResult = {
   recipientTokenAccount?: string;
   destinationBalances?: { beforeMicroUsdc: string; afterMicroUsdc: string };
   forwarderFeeLamports?: number;
+  recipientAccountRentLamports?: number;
+  recipientNativeBalances?: { beforeLamports: number; afterLamports: number };
 };
 export async function solanaCircleMint(
   rpc: (method: string, params: unknown[]) => Promise<unknown>,
@@ -81,6 +83,8 @@ export async function solanaCircleMint(
       meta: z.object({
         err: z.null(),
         fee: z.number().int().safe().nonnegative(),
+        preBalances: z.array(z.number()),
+        postBalances: z.array(z.number()),
         preTokenBalances: z.array(token),
         postTokenBalances: z.array(token),
         innerInstructions: z.array(z.object({ instructions: z.array(instruction) })).nullish(),
@@ -117,6 +121,19 @@ export async function solanaCircleMint(
   const before = units(tx.meta.preTokenBalances),
     after = units(tx.meta.postTokenBalances);
   if (after - before !== BigInt(intent.amountMicroUsdc)) throw Error("Wrong Solana mint amount");
+  const native = z.number().int().nonnegative().safe();
+  const ownerIndex = tx.transaction.message.accountKeys.findIndex(
+    (k) => k.pubkey === intent.recipient,
+  );
+  const recipientNativeBalances =
+    ownerIndex < 0
+      ? undefined
+      : {
+          beforeLamports: native.parse(tx.meta.preBalances[ownerIndex]),
+          afterLamports: native.parse(tx.meta.postBalances[ownerIndex]),
+        };
+  const accountBefore = native.parse(tx.meta.preBalances[idx]),
+    accountAfter = native.parse(tx.meta.postBalances[idx]);
   const state = z
     .object({
       value: z.tuple([
@@ -134,5 +151,9 @@ export async function solanaCircleMint(
     recipientTokenAccount: ata,
     destinationBalances: { beforeMicroUsdc: String(before), afterMicroUsdc: String(after) },
     forwarderFeeLamports: tx.meta.fee,
+    ...(accountBefore === 0 && accountAfter > 0
+      ? { recipientAccountRentLamports: accountAfter }
+      : {}),
+    ...(recipientNativeBalances ? { recipientNativeBalances } : {}),
   };
 }
