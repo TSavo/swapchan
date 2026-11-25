@@ -43,9 +43,7 @@ import { ModelAction } from "./wallet-action.js";
  * settingSources is empty, and canUseTool denies everything else).
  */
 
-const walletPrompt = (
-  testPayments: boolean,
-) => `You are the agent inside a connected self-custody crypto wallet on swapchan.com/smartwallet.
+const PREFACE = `You are the agent inside a connected self-custody crypto wallet on swapchan.com/smartwallet.
 You are THIS WALLET'S agent, not a general assistant. The connected wallet address is given to you
 in the conversation; it is the only subject you work on.
 
@@ -127,7 +125,6 @@ text (progress goes through status_update; the answer goes through wallet_respon
     • sign_and_send — the goal. { type:"sign_and_send", chainId:<number>,
         tx:{ to, data?, value?, chainId?, gas? },               // EIP-1193, ready for the wallet
         verify:{ recipient:<connected address>, minOut?, verdict:"ok"|"warn"|"danger", note? } }
-    ${testPayments ? "• review_payment — For exact USDC payments on Base Sepolia (84532) or Optimism Sepolia (11155420), first call SwapChan pay with chainId and intent {sender: connected wallet, recipient, amountMicroUsdc}. One USDC equals 1000000 microUSDC. Explain the returned source spend and gas cap, or the funding gap. Use review_payment with the same chainId, recipient and amountMicroUsdc from the quote. SmartWallet handles the build, simulation, verification and local signature. A bridge requires a separate destination fill." : ""}
     • switch_chain  — { type:"switch_chain", chainId:<number> }
     • none          — { type:"none" }             // a reply/redirect with nothing for the wallet to do
 
@@ -135,13 +132,13 @@ text (progress goes through status_update; the answer goes through wallet_respon
   crypto with a card, do NOT propose any card-checkout action — return action.type "none", say it's
   coming soon, and suggest they buy on an exchange or card app and send it to their wallet (then you
   can help once it arrives).
-- For a plain Optimism USDC send, use build_send_tx on Optimism. Bridge only on an explicit cross-chain request. Use build_send_tx for other plain transfers.
+- To SEND a token or the native coin to someone (a plain transfer, not a swap), use build_send_tx
   (it resolves names/ENS + the token's decimals and verifies the recipient), then propose the
   sign_and_send it returns. EVM (native + ERC-20), Bitcoin + UTXO coins, Solana (SOL + SPL) and Tron
   (TRX + TRC-20, e.g. USDT) all work. For UTXO, Solana and Tron you MUST pass the user's sending
   address as the 'from' argument. Bitcoin needs a native-SegWit (bc1q) sender. Do NOT hand-encode a transfer.
 
-For other transaction requests, the best outcome is a ready-to-sign action (sign_and_send) — a real, verified transaction the user
+THE BEST OUTCOME is a ready-to-sign action (sign_and_send) — a real, verified transaction the user
 can sign in one click. Whenever the request can be turned into a transaction, build and verify it
 and return sign_and_send. Use need_info only when you genuinely cannot proceed without an answer,
 and none only for a reply or redirect. Never describe a transaction in prose instead of returning
@@ -168,48 +165,8 @@ function renderEvent(e: SessionEvent): string {
       return `YOU (earlier): ${String(d.text ?? "")}`;
     case "action_proposed":
       return `YOU PROPOSED: ${JSON.stringify(d.action)}`;
-    case "wallet_result": {
-      const result = `WALLET: action ${String(d.action_id)} ${String(d.status)}${d.hash ? ` (tx ${String(d.hash)})` : ""}`;
-      if (d.status !== "confirmed" || typeof d.paidMicroUsdc !== "string") return result;
-      const {
-        chainId,
-        userOpHash,
-        paidMicroUsdc,
-        gasChargedMicroUsdc,
-        spentWethWei,
-        wrappedNativeWei,
-        blockBalances,
-        spentMicroUsdc,
-        originHash,
-        approvalHash,
-        approvalFees,
-        depositExecutionFeeWei,
-        depositL1DataFeeWei,
-        fees,
-      } = d;
-      return (
-        result +
-        " Payment receipt details: " +
-        JSON.stringify({
-          chainId,
-          userOpHash,
-          paidMicroUsdc,
-          gasChargedMicroUsdc,
-          spentWethWei,
-          wrappedNativeWei,
-          blockBalances,
-          spentMicroUsdc,
-          originHash,
-          approvalHash,
-          approvalFees,
-          depositExecutionFeeWei,
-          depositL1DataFeeWei,
-          fees,
-        })
-      );
-    }
-    case "payment_progress":
-      return `WALLET PAYMENT UPDATE for action ${String(d.action_id)} (origin ${String(d.originHash)}): ${String(d.display)}`;
+    case "wallet_result":
+      return `WALLET: action ${String(d.action_id)} ${String(d.status)}${d.hash ? ` (tx ${String(d.hash)})` : ""}`;
     case "settled":
       // The watcher writes a ready-to-read prompt: "Transaction <hash> just cleared ... do the next step."
       return `CHAIN: ${String(d.text ?? `settlement for action ${String(d.action_id)}: ${JSON.stringify(d)}`)}`;
@@ -225,7 +182,6 @@ export interface SdkRespondConfig {
   store: SessionStore;
   model?: string;
   maxTurns?: number;
-  testPayments?: boolean;
 }
 
 // The agent gets the WHOLE SwapChan MCP (it only ever builds unsigned txs — every tool is safe and
@@ -381,36 +337,7 @@ export function extractPartialField(partial: string, field: string): string | nu
   return out; // still streaming
 }
 
-const paymentQuoteRow = z.object({
-  quoteId: z.uuid(),
-  chainId: z.number(),
-  sender: z.string(),
-  recipient: z.string(),
-  amountMicroUsdc: z.string(),
-  expiresAt: z.number().int(),
-});
-export function matchesPaymentQuote(
-  raw: unknown,
-  sender: string,
-  action: Extract<z.infer<typeof ModelAction>, { type: "review_payment" }>,
-) {
-  const result = z
-    .union([paymentQuoteRow, z.object({ routes: z.array(paymentQuoteRow).min(1) })])
-    .safeParse(raw);
-  if (!result.success) return false;
-  const rows = "routes" in result.data ? result.data.routes : [result.data];
-  return rows.every(
-    (row) =>
-      row.chainId === action.chainId &&
-      row.sender.toLowerCase() === sender.toLowerCase() &&
-      row.recipient.toLowerCase() === action.recipient.toLowerCase() &&
-      row.amountMicroUsdc === action.amountMicroUsdc &&
-      row.expiresAt > Date.now() / 1000,
-  );
-}
-
 export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
-  const testPayments = cfg.testPayments ?? process.env.SWAPCHAN_TESTNET_PAYMENTS === "1";
   return async (
     ctx: AgentContext,
     onDelta?: (text: string) => void,
@@ -418,7 +345,6 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
     onActivity?: (text: string) => void,
   ): Promise<unknown> => {
     let captured: unknown = null;
-    let paymentQuote: unknown;
     const hooks = makeThirdPartyHooks();
     // No DB row → first turn, no session id supplied (the SDK mints one). Row → resume it and send
     // only the events the model hasn't seen; the whole log is replayed only on the first turn.
@@ -443,28 +369,7 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
           "End your turn: deliver a message to the user and optionally propose one wallet action.",
           { message: z.string(), action: ModelAction },
           async (args) => {
-            if (
-              args.action.type === "review_payment" &&
-              (!testPayments || !matchesPaymentQuote(paymentQuote, ctx.address, args.action))
-            ) {
-              captured = null;
-              return {
-                isError: true,
-                content: [
-                  {
-                    type: "text",
-                    text: "Call pay with the connected sender and exact requested payment to obtain a current quote before opening review.",
-                  },
-                ],
-              };
-            }
-            if (args.action.type === "review_payment") {
-              const ref = z.object({ reviewId: z.uuid() }).safeParse(paymentQuote);
-              const paymentReviewId = ref.success
-                ? ref.data.reviewId
-                : paymentQuoteRow.safeParse(paymentQuote).data?.quoteId;
-              captured = { ...args, paymentReviewId };
-            } else captured = args;
+            captured = args;
             return { content: [{ type: "text", text: "delivered to the wallet" }] };
           },
         ),
@@ -477,7 +382,7 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
         prompt: renderConversation({ address: ctx.address, events }),
         options: {
           ...(resume ? { resume } : {}),
-          systemPrompt: walletPrompt(testPayments),
+          systemPrompt: PREFACE,
           mcpServers: {
             swapchan: { type: "http", url: cfg.mcpUrl },
             walletbridge,
@@ -490,26 +395,7 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
           // Defense in depth: deny anything off the whitelist (no Bash/Read/Write, no unlisted tool).
           canUseTool: canUseToolForAgent,
           hooks: {
-            PostToolUse: [
-              {
-                hooks: [
-                  async (input, id, options) => {
-                    if (
-                      input.hook_event_name === "PostToolUse" &&
-                      input.tool_name === "mcp__swapchan__pay"
-                    ) {
-                      try {
-                        paymentQuote = JSON.parse(responseText(input.tool_response));
-                      } catch {
-                        paymentQuote = undefined;
-                      }
-                    }
-                    return hooks.postToolUse(input, id, options);
-                  },
-                ],
-                timeout: 10,
-              },
-            ],
+            PostToolUse: [{ hooks: [hooks.postToolUse], timeout: 10 }],
             PostToolUseFailure: [{ hooks: [hooks.postToolUseFailure], timeout: 5 }],
           },
           maxTurns: cfg.maxTurns ?? 60, // a real step (balances/find-money/quote/build/verify) is many tool calls
@@ -578,7 +464,6 @@ export function makeSdkRespond(cfg: SdkRespondConfig): Respond {
       // fresh session from the full log, once.
       if (prev) {
         captured = null;
-        paymentQuote = undefined;
         sessionId = undefined;
         await drive(makeRun(undefined));
       } else {

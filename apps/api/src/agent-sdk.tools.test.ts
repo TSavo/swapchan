@@ -5,40 +5,10 @@ import {
   canUseToolForAgent,
   isAllowedTool,
   makeThirdPartyHooks,
-  matchesPaymentQuote,
   thirdPartyMcpServers,
 } from "./agent-sdk.js";
 
 const opts = { signal: new AbortController().signal } as Parameters<typeof canUseToolForAgent>[2];
-
-it("binds a wallet payment proposal to the live quote for the connected account", () => {
-  const sender = "0x3428335FE86220c496773fE59D653d80DE8bf1Ea";
-  const action = {
-    type: "review_payment",
-    chainId: 11155420,
-    amountMicroUsdc: "1",
-    recipient: "0xa11F5DA00D9a0E9b809E94c4cAe1efa36E8ff50b",
-  } as const;
-  const row = {
-    ...action,
-    sender,
-    quoteId: "ec7536bc-b92e-4c6a-a99f-d3bb4e8df43a",
-    expiresAt: Math.ceil(Date.now() / 1000) + 60,
-  };
-  expect(matchesPaymentQuote(row, sender, action)).toBe(true);
-  expect(matchesPaymentQuote({ routes: [row] }, sender, action)).toBe(true);
-  for (const change of [
-    { expiresAt: 0 },
-    { chainId: 10 },
-    { sender: action.recipient },
-    { recipient: sender },
-    { amountMicroUsdc: "2" },
-  ])
-    expect(matchesPaymentQuote({ routes: [row, { ...row, ...change }] }, sender, action)).toBe(
-      false,
-    );
-  expect(matchesPaymentQuote(undefined, sender, action)).toBe(false);
-});
 
 const SAMPLE: Record<string, string[]> = {
   morpho: [

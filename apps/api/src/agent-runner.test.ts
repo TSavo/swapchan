@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AgentOrchestrator, type Respond, runTurn } from "./agent-runner.js";
 import { appendEvent, SessionBus } from "./session-bus.js";
 import { openSessionStore, type SessionEvent } from "./sessions.js";
@@ -14,27 +14,6 @@ function setup(respond: Respond) {
 const kinds = (es: SessionEvent[]) => es.map((e) => e.kind);
 
 describe("runTurn", () => {
-  it("hands the exact payment intent to the wallet with a server-assigned action ID", async () => {
-    const action = {
-      type: "review_payment",
-      chainId: 84532,
-      recipient: A,
-      amountMicroUsdc: "1",
-    } as const;
-    const { store, bus, respond } = setup(async () => ({
-      message: "Review your payment.",
-      action,
-    }));
-    vi.stubEnv("SWAPCHAN_TESTNET_PAYMENTS", "1");
-    try {
-      await runTurn(store, bus, A, respond);
-    } finally {
-      vi.unstubAllEnvs();
-    }
-    expect(store.all(A).find((e) => e.kind === "action_proposed")?.data).toMatchObject({
-      action: { ...action, actionId: expect.any(String) },
-    });
-  });
   it("emits agent_message + a server-id'd action_proposed for an actionable envelope", async () => {
     const { store, bus, respond } = setup(async () => ({
       message: "Swapping 0.5 BNB to USDC.",

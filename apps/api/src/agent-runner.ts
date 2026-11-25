@@ -92,7 +92,6 @@ export async function runTurn(
   address: string,
   respond: Respond,
   guard?: Guard,
-  testPayments = process.env.SWAPCHAN_TESTNET_PAYMENTS === "1",
 ): Promise<void> {
   let raw: unknown;
   try {
@@ -181,20 +180,10 @@ export async function runTurn(
     };
   }
 
-  if (outAction.type === "review_payment" && (!testPayments || outAction.chainId === 10)) {
-    outAction = { type: "none" };
-    shownMessage = "The experimental payment flow is available only on enabled test networks.";
-  }
   appendEvent(store, bus, { address, kind: "agent_message", data: { text: shownMessage } });
   if (isActionable(outAction)) {
     // The SERVER assigns the actionId — the sign-gate key. The model decides what; we own identity.
-    const proposed: ProposedAction = {
-      ...outAction,
-      actionId: randomUUID(),
-      ...(outAction.type === "review_payment" && parsed.data.paymentReviewId
-        ? { paymentReviewId: parsed.data.paymentReviewId }
-        : {}),
-    };
+    const proposed: ProposedAction = { ...outAction, actionId: randomUUID() };
     appendEvent(store, bus, { address, kind: "action_proposed", data: { action: proposed } });
   }
 }
@@ -215,7 +204,6 @@ export class AgentOrchestrator {
     private bus: SessionBus,
     private respond: Respond,
     private guard?: Guard,
-    private testPayments = process.env.SWAPCHAN_TESTNET_PAYMENTS === "1",
   ) {}
 
   start(): this {
@@ -250,7 +238,7 @@ export class AgentOrchestrator {
     try {
       do {
         this.pending.delete(addr);
-        await runTurn(this.store, this.bus, addr, this.respond, this.guard, this.testPayments);
+        await runTurn(this.store, this.bus, addr, this.respond, this.guard);
       } while (this.pending.has(addr));
     } finally {
       this.running.delete(addr);

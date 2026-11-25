@@ -3,7 +3,7 @@ import {
   paymentBatch,
   paymentContracts,
   paymentSignatureRequest,
-} from "@swapchan/shared";
+} from "./index.js";
 import { hashTypedData } from "viem";
 import { describe, expect, it } from "vitest";
 

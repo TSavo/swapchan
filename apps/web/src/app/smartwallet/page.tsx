@@ -15,8 +15,6 @@ import {
   streamSession,
 } from "@/lib/liveStream";
 import { SANITIZE_CONFIG } from "@/lib/sanitize";
-import { CrossPaymentPanel } from "./CrossPaymentPanel";
-import { PaymentPanel } from "./PaymentPanel";
 
 // Client-only (the Crossmint SDK must not run during SSR / the build).
 // MoonPay is the active card on-ramp provider; Crossmint (./FundWithCard) stays dormant pending access.
@@ -37,13 +35,6 @@ interface VerifySummary {
   note?: string;
 }
 type ModelAction =
-  | {
-      type: "review_payment";
-      paymentReviewId?: string;
-      chainId: 84532 | 10 | 11155420;
-      recipient: string;
-      amountMicroUsdc: string;
-    }
   | { type: "sign_and_send"; chainId: number; tx: EvmTx; verify: VerifySummary }
   | { type: "sign_message"; message: string }
   | { type: "switch_chain"; chainId: number }
@@ -72,14 +63,11 @@ function coalesceActivity(lines: Line[]): (Line & { count: number })[] {
   return out;
 }
 
-const testPayments = process.env.NEXT_PUBLIC_SWAPCHAN_TESTNET_PAYMENTS === "1";
 const isActionable = (a: ProposedAction) =>
   // sign_message is no longer offered by the agent (an old stored one is shown but not actionable).
   // onramp (card on-ramp) is gated off until MoonPay signature validation is resolved on their side —
   // re-add "|| a.type === 'onramp'" here (and in the api's isActionable) to turn it back on.
-  (testPayments && a.type === "review_payment" && a.chainId !== 10) ||
-  a.type === "sign_and_send" ||
-  a.type === "switch_chain";
+  a.type === "sign_and_send" || a.type === "switch_chain";
 
 export default function SmartWalletPage() {
   const config = useConfig();
@@ -162,8 +150,6 @@ export default function SmartWalletPage() {
       } else if (e.kind === "agent_activity") {
         // A per-tool action line ("Getting a quote…"): a muted, persistent record of what she did.
         setLines((ls) => [...ls, { id: e.id, role: "activity", text: String(d.text ?? "") }]);
-      } else if (e.kind === "payment_progress") {
-        setLines((ls) => [...ls, { id: e.id, role: "chain", text: String(d.display ?? "") }]);
       } else if (e.kind === "settled") {
         setThinking(true); // settlement re-wakes the agent for the next step
         const aid = String(d.action_id ?? "");
@@ -176,8 +162,6 @@ export default function SmartWalletPage() {
         const action = d.action as ProposedAction | undefined;
         if (action && isActionable(action)) setPending(action);
       } else if (e.kind === "wallet_result") {
-        if (typeof d.paymentSummary === "string")
-          setLines((ls) => [...ls, { id: e.id, role: "chain", text: String(d.paymentSummary) }]);
         const aid = String(d.action_id ?? "");
         if (aid) {
           resolvedRef.current.add(aid); // mark handled synchronously (defeats reload replay-fire)
@@ -244,7 +228,7 @@ export default function SmartWalletPage() {
 
   // Auto-send: fire a proposed action straight to the wallet (never a danger-verdict one).
   useEffect(() => {
-    if (!autoSend || !pending || busy || pending.type === "review_payment") return;
+    if (!autoSend || !pending || busy) return;
     if (!synced.current) return; // never auto-fire during a reload's catch-up replay
     if (resolvedRef.current.has(pending.actionId)) return; // already broadcast/handled
     // The server guard never proposes a danger action (danger → nothing is proposed), so a pending
@@ -351,27 +335,12 @@ export default function SmartWalletPage() {
   const report = useCallback(
     async (actionId: string, data: Record<string, unknown>) => {
       if (!address) return;
-      const progress = data.status === "payment_progress";
-      const key = progress
-        ? [
-            actionId,
-            data.status,
-            data.originHash,
-            data.phase,
-            data.fillHash,
-            data.refundHash,
-            data.returnedMicroUsdc,
-            data.refundFinalized,
-          ].join(":")
-        : `${actionId}:${String(data.status)}:${String(data.hash ?? "")}`;
-      const result = await postEvent({
+      await postEvent({
         address,
-        kind: progress ? "payment_progress" : "wallet_result",
+        kind: "wallet_result",
         data: { action_id: actionId, ...data },
-        idempotencyKey: key,
+        idempotencyKey: `${actionId}:${String(data.status)}:${String(data.hash ?? "")}`,
       });
-      if (!result.ok)
-        throw new Error(`Could not record the wallet result (HTTP ${result.status}).`);
     },
     [address],
   );
@@ -473,9 +442,6 @@ export default function SmartWalletPage() {
         .sw-md h1, .sw-md h2, .sw-md h3 { font-weight: 700; margin: 0.4rem 0 0.2rem; }
       `}</style>
 
-      {testPayments && chainId === 84532 && pending?.type !== "review_payment" && (
-        <PaymentPanel key={address} sender={address} chainId={chainId} />
-      )}
       {confirmAutoSend && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
@@ -727,24 +693,7 @@ export default function SmartWalletPage() {
                     : "I read the warning above and want to send this anyway."}
                 </label>
               )}
-            {pending.type === "review_payment" && pending.chainId !== 84532 && address && (
-              <CrossPaymentPanel
-                key={address + pending.actionId}
-                sender={address}
-                proposal={pending}
-                report={report}
-              />
-            )}
-            {pending.type === "review_payment" && pending.chainId === 84532 && (
-              <PaymentPanel
-                key={address + pending.actionId}
-                sender={address}
-                chainId={chainId}
-                proposal={pending}
-                report={report}
-              />
-            )}
-            {pending.type !== "onramp" && pending.type !== "review_payment" && (
+            {pending.type !== "onramp" && (
               <div className="flex gap-2">
                 <button
                   type="button"

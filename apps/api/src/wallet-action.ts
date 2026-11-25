@@ -31,17 +31,6 @@ export type VerifySummary = z.infer<typeof VerifySummary>;
 
 // The action the model proposes (no actionId — the server assigns that).
 export const ModelAction = z.discriminatedUnion("type", [
-  z
-    .object({
-      type: z.literal("review_payment"),
-      chainId: z.union([z.literal(84532), z.literal(10), z.literal(11155420)]),
-      recipient: z
-        .string()
-        .regex(/^0x[0-9a-f]{40}$/i)
-        .refine((a) => !/^0x0{40}$/i.test(a)),
-      amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
-    })
-    .strict(),
   z.object({
     type: z.literal("sign_and_send"),
     chainId: z.number().int(),
@@ -65,27 +54,18 @@ export type ModelAction = z.infer<typeof ModelAction>;
 export const WalletRespond = z.object({
   message: z.string(),
   action: ModelAction,
-  paymentReviewId: z.uuid().optional(),
 });
 export type WalletRespond = z.infer<typeof WalletRespond>;
 
 // What actually gets stored in an `action_proposed` event: the model action + the server's actionId.
-export type ProposedAction = ModelAction & { actionId: string; paymentReviewId?: string };
+export type ProposedAction = ModelAction & { actionId: string };
 
 /** Actions that require the user to do something in their wallet (and thus a sign-gate id). */
 export function isActionable(
   a: ModelAction,
-): a is Extract<
-  ModelAction,
-  { type: "sign_and_send" | "sign_message" | "switch_chain" | "review_payment" }
-> {
+): a is Extract<ModelAction, { type: "sign_and_send" | "sign_message" | "switch_chain" }> {
   // onramp (card on-ramp) is intentionally NOT actionable yet — MoonPay signature validation is
   // unresolved on their side, so we don't surface a card checkout. Re-add "onramp" here (and in the
   // web page's isActionable) to turn it back on once MoonPay validates. The schema keeps the literal.
-  return (
-    a.type === "review_payment" ||
-    a.type === "sign_and_send" ||
-    a.type === "sign_message" ||
-    a.type === "switch_chain"
-  );
+  return a.type === "sign_and_send" || a.type === "sign_message" || a.type === "switch_chain";
 }

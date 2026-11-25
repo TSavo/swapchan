@@ -29,7 +29,6 @@ export type EventKind =
   // user/wallet writer
   | "user_message" // { text }
   | "wallet_result" // { action_id, status: "sent" | "rejected", hash? }
-  | "payment_progress" // Wallet-reported origin, fill or recovery evidence for an open review.
   // agent writer
   | "agent_message" // { text }  — the turn's final answer
   | "agent_say" // { text }  — an interim line the agent speaks mid-turn (persists as dialogue)

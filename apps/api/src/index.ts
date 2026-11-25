@@ -573,20 +573,12 @@ export function createApp(
         : env.ANTHROPIC_API_KEY || env.CLAUDE_CODE_OAUTH_TOKEN
           ? makeSdkRespond({
               mcpUrl: env.SWAPCHAN_MCP_URL ?? "http://mcp:8788/mcp",
-              testPayments: env.SWAPCHAN_TESTNET_PAYMENTS === "1",
               store,
               ...(env.SWAPCHAN_AGENT_MODEL ? { model: env.SWAPCHAN_AGENT_MODEL } : {}),
             })
           : null;
     const guard: Guard = makeVerifyGuard(opts.scannerFetch ?? fetch, env);
-    if (respond)
-      new AgentOrchestrator(
-        store,
-        bus,
-        respond,
-        guard,
-        env.SWAPCHAN_TESTNET_PAYMENTS === "1",
-      ).start();
+    if (respond) new AgentOrchestrator(store, bus, respond, guard).start();
 
     // Third writer: on a broadcast, poll settlement and append a `settled` event (re-wakes the
     // agent for the next step). Default tracker uses the signed route's provider.status; the browser
