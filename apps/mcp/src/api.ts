@@ -108,7 +108,9 @@ export class SwapChanApi {
       throw e;
     }
   }
-  quotes(r: QuoteRequest & { partner?: string | undefined }): Promise<QuotesResponse> {
+  quotes(
+    r: QuoteRequest & { partner?: string | undefined; quoteId?: string },
+  ): Promise<QuotesResponse> {
     return this.req(QuotesResponse, `/quotes?${qs(r)}`);
   }
   build(
@@ -121,6 +123,7 @@ export class SwapChanApi {
       method: "POST",
       body: JSON.stringify({
         quoteId,
+        strictRoute: true,
         taker,
         ...(recipient ? { recipient } : {}),
         ...(allowForeignRecipient ? { allowForeignRecipient: true } : {}),
@@ -130,6 +133,114 @@ export class SwapChanApi {
   /** CoW limit order: typed data to sign (our partnerFee in appData), market reference. */
   limitBuild(body: Record<string, unknown>): Promise<LimitBuildResult> {
     return this.req(LimitBuildResult, "/limit/build", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  paymasterCleanup(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/paymaster-cleanup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  paymentQuote(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/quote", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  savedPaymentQuote(id: string) {
+    return this.req(
+      z.record(z.string(), z.unknown()),
+      "/payments/review/" + encodeURIComponent(id),
+    );
+  }
+  checkDelegation(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/delegation", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  paymentGasQuote(body: { chainId: 84532; quoteId?: string | undefined }) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/gas-quote", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  paymentBuild(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/build", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  verifyBundle(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/verify", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  directPaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/direct/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  crossPaymentBuild(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/cross-chain/build", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  paymentSubmit(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/submit", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  paymentStatus(hash: string) {
+    return this.req(
+      z.record(z.string(), z.unknown()),
+      "/payments/status/" + encodeURIComponent(hash),
+    );
+  }
+  crossPaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/cross-chain/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  tronPaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/tron/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  devnetBuild(quoteId: string) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/solana-devnet/build", {
+      method: "POST",
+      body: JSON.stringify({ quoteId }),
+    });
+  }
+  circleSolanaStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/circle-solana/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  devnetStatus(body: { quoteId: string; signature: string }) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/solana-devnet/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  solanaPaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/solana/status", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+  circlePaymentStatus(body: Record<string, unknown>) {
+    return this.req(z.record(z.string(), z.unknown()), "/payments/circle/status", {
       method: "POST",
       body: JSON.stringify(body),
     });

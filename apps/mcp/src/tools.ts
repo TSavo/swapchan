@@ -1,3 +1,5 @@
+import { createPublicKey, verify as verifySignature } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { McpServer } from "@modelcontextprotocol/server";
 import {
   BROADCAST_CHAINS,
@@ -5,24 +7,47 @@ import {
   broadcastSummary,
   CHAIN_COUNT,
   COW_NETWORK,
+  circleMessenger,
+  cleanupOwnerRequest,
+  cleanupRelayRequest,
   fromBaseUnits,
   isAnyAddress,
   isVmAddress,
   NATIVE_TOKEN,
+  type NonEvmTx,
+  type PaymentQuote,
+  PaymentWalletCapabilities,
+  PaymentWalletMethods,
+  paymentContracts,
+  paymentDelegationNotice,
+  paymentSignatureRequest,
+  paymentWalletPayload,
   playbook,
   playbookInstructions,
   type Quote,
   type QuoteRequest,
+  SOLANA,
+  StatusRequest,
   type Token,
   toBaseUnits,
   UTXO_CHAIN_COUNT,
   vmOf,
 } from "@swapchan/shared";
-import { createPublicClient, erc20Abi, http, isAddress, type Address as ViemAddress } from "viem";
+import {
+  createPublicClient,
+  encodeFunctionData,
+  erc20Abi,
+  http,
+  isAddress,
+  keccak256,
+  type SignedAuthorization,
+  type Address as ViemAddress,
+} from "viem";
 import { z } from "zod";
 import { ApiError, type SwapChanApi } from "./api.js";
 import { imageData, mascotsFor, SITE, SWAP_CHAN, swapUrl } from "./art.js";
 import type { Config } from "./config.js";
+import { atomicWalletPayment, atomicWalletRequest, checkPaymentRoute } from "./payment-route.js";
 
 export const SERVER_NAME = "swapchan";
 export const SERVER_VERSION = "0.3.0";
@@ -306,6 +331,14 @@ async function summarize(api: SwapChanApi, q: Quote) {
   return {
     quoteId: q.id,
     provider: q.provider,
+    executionMechanism:
+      q.execution === "order"
+        ? "solver order"
+        : q.request.fromChainId !== q.request.toChainId
+          ? "bridge transaction"
+          : q.execution === "nonevm" || vmOf(q.request.fromChainId) !== "evm"
+            ? "native swap transaction"
+            : "router transaction",
     crossChain: q.request.fromChainId !== q.request.toChainId,
     toAmount: q.toAmount,
     toAmountMin: q.toAmountMin,
@@ -326,6 +359,44 @@ async function summarize(api: SwapChanApi, q: Quote) {
   };
 }
 
+async function compareExecutionModels(api: SwapChanApi, quotes: Quote[]) {
+  const representatives = await Promise.all(
+    [true, false].map(async (solver) => {
+      const q = quotes.find((q) => (q.execution === "order") === solver);
+      if (!q) return null;
+      const row = await summarize(api, q);
+      return {
+        ...row,
+        authorization: [
+          solver
+            ? "Sign the order for solver execution."
+            : "Review and sign the source transaction in the source-chain wallet.",
+          ...(q.approvalAddress ? ["A separate token allowance may be required."] : []),
+        ].join(" "),
+        settlement: solver
+          ? "A solver must fill the signed order before expiry."
+          : row.crossChain
+            ? "Verify a separate destination fill after the source transaction."
+            : "Verify the on-chain transaction receipt.",
+      };
+    }),
+  );
+  const [solver, transaction] = representatives;
+  const priced = solver?.netUsd != null && transaction?.netUsd != null;
+  return {
+    bestSolverOrder: solver ?? null,
+    bestTransaction: transaction ?? null,
+    bestPricedModel: priced
+      ? solver.netUsd === transaction.netUsd
+        ? "tie"
+        : solver.netUsd! > transaction.netUsd!
+          ? "solver_order"
+          : "transaction"
+      : null,
+    solverAdvantageNetUsd: priced ? solver.netUsd! - transaction.netUsd! : null,
+  };
+}
+
 /** Builds one McpServer instance with all SwapChan tools. Cheap; called per HTTP request. */
 export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
   const server = new McpServer(
@@ -340,8 +411,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     },
   );
   // Every tool points agents at the playbook that explains how to combine them.
-  const PLAYBOOK_REF =
-    " How to combine this with the other tools: swapchan_playbook (workflows: find-money, best-swap, rebalance, revoke-approvals, bridge-stuck, token-safety, recover-old-wallet).";
+  const PLAYBOOK_REF = " See swapchan_playbook for workflows that combine these tools.";
   const register = server.registerTool.bind(server);
   (server as { registerTool: unknown }).registerTool = ((
     name: string,
@@ -495,69 +565,79 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     ),
   );
 
-  server.registerTool(
-    "compare_routes",
-    {
-      title: "Compare routes",
-      description:
-        "Compare every route SwapChan found, ranked best-first by net USD received, across aggregators and bridges. Pass extra destination chains in alsoToChainIds to compare same-chain vs cross-chain outcomes side by side. Swap-chan lines up the whole cast. Result includes `display` markdown with chan images and a swapchan.com link: show it to the user.",
-      inputSchema: z.object({
-        ...swap,
-        alsoToChainIds: z
-          .array(chainId)
-          .max(4)
-          .optional()
-          .describe(
-            "Extra destination chains to compare. toToken must then be valid on each (e.g. native token).",
-          ),
-        limit: z.number().int().min(1).max(25).default(10),
-      }),
-      annotations: ro,
-    },
-    safe(
-      async (a: SwapArgs & { alsoToChainIds?: number[] | undefined; limit: number }) => {
-        const base = await toRequest(api, a);
-        const dests = [...new Set([a.toChainId, ...(a.alsoToChainIds ?? [])])];
-        const results = await Promise.allSettled(
-          dests.map((d) => api.quotes({ ...base, toChainId: d })),
-        );
-        const quotes: Quote[] = [];
-        const errors: { provider: string; message: string }[] = [];
-        results.forEach((r, i) => {
-          if (r.status === "fulfilled") {
-            quotes.push(...r.value.quotes);
-            errors.push(...r.value.errors);
-          } else
-            errors.push({ provider: `chain ${dests[i]}`, message: (r.reason as Error).message });
-        });
-        quotes.sort((x, y) => {
-          if (x.netUsd !== null && y.netUsd !== null) return y.netUsd - x.netUsd;
-          if (x.netUsd !== null) return -1;
-          if (y.netUsd !== null) return 1;
-          return BigInt(y.toAmount) > BigInt(x.toAmount)
-            ? 1
-            : BigInt(y.toAmount) < BigInt(x.toAmount)
-              ? -1
-              : 0;
-        });
-        return {
-          routes: await Promise.all(quotes.slice(0, a.limit).map((q) => summarize(api, q))),
-          totalFound: quotes.length,
-          providerErrors: errors,
-          note: "Ranked by netUsd = toAmount priced by SwapChan (same price for every route) - gasUsd; unpriced routes follow, by raw toAmount.",
-        };
+  for (const comparison of ["compare_routes", "compare_intents"] as const) {
+    server.registerTool(
+      comparison,
+      {
+        title:
+          comparison === "compare_routes"
+            ? "Compare routes"
+            : "Compare solver orders and transaction routes",
+        description:
+          comparison === "compare_intents"
+            ? "Compare solver orders, router swaps and bridge transactions by net USD received. Each route identifies how the wallet initiates it, its fees and expected time."
+            : "Compare every route SwapChan found, ranked best-first by net USD received, across aggregators and bridges. Pass extra destination chains in alsoToChainIds to compare same-chain vs cross-chain outcomes side by side. Swap-chan lines up the whole cast. Result includes `display` markdown with chan images and a swapchan.com link: show it to the user.",
+        inputSchema: z.object({
+          ...swap,
+          alsoToChainIds: z
+            .array(chainId)
+            .max(4)
+            .optional()
+            .describe(
+              "Extra destination chains to compare. toToken must then be valid on each (e.g. native token).",
+            ),
+          limit: z.number().int().min(1).max(25).default(10),
+        }),
+        annotations: ro,
       },
-      (a, r) => ({
-        fromChainId: a.fromChainId,
-        toChainId: a.toChainId,
-        says: r.routes[0]
-          ? `${r.totalFound} routes lined up! ${r.routes[0].provider} is in front~`
-          : "Uwaa, nobody had a route for that one.",
-        swapUrl: swapUrl(a),
-      }),
-    ),
-  );
-
+      safe(
+        async (a: SwapArgs & { alsoToChainIds?: number[] | undefined; limit: number }) => {
+          const base = await toRequest(api, a);
+          const dests = [...new Set([a.toChainId, ...(a.alsoToChainIds ?? [])])];
+          const results = await Promise.allSettled(
+            dests.map((d) => api.quotes({ ...base, toChainId: d })),
+          );
+          const quotes: Quote[] = [];
+          const errors: { provider: string; message: string }[] = [];
+          results.forEach((r, i) => {
+            if (r.status === "fulfilled") {
+              quotes.push(...r.value.quotes);
+              errors.push(...r.value.errors);
+            } else
+              errors.push({ provider: `chain ${dests[i]}`, message: (r.reason as Error).message });
+          });
+          quotes.sort((x, y) => {
+            if (x.netUsd !== null && y.netUsd !== null) return y.netUsd - x.netUsd;
+            if (x.netUsd !== null) return -1;
+            if (y.netUsd !== null) return 1;
+            return BigInt(y.toAmount) > BigInt(x.toAmount)
+              ? 1
+              : BigInt(y.toAmount) < BigInt(x.toAmount)
+                ? -1
+                : 0;
+          });
+          const routes = await Promise.all(quotes.slice(0, a.limit).map((q) => summarize(api, q)));
+          const comparisonDetails =
+            comparison === "compare_intents" ? await compareExecutionModels(api, quotes) : null;
+          return {
+            routes,
+            ...(comparisonDetails ? { comparison: comparisonDetails } : {}),
+            totalFound: quotes.length,
+            providerErrors: errors,
+            note: "Ranked by netUsd = toAmount priced by SwapChan (same price for every route) - gasUsd; unpriced routes follow, by raw toAmount.",
+          };
+        },
+        (a, r) => ({
+          fromChainId: a.fromChainId,
+          toChainId: a.toChainId,
+          says: r.routes[0]
+            ? `${r.totalFound} routes lined up! ${r.routes[0].provider} is in front~`
+            : "Uwaa, nobody had a route for that one.",
+          swapUrl: swapUrl(a),
+        }),
+      ),
+    );
+  }
   server.registerTool(
     "build_swap_tx",
     {
@@ -575,7 +655,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           .string()
           .optional()
           .describe(
-            "Reuse a quoteId from get_quote/compare_routes (still re-quotes if it expired)",
+            "Build the selected quote from get_quote/compare_routes. If it expired, review a new quote.",
           ),
         allowForeignRecipient: z
           .boolean()
@@ -596,13 +676,20 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         },
       ) => {
         // Indicative quotes (no taker) are cheaper on provider rate limits; /build re-quotes with the taker.
-        const res = await api.quotes(await toRequest(api, a));
-        const pick =
-          (a.quoteId && res.quotes.find((q) => q.id === a.quoteId)) ||
-          (a.provider
+        const request = await toRequest(api, a, a.quoteId ? a.taker : undefined);
+        const res = await api.quotes({ ...request, ...(a.quoteId ? { quoteId: a.quoteId } : {}) });
+        const pick = a.quoteId
+          ? res.quotes.find((q) => q.id === a.quoteId)
+          : a.provider
             ? res.quotes.find((q) => q.provider.toLowerCase() === a.provider?.toLowerCase())
-            : undefined) ||
-          (a.provider ? undefined : (res.quotes.find((q) => q.id === res.best) ?? res.quotes[0]));
+            : (res.quotes.find((q) => q.id === res.best) ?? res.quotes[0]);
+        if (
+          a.quoteId &&
+          (!pick || (a.provider && pick.provider.toLowerCase() !== a.provider.toLowerCase()))
+        )
+          throw new UserError(
+            "The selected quote is unavailable or belongs to another provider. Review a new quote.",
+          );
         if (!pick)
           throw new UserError(
             a.provider
@@ -618,13 +705,20 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             "cross-VM route: pass recipient (the receiving address on the destination chain)",
           );
         const built = await api.build(pick.id, a.taker, a.recipient, a.allowForeignRecipient);
+        if (
+          built.fallbackFrom ||
+          (built.quoteId && built.quoteId !== pick.id) ||
+          (built.provider && built.provider !== pick.provider)
+        )
+          throw new UserError(
+            "The built route differs from the selected quote. Review a new quote.",
+          );
         // Server-side payload guard (router allowlist, recipient, minOut, approvals). Fail closed.
-        if (built.verified === false)
+        if (built.verified !== true)
           throw new UserError("API payload failed SwapChan verification; refusing to return it");
         const guard = {
           verified: built.verified ?? null,
           verification: built.verification ?? null,
-          ...(built.fallbackFrom ? { fallbackFrom: built.fallbackFrom } : {}),
           ...(built.payoutTo ? { payoutTo: built.payoutTo } : {}),
           ...(built.recipientIsTaker === false
             ? {
@@ -633,7 +727,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             : {}),
         };
         if (built.execution === "nonevm" && built.nonEvmTx) {
-          const how: Record<string, string> = {
+          const how: Record<NonEvmTx["kind"], string> = {
             "svm-base64":
               "`data` is a base64 serialized Solana VersionedTransaction: deserialize, have the user's Solana wallet sign, send to a Solana RPC.",
             "svm-instructions":
@@ -642,12 +736,29 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               "`data` is a Bitcoin PSBT (or deposit request): have the user's Bitcoin wallet sign and broadcast it.",
             "tvm-json":
               "`data` is a Tron transaction request: have the user's Tron wallet (TronLink) sign and broadcast it.",
+            "tvm-deposit":
+              "Review the TRX vault address, amount in sun and exact memo. Send that amount to data.to with data.memo as transaction data using the sender's Tron wallet. Keep the inbound txid.",
+            "uvm-psbt":
+              "Review data.summary against the wallet's decoded outputs, change, fee and memo. Sign data.psbt locally in the source-chain wallet, finalize and broadcast it. Keep the inbound txid.",
           };
+          const provider = built.provider ?? pick.provider;
           return {
             quote: await summarize(api, pick),
             execution: "nonevm",
             unsignedTx: built.nonEvmTx,
             howToExecute: how[built.nonEvmTx.kind],
+            afterBroadcast:
+              provider === "thorchain" && built.nonEvmTx.vm === "uvm"
+                ? { tool: "track_utxo_swap", arguments: {}, addSourceTransactionIdAs: "txid" }
+                : {
+                    tool: "get_route_status",
+                    arguments: {
+                      provider,
+                      fromChainId: pick.request.fromChainId,
+                      toChainId: pick.request.toChainId,
+                    },
+                    addSourceTransactionIdAs: "txHash",
+                  },
             ...guard,
             safety: "Unsigned. SwapChan never holds keys or signs.",
           };
@@ -804,12 +915,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           .string()
           .min(1)
           .describe('Provider name from the quote (e.g. "across", "lifi")'),
-        txHash: z
-          .string()
-          .regex(
-            /^0x[0-9a-fA-F]{64}$|^[1-9A-HJ-NP-Za-km-z]{64,90}$/,
-            "0x tx hash (EVM) or base58 signature (Solana)",
-          ),
+        txHash: StatusRequest.shape.txHash,
         fromChainId: chainId,
         toChainId: chainId,
       }),
@@ -817,16 +923,22 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     },
     safe(
       async (a: { provider: string; txHash: string; fromChainId: number; toChainId: number }) =>
-        api.status({ ...a, txHash: a.txHash as `0x${string}` }),
+        api.status(a),
       (a, r) => ({
         fromChainId: a.fromChainId,
         toChainId: a.toChainId,
         says:
-          r.status === "done"
-            ? "It landed! Your tokens are home~"
-            : r.status === "failed"
-              ? "Uwaa, that one failed. Check the source tx."
-              : "Still in flight, I'm watching the arrival gate~",
+          r.tronUsdcSettlement?.status === "settled"
+            ? `Ethereum finalized a payout of ${r.tronUsdcSettlement.paidMicroUsdc} micro-USDC to ${r.tronUsdcSettlement.recipient}. The outbound references the confirmed Tron deposit.`
+            : r.status === "done"
+              ? "The route provider reports completion. Check the destination transaction for settlement."
+              : r.tronRefund
+                ? `Tron confirmed a return of ${r.tronRefund.returnedSun} sun to ${r.tronRefund.recipient} for this deposit.`
+                : r.refundTxHash
+                  ? "The provider reports a refund. Check the refund transaction on the source chain."
+                  : r.status === "failed"
+                    ? "Uwaa, that one failed. Check the source tx."
+                    : "Still in flight, I'm watching the arrival gate~",
       }),
     ),
   );
@@ -843,6 +955,1061 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       "Chain id where CoW runs: 1 Ethereum, 8453 Base, 42161 Arbitrum, 137 Polygon, 56 BNB, 43114 Avalanche, 59144 Linea",
     );
 
+  server.registerTool(
+    "quote_gas_in_token",
+    {
+      title: "Quote Base Sepolia payment gas in USDC",
+      description:
+        "Supply the sponsored payment quoteId to retrieve its reviewed USDC gas cap, paymaster, gas limits and expiry. Omit quoteId for live caps for delegated USDC, swap or setup, and Circle forwarding. Amounts are integer micro-USDC.",
+      inputSchema: z.object({ chainId: z.literal(84532), quoteId: z.uuid().optional() }),
+      annotations: ro,
+    },
+    safe(async (a) => api.paymentGasQuote(a)),
+  );
+  server.registerTool(
+    "check_7702_delegation",
+    {
+      title: "Inspect Base Sepolia account delegation",
+      description:
+        "Inspect existing and proposed delegation at one block, compare the delegate address and runtime hash to the tested implementation, and return revocation details.",
+      inputSchema: z.object({
+        chainId: z.literal(84532),
+        sender: evm,
+        proposedDelegate: evm.optional(),
+      }),
+      annotations: ro,
+    },
+    safe(async (a) => api.checkDelegation(a)),
+  );
+  const fundingAddresses = z
+    .object({
+      evm: evm.optional(),
+      solana: z.string().min(32).max(44).optional(),
+      bitcoin: z.string().min(14).max(90).optional(),
+      tron: z
+        .string()
+        .regex(/^T[1-9A-HJ-NP-Za-km-z]{33}$/)
+        .optional(),
+    })
+    .strict()
+    .refine((v) => Object.values(v).some(Boolean));
+  server.registerTool(
+    "quote_payment",
+    {
+      title: "Quote an exact USDC payment",
+      description:
+        "For chainId solana:devnet, provide a Solana sender for a local transfer, sourceChainId 84532 and an EVM sender for Circle forwarding, or fundingAddresses.solana and/or fundingAddresses.evm to compare the two. Amounts are integer micro-USDC. For an Optimism-wide funding comparison, supply fundingAddresses with the available evm, solana, bitcoin or tron addresses in place of sender. Native Tron source chain 728126428 estimates deposit, energy and bandwidth costs in sun. Bitcoin source chain 8253038 quotes deposit and miner fees in satoshis for destination chain 10. For a read-only Solana SOL or USDC funding quote use sourceChainId 792703809, the Solana sender, and destination chainId 10. Base Sepolia quotes include the USDC gas limit and WETH spend cap. For Optimism use the ordinary same-chain send flow. Explicit mainnet Across quotes are read-only. For Optimism Sepolia omit sourceChainId to compare local USDC, Across, and Circle forwarding by available USDC and estimated origin ETH fees. For an Across USDC quote from Base to Optimism use sourceChainId 8453 and chainId 10. For their Sepolia testnets use 84532 and 11155420. Origin ETH gas is separate and destination settlement is asynchronous.",
+      inputSchema: z
+        .object({
+          savedId: z
+            .uuid()
+            .optional()
+            .describe(
+              "On payment-enabled deployments, pass only a previously issued quoteId or comparison reviewId to retrieve its original terms before expiry.",
+            ),
+          chainId: z
+            .union([
+              z.literal(84532),
+              z.literal(10),
+              z.literal(11155420),
+              z.literal("solana:devnet"),
+            ])
+            .optional(),
+          sourceChainId: z
+            .union([
+              z.literal(8453),
+              z.literal(84532),
+              z.literal(10),
+              z.literal(11155420),
+              z.literal(792703809),
+              z.literal(8253038),
+              z.literal(728126428),
+            ])
+            .optional(),
+          fundingAddresses: fundingAddresses.optional(),
+          walletMethodsByChain: PaymentWalletMethods.optional().describe(
+            "Signing methods supported on each origin chain when comparing funding routes.",
+          ),
+          walletCapabilities: PaymentWalletCapabilities.optional().describe(
+            "Base Sepolia wallet_getCapabilities result when comparing atomic funding routes to Optimism Sepolia.",
+          ),
+          feePayer: z
+            .string()
+            .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+            .optional()
+            .describe("Optional second signer paying SOL fees for a local Solana devnet transfer."),
+          sourceMint: z
+            .string()
+            .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+            .optional()
+            .describe(
+              "Solana mint for an individual funding quote. Omit to discover SPL Token holdings.",
+            ),
+          sender: z
+            .union([
+              evm,
+              z.string().regex(/^(?:bc1[0-9a-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/),
+              z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+            ])
+            .optional(),
+          provider: z
+            .literal("circle_cctp")
+            .optional()
+            .describe(
+              "Quote Circle forwarding from Base Sepolia (84532) to Optimism Sepolia (11155420). Fees are paid up front in source USDC.",
+            ),
+          recipient: z.union([evm, z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)]).optional(),
+          amountMicroUsdc: z
+            .string()
+            .regex(/^[1-9][0-9]{0,37}$/)
+            .optional(),
+        })
+        .strict()
+        .refine(
+          (a) =>
+            a.savedId
+              ? Object.keys(a).length === 1
+              : Boolean(
+                  (!a.walletCapabilities || (a.chainId === 11155420 && !!a.walletMethodsByChain)) &&
+                    (!a.walletMethodsByChain ||
+                      (a.chainId === "solana:devnet" && !!a.fundingAddresses) ||
+                      (a.chainId === 11155420 &&
+                        !a.provider &&
+                        (!a.sourceChainId || a.sourceChainId === 84532))) &&
+                    (!a.feePayer || (a.chainId === "solana:devnet" && !a.sourceChainId)) &&
+                    a.chainId &&
+                    a.recipient &&
+                    a.amountMicroUsdc &&
+                    (a.fundingAddresses
+                      ? (a.chainId === 10 || a.chainId === "solana:devnet") &&
+                        !a.sender &&
+                        !a.sourceMint &&
+                        !a.sourceChainId &&
+                        !a.provider
+                      : a.sender),
+                ),
+          "Supply a complete payment intent or a savedId alone.",
+        ),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    safe(async (a) =>
+      a.savedId
+        ? api.savedPaymentQuote(a.savedId)
+        : api.paymentQuote({
+            ...a,
+            ...(a.walletMethodsByChain && a.chainId === 11155420 && a.sourceChainId === 84532
+              ? { compareProviders: true }
+              : {}),
+          }),
+    ),
+  );
+  async function buildAtomicOrigin(quoteId: string) {
+    const [review, built] = await Promise.all([
+      api.savedPaymentQuote(quoteId),
+      api.crossPaymentBuild({ quoteId, stage: "atomic_origin" }),
+    ]);
+    return atomicWalletPayment(quoteId, review, built);
+  }
+  server.registerTool(
+    "build_7702_bundle",
+    {
+      title: "Build a simulated Base Sepolia payment",
+      description:
+        "Build the exact quoted payment by quoteId. Returns an unsigned EntryPoint v0.8 operation after paymaster and bundler simulation. Fresh accounts require the sender's chain-specific delegation authorization. The sender signs locally. Supply walletCapabilities from wallet_getCapabilities for a reviewed atomic Circle or Across origin to obtain its verified EIP-5792 wallet request.",
+      inputSchema: z.object({
+        quoteId: z.uuid(),
+        walletCapabilities: PaymentWalletCapabilities.optional(),
+        authorization: z
+          .object({
+            chainId: z.literal(84532),
+            address: evm,
+            nonce: z.number().int().nonnegative().safe(),
+            yParity: z.union([z.literal(0), z.literal(1)]),
+            r: z.string().regex(/^0x[0-9a-f]{64}$/i),
+            s: z.string().regex(/^0x[0-9a-f]{64}$/i),
+          })
+          .optional(),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    safe(async (a) => {
+      if (!a.walletCapabilities) return api.paymentBuild(a);
+      if (a.authorization || a.walletCapabilities["0x14a34"]?.atomic?.status !== "supported")
+        throw new UserError(
+          "An atomic origin requires an already delegated Base Sepolia wallet with atomic support.",
+        );
+      return buildAtomicOrigin(a.quoteId);
+    }),
+  );
+  server.registerTool(
+    "verify_bundle",
+    {
+      title: "Verify a Base Sepolia payment before signing",
+      description:
+        "Recheck an unsigned payment against its reviewed quote. Verifies the operation hash, exact batch, approval and fee limits, current delegation and fresh bundler simulation. Supply the same authorization used at build for a first payment. To verify an EIP-5792 bridge batch, provide only quoteId and walletRequest.",
+      inputSchema: z
+        .object({
+          quoteId: z.uuid(),
+          walletRequest: atomicWalletRequest.optional(),
+          userOpHash: z
+            .string()
+            .regex(/^0x[0-9a-f]{64}$/i)
+            .optional(),
+          userOperation: z.record(z.string(), z.unknown()).optional(),
+          authorization: z.record(z.string(), z.unknown()).optional(),
+        })
+        .strict()
+        .refine((a) =>
+          a.walletRequest
+            ? !(a.authorization || a.userOperation || a.userOpHash)
+            : Boolean(a.userOpHash && a.userOperation),
+        ),
+      annotations: ro,
+    },
+    safe(async (a) => {
+      if (!a.walletRequest) return api.verifyBundle(a);
+      const b = await buildAtomicOrigin(a.quoteId);
+      if (!isDeepStrictEqual(a.walletRequest, b.walletRequest))
+        throw new UserError("Wallet batch differs from the simulated quote.");
+      return {
+        quoteId: b.quoteId,
+        expiresAt: b.expiresAt,
+        originSimulation: b.originSimulation,
+        estimatedOriginFeeWei: b.estimatedOriginFeeWei,
+        ...b.verification,
+      };
+    }),
+  );
+  server.registerTool(
+    "pay",
+    {
+      title: "Prepare an exact USDC payment for wallet review",
+      description:
+        "For a direct Solana devnet USDC payment, use chainId solana:devnet and Solana addresses. After review pass its quoteId to prepare the checked wallet transaction. For one Optimism payment request across holdings, provide intent.fundingAddresses in place of sender and inspect recommended and sources. For a read-only native TRX quote use sourceChainId 728126428, a Tron sender and destination chainId 10. For a read-only Bitcoin funding quote use sourceChainId 8253038, a Bitcoin sender and destination chainId 10. For read-only Solana funding quotes use sourceChainId 792703809, the Solana sender and destination chainId 10. Request a payment review with the destination chain, sender, recipient and exact micro-USDC amount. Base Sepolia checks local USDC and WETH for a paymaster-backed payment. Optimism Sepolia compares local USDC with Base Sepolia USDC via Across or Circle forwarding. For Optimism Sepolia, pass the caller's walletMethodsByChain with the intent to compare compatible routes. After review, pass its reviewId and destination chain to build the recommended route. For a simulated Circle sponsoredOrigin, use its nested quoteId, destination chain 11155420 and stage sponsored_origin to build and verify the payment. After review, pass the chosen quoteId and destination chain to build an unsigned action. For a bridge approval, wait for its receipt before requesting after_approval. Omitting stage builds the execution method used for the route estimate. The comparison identifies it as recommendedStage. First-time Base Sepolia paymaster payments require a signed delegation. Optimism mainnet returns a direct quote only. Mainnet builds are disabled.",
+      inputSchema: z
+        .object({
+          chainId: z.union([
+            z.literal(84532),
+            z.literal(10),
+            z.literal(11155420),
+            z.literal("solana:devnet"),
+          ]),
+          intent: z
+            .object({
+              fundingAddresses: fundingAddresses.optional(),
+              feePayer: z
+                .string()
+                .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+                .optional()
+                .describe(
+                  "Optional second signer paying SOL fees for a local Solana devnet transfer.",
+                ),
+              sourceMint: z
+                .string()
+                .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+                .optional()
+                .describe(
+                  "Solana mint for an individual funding quote. Omit to discover SPL Token holdings.",
+                ),
+              sender: z
+                .union([
+                  evm,
+                  z.string().regex(/^(?:bc1[0-9a-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/),
+                  z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+                ])
+                .optional(),
+              recipient: z.union([evm, z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)]),
+              amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              provider: z
+                .literal("circle_cctp")
+                .optional()
+                .describe(
+                  "Use Circle forwarding with sourceChainId 84532 and destination chainId 11155420.",
+                ),
+              sourceChainId: z
+                .union([
+                  z.literal(8453),
+                  z.literal(84532),
+                  z.literal(11155420),
+                  z.literal(10),
+                  z.literal(792703809),
+                  z.literal(8253038),
+                  z.literal(728126428),
+                ])
+                .optional()
+                .describe(
+                  "Quote only this source chain. Omit to compare supported funding routes.",
+                ),
+            })
+            .strict()
+            .optional(),
+          senderSignedTransaction: z.string().base64().max(1644).optional(),
+          reviewId: z
+            .uuid()
+            .optional()
+            .describe(
+              "Build the recommended route from this saved Optimism Sepolia or Solana devnet comparison.",
+            ),
+          walletCapabilities: PaymentWalletCapabilities.optional().describe(
+            "Result of wallet_getCapabilities for the signing account. A supported Base Sepolia atomic capability can use wallet_sendCalls for an Across or Circle atomic origin.",
+          ),
+          walletMethodsByChain: PaymentWalletMethods.optional().describe(
+            "Caller-supported signing methods by origin chain for Optimism Sepolia or Solana devnet funding comparisons. Omitted chains are unavailable.",
+          ),
+          quoteId: z.uuid().optional(),
+          stage: z
+            .enum(["initial", "after_approval", "atomic_origin", "sponsored_origin"])
+            .optional(),
+          authorization: z
+            .object({
+              chainId: z.literal(84532),
+              address: evm,
+              nonce: z.number().int().nonnegative().safe(),
+              yParity: z.union([z.literal(0), z.literal(1)]),
+              r: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              s: z.string().regex(/^0x[0-9a-f]{64}$/i),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict()
+        .refine(
+          (a) =>
+            [a.intent, a.reviewId, a.quoteId].filter(Boolean).length === 1 &&
+            (!a.senderSignedTransaction ||
+              (a.chainId === "solana:devnet" && a.quoteId && !a.stage)) &&
+            (!a.intent?.feePayer || (a.chainId === "solana:devnet" && !a.intent.sourceChainId)) &&
+            (!a.reviewId || a.chainId === 11155420 || a.chainId === "solana:devnet") &&
+            (!a.walletCapabilities ||
+              (a.chainId === 11155420 &&
+                (!a.intent || (!!a.walletMethodsByChain && !a.intent.provider)))) &&
+            (!a.walletMethodsByChain ||
+              (a.chainId === "solana:devnet" && Boolean(a.intent?.fundingAddresses)) ||
+              (!!a.intent &&
+                a.chainId === 11155420 &&
+                !a.intent.provider &&
+                (!a.intent.sourceChainId || a.intent.sourceChainId === 84532))) &&
+            (!a.intent ||
+              (a.intent.fundingAddresses
+                ? (a.chainId === 10 || a.chainId === "solana:devnet") &&
+                  !a.intent.sender &&
+                  !a.intent.provider &&
+                  !a.intent.sourceChainId &&
+                  !a.intent.sourceMint
+                : Boolean(a.intent.sender))) &&
+            (!a.stage || (a.quoteId && a.chainId !== 84532)) &&
+            (!a.authorization ||
+              (a.quoteId &&
+                (a.chainId === 84532 ||
+                  (a.chainId === 11155420 && a.stage === "sponsored_origin")))),
+          "Supply a payment intent or a reviewed quote ID with its chain-specific build arguments.",
+        ),
+      annotations: ro,
+    },
+    safe(async (a) => {
+      if (a.intent)
+        return api.paymentQuote({
+          ...a.intent,
+          ...(a.walletCapabilities ? { walletCapabilities: a.walletCapabilities } : {}),
+          ...(a.walletMethodsByChain ? { walletMethodsByChain: a.walletMethodsByChain } : {}),
+          chainId: a.chainId,
+          ...(a.chainId === 11155420 && a.intent.sourceChainId === 84532 && !a.intent.provider
+            ? { compareProviders: true }
+            : {}),
+        });
+      if (a.chainId === "solana:devnet") {
+        let selected:
+          | {
+              sender: string;
+              recipient: string;
+              amountMicroUsdc: string;
+              feePayer: string | undefined;
+            }
+          | undefined;
+        if (a.reviewId) {
+          const comparison = z
+            .object({
+              reviewId: z.literal(a.reviewId),
+              chainId: z.literal("solana:devnet"),
+              recipient: z.string(),
+              amountMicroUsdc: z.string(),
+              recommendedQuoteId: z.uuid(),
+              expiresAt: z.number().gt(Date.now() / 1000),
+              routes: z.array(
+                z.object({
+                  quoteId: z.uuid().optional(),
+                  sender: z.string(),
+                  feePayer: z.string().optional(),
+                  walletCompatible: z.boolean().optional(),
+                  execution: z.string(),
+                }),
+              ),
+            })
+            .safeParse(await api.savedPaymentQuote(a.reviewId));
+          if (!comparison.success)
+            throw new UserError("No current executable Solana recommendation.");
+          const q = comparison.data,
+            route = q.routes.find(
+              (r) =>
+                r.walletCompatible !== false &&
+                r.quoteId === q.recommendedQuoteId &&
+                r.execution.startsWith("unsigned_"),
+            );
+          if (!route) throw new UserError("Selected funding route is unavailable.");
+          a.quoteId = q.recommendedQuoteId;
+          selected = {
+            sender: route.sender,
+            feePayer: route.feePayer,
+            recipient: q.recipient,
+            amountMicroUsdc: q.amountMicroUsdc,
+          };
+        }
+        if (!a.quoteId) throw new UserError("Supply the Solana payment quote ID.");
+        const {
+          solanaDevnetIntent,
+          devnetTransfer,
+          devnetSources,
+          circleDevnetIntent,
+          solanaForwardBurn,
+        } = await import("@swapchan/shared/solana-payment");
+        const review = await api.savedPaymentQuote(a.quoteId);
+        if (selected) {
+          const intent = z
+            .object({
+              sender: z.string(),
+              recipient: z.string(),
+              amountMicroUsdc: z.string(),
+              feePayer: z.string().optional(),
+            })
+            .parse(review.intent ?? review);
+          if (
+            intent.feePayer !== selected.feePayer ||
+            intent.sender !== selected.sender ||
+            intent.recipient !== selected.recipient ||
+            intent.amountMicroUsdc !== selected.amountMicroUsdc
+          )
+            throw new UserError("Selected quote differs from the funding comparison.");
+        }
+        if (review.provider === "circle_cctp") {
+          if (a.senderSignedTransaction)
+            throw new UserError("A Circle origin requires an EVM signature.");
+          if (a.stage && !["initial", "after_approval"].includes(a.stage))
+            throw new UserError("Use initial or after_approval for a Solana destination.");
+          const terms = z
+            .object({
+              ...circleDevnetIntent.shape,
+              quoteId: z.literal(a.quoteId),
+              signedQuote: z.string().regex(/^0x(?:[a-f0-9]{2})+$/i),
+              burnDataHash: z.string(),
+              maxInputMicroUsdc: z.string().regex(/^[1-9]\d*$/),
+              expiresAt: z.number(),
+              execution: z.literal("unsigned_origin_steps"),
+              originGas: z.object({ estimate: z.object({ totalWei: z.string().regex(/^\d+$/) }) }),
+              sourceWallet: z.object({ requiredApprovalMicroUsdc: z.string() }),
+            })
+            .parse(review);
+          const build = await api.crossPaymentBuild({
+            quoteId: a.quoteId,
+            stage: a.stage ?? "initial",
+          });
+          const checked = z
+            .object({
+              quoteId: z.literal(a.quoteId),
+              expiresAt: z.number().gt(Date.now() / 1000),
+              action: z.enum(["approve", "burn"]),
+              estimatedOriginFeeWei: z.string().regex(/^\d+$/),
+              originSimulation: z.object({ status: z.literal("succeeded") }),
+              unsignedTransaction: z.object({
+                chainId: z.literal(84532),
+                from: evm,
+                to: evm,
+                value: z.literal("0x0"),
+                data: z.string(),
+              }),
+            })
+            .parse(build);
+          const burn = solanaForwardBurn(terms, terms.signedQuote as `0x${string}`);
+          const approval = checked.action === "approve";
+          const input = approval
+            ? encodeFunctionData({
+                abi: erc20Abi,
+                functionName: "approve",
+                args: [circleMessenger, BigInt(terms.maxInputMicroUsdc)],
+              })
+            : burn;
+          const tx = checked.unsignedTransaction;
+          if (
+            terms.expiresAt < checked.expiresAt ||
+            BigInt(checked.estimatedOriginFeeWei) > BigInt(terms.originGas.estimate.totalWei) ||
+            (approval &&
+              (terms.sourceWallet.requiredApprovalMicroUsdc !== terms.maxInputMicroUsdc ||
+                a.stage === "after_approval")) ||
+            keccak256(burn) !== terms.burnDataHash ||
+            tx.from.toLowerCase() !== terms.sender.toLowerCase() ||
+            tx.to.toLowerCase() !==
+              (approval ? paymentContracts.usdc : circleMessenger).toLowerCase() ||
+            tx.data.toLowerCase() !== input.toLowerCase()
+          )
+            throw new UserError("Circle build differs from the reviewed Solana payment.");
+          return {
+            ...checked,
+            receiptReference: {
+              chainId: terms.chainId,
+              sourceChainId: terms.sourceChainId,
+              sender: terms.sender,
+              recipient: terms.recipient,
+              amountMicroUsdc: terms.amountMicroUsdc,
+              maxInputMicroUsdc: terms.maxInputMicroUsdc,
+              burnDataHash: terms.burnDataHash,
+            },
+            walletRequest: {
+              method: "eth_sendTransaction",
+              params: [{ ...tx, chainId: "0x14a34" }],
+            },
+            next: approval
+              ? {
+                  after: "successful_approval_receipt",
+                  tool: "pay",
+                  arguments: { chainId: a.chainId, quoteId: a.quoteId, stage: "after_approval" },
+                }
+              : {
+                  tool: "payment_status",
+                  arguments: { circleSolana: { quoteId: a.quoteId } },
+                  addTransactionHashAt: "circleSolana.originHash",
+                },
+          };
+        }
+        if (a.stage) throw new UserError("A direct Solana payment has no bridge stage.");
+        const saved = z
+          .object({
+            quoteId: z.literal(a.quoteId),
+            intent: solanaDevnetIntent,
+            sources: devnetSources.optional(),
+            blockhash: z.string(),
+            expiresAt: z.number(),
+            feeLamports: z.number().int().safe().positive(),
+            rentLamports: z.number().int().safe().nonnegative(),
+          })
+          .parse(review);
+        const built = await api.devnetBuild(a.quoteId);
+        const tx = devnetTransfer(
+          saved.intent,
+          saved.blockhash,
+          saved.rentLamports > 0,
+          saved.sources,
+        ).transaction;
+        const bytes = Buffer.from(tx.serialize()).toString("base64");
+        if (
+          built.quoteId !== a.quoteId ||
+          saved.expiresAt <= Date.now() / 1000 ||
+          bytes !== built.serialized ||
+          built.feeLamports !== saved.feeLamports ||
+          built.rentLamports !== saved.rentLamports
+        )
+          throw new UserError("Solana transaction differs from review.");
+        const payer = saved.intent.feePayer;
+        let payload = bytes;
+        if (a.senderSignedTransaction) {
+          if (!payer) throw new UserError("This payment requires only one signer.");
+          const signed = Buffer.from(a.senderSignedTransaction, "base64");
+          const senderKey = tx.message.staticAccountKeys[1];
+          if (
+            !senderKey ||
+            senderKey.toBase58() !== saved.intent.sender ||
+            signed.length !== tx.serialize().length ||
+            signed[0] !== 2 ||
+            signed.subarray(1, 65).some((b) => b !== 0) ||
+            !signed.subarray(129).equals(tx.message.serialize())
+          )
+            throw new UserError("Partially signed transaction differs from the review.");
+          const key = createPublicKey({
+            key: Buffer.concat([
+              Buffer.from("302a300506032b6570032100", "hex"),
+              senderKey.toBuffer(),
+            ]),
+            format: "der",
+            type: "spki",
+          });
+          if (!verifySignature(null, tx.message.serialize(), key, signed.subarray(65, 129)))
+            throw new UserError("Invalid token owner's signature.");
+          payload = a.senderSignedTransaction;
+        }
+        if (payer && !a.senderSignedTransaction)
+          return {
+            ...saved,
+            walletRequest: {
+              feature: "solana:signTransaction",
+              chain: saved.intent.chainId,
+              accountAddress: saved.intent.sender,
+              transactionBase64: bytes,
+            },
+            next: {
+              tool: "pay",
+              arguments: { chainId: a.chainId, quoteId: a.quoteId },
+              addSignedTransactionBase64At: "senderSignedTransaction",
+            },
+          };
+        return {
+          ...saved,
+          walletRequest: {
+            feature: "solana:signAndSendTransaction",
+            chain: saved.intent.chainId,
+            accountAddress: payer ?? saved.intent.sender,
+            transactionBase64: payload,
+          },
+          next: {
+            tool: "payment_status",
+            arguments: { solanaDevnet: { quoteId: a.quoteId } },
+            addBase58SignatureAt: "solanaDevnet.signature",
+          },
+        };
+      }
+      if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
+      let quoteId = a.quoteId;
+      let stage = a.stage;
+      let useWalletBatch = a.walletCapabilities?.["0x14a34"]?.atomic?.status === "supported";
+      if (a.reviewId) {
+        const selected = z
+          .object({
+            reviewId: z.literal(a.reviewId),
+            recommendedQuoteId: z.uuid(),
+            routes: z.array(
+              z.object({
+                quoteId: z.uuid(),
+                chainId: z.literal(11155420),
+                walletCompatible: z.boolean().optional(),
+                requiredWalletMethod: z.string().optional(),
+                execution: z.string(),
+                expiresAt: z.number(),
+                recommendedStage: z
+                  .enum(["initial", "atomic_origin", "sponsored_origin"])
+                  .nullable(),
+              }),
+            ),
+          })
+          .safeParse(await api.savedPaymentQuote(a.reviewId));
+        if (!selected.success)
+          throw new UserError("No recommended route in this saved comparison.");
+        const route = selected.data.routes.find(
+          (r) => r.quoteId === selected.data.recommendedQuoteId,
+        );
+        if (
+          !route ||
+          !route.recommendedStage ||
+          route.walletCompatible === false ||
+          route.execution === "quote_only" ||
+          route.expiresAt <= Date.now() / 1000
+        )
+          throw new UserError("The recommended route is unavailable. Request a fresh comparison.");
+        quoteId = route.quoteId;
+        stage = route.recommendedStage;
+        if (route.requiredWalletMethod) {
+          if (
+            route.requiredWalletMethod === "wallet_sendCalls" &&
+            a.walletCapabilities &&
+            !useWalletBatch
+          )
+            throw new UserError("Wallet atomic capability changed. Request a fresh comparison.");
+          useWalletBatch = route.requiredWalletMethod === "wallet_sendCalls";
+        }
+      }
+      let sponsored = false;
+      if (a.chainId === 11155420 && (!stage || stage === "sponsored_origin")) {
+        const review = await api.savedPaymentQuote(quoteId!);
+        sponsored = z
+          .object({
+            chainId: z.literal(84532),
+            circle: z.object({ destinationChainId: z.literal(11155420) }),
+          })
+          .safeParse(review).success;
+        if (!sponsored && stage === "sponsored_origin")
+          throw new UserError("Expected a sponsored Circle quote for Optimism Sepolia.");
+      }
+      if (a.chainId !== 84532 && !sponsored) {
+        const built = await api.crossPaymentBuild({
+          quoteId: quoteId,
+          ...(stage ? { stage: stage } : {}),
+        });
+        const result = z
+          .object({
+            quoteId: z.literal(quoteId!),
+            action: z.enum(["transfer", "approve", "deposit", "atomic_origin", "burn"]),
+            expiresAt: z
+              .number()
+              .int()
+              .gt(Date.now() / 1000),
+            originSimulation: z.object({ status: z.literal("succeeded") }),
+            estimatedOriginFeeWei: z.string().regex(/^\d+$/),
+            unsignedTransaction: z.object({
+              chainId: z.number().int(),
+              from: evm,
+              to: evm,
+              value: z.literal("0x0"),
+              data: z.string().regex(/^0x(?:[a-f0-9]{2}){4,}$/i),
+            }),
+          })
+          .safeParse(built);
+        if (!result.success)
+          throw new UserError("Payment build is invalid or expired. Request a fresh quote.");
+        const { action, unsignedTransaction } = result.data;
+        const sourceChainId = action === "transfer" ? a.chainId : 84532;
+        if (
+          unsignedTransaction.chainId !== sourceChainId ||
+          (stage === "after_approval" && action !== "deposit" && action !== "burn") ||
+          (stage === "atomic_origin" && action !== "atomic_origin") ||
+          (stage === "initial" && action === "atomic_origin")
+        )
+          throw new UserError("Payment build returned an unexpected chain or action.");
+        const reviewed = await api.savedPaymentQuote(result.data.quoteId);
+        if (action === "atomic_origin" && useWalletBatch)
+          return atomicWalletPayment(result.data.quoteId, reviewed, result.data);
+        const next = checkPaymentRoute(reviewed, result.data);
+        return {
+          ...result.data,
+          walletRequest: {
+            method: "eth_sendTransaction",
+            params: [{ ...unsignedTransaction, chainId: "0x" + sourceChainId.toString(16) }],
+          },
+          next,
+        };
+      }
+      const args = {
+        quoteId: quoteId,
+        ...(a.authorization ? { authorization: a.authorization } : {}),
+      };
+      const built = await api.paymentBuild({ ...args, prepareDelegation: !a.authorization });
+      if (built.status === "delegation_required") {
+        const saved = await api.savedPaymentQuote(quoteId!);
+        const pending = z
+          .object({
+            quoteId: z.literal(quoteId!),
+            delegation: z.object({
+              chainId: z.literal(84532),
+              sender: evm,
+              accountType: z.literal("undelegated"),
+              proposed: z.object({
+                known: z.literal(true),
+                address: z.literal(paymentContracts.delegate),
+              }),
+            }),
+            authorization: z
+              .object({
+                chainId: z.literal(84532),
+                address: z.literal(paymentContracts.delegate),
+                nonce: z.string().regex(/^(0|[1-9][0-9]*)$/),
+              })
+              .strict(),
+          })
+          .parse(built);
+        if (
+          a.authorization ||
+          Boolean(saved.circle) !== sponsored ||
+          saved.quoteId !== quoteId ||
+          saved.chainId !== 84532 ||
+          saved.requiresDelegation !== true ||
+          String(saved.sender).toLowerCase() !== pending.delegation.sender.toLowerCase() ||
+          typeof saved.expiresAt !== "number" ||
+          saved.expiresAt <= Date.now() / 1000 ||
+          !Number.isSafeInteger(Number(pending.authorization.nonce))
+        )
+          throw new UserError("Delegation request differs from the reviewed payment.");
+        return {
+          status: "delegation_required",
+          sender: saved.sender,
+          authorization: { ...pending.authorization, nonce: Number(pending.authorization.nonce) },
+          payment: {
+            destinationChainId: a.chainId,
+            recipient: saved.recipient,
+            amountMicroUsdc: saved.amountMicroUsdc,
+            maxGasMicroUsdc: saved.maxGasMicroUsdc,
+            maxWethWei: saved.maxWethWei,
+            wrapNativeWei: saved.wrapNativeWei ?? "0",
+          },
+          permission: paymentDelegationNotice.permission,
+          howToRevoke: paymentDelegationNotice.revoke,
+          signingInstruction:
+            "Use the sender's wallet to sign this EIP-7702 authorization for Base Sepolia.",
+          next: {
+            tool: "pay",
+            arguments: {
+              chainId: a.chainId,
+              quoteId,
+              ...(sponsored ? { stage: "sponsored_origin" } : {}),
+            },
+            addWalletResultAt: "authorization",
+          },
+        };
+      }
+      if (
+        (!sponsored && z.object({ circle: z.object({}) }).safeParse(built.quote).success) ||
+        built.quoteId !== quoteId ||
+        !built.userOperation ||
+        !built.userOpHash
+      )
+        throw new UserError("Payment build differs from the reviewed quote.");
+      const verification = await api.verifyBundle({
+        ...args,
+        userOperation: built.userOperation,
+        userOpHash: built.userOpHash,
+      });
+      if (
+        verification.status !== "verified" ||
+        verification.quoteId !== quoteId ||
+        verification.userOpHash !== built.userOpHash ||
+        typeof verification.expiresAt !== "number" ||
+        verification.expiresAt <= Date.now() / 1000 ||
+        !verification.typedData
+      )
+        throw new UserError("Bundle verification failed. Request a fresh payment review.");
+      const saved = await api.savedPaymentQuote(quoteId!);
+      if (
+        saved.quoteId !== quoteId ||
+        saved.chainId !== 84532 ||
+        Boolean(saved.circle) !== sponsored ||
+        !isAddress(String(saved.sender))
+      )
+        throw new UserError("Saved signing intent differs from the payment.");
+      const local = paymentSignatureRequest(
+        saved as unknown as PaymentQuote,
+        built.userOperation,
+        String(built.userOpHash),
+        a.authorization as SignedAuthorization | undefined,
+      );
+      const payment = saved as unknown as PaymentQuote;
+      const blockToolsArgs = [
+        "base-sepolia-payment",
+        "build.json",
+        payment.sender,
+        payment.recipient,
+        payment.amountMicroUsdc,
+        payment.maxWethWei,
+        payment.maxGasMicroUsdc,
+        ...(payment.circle
+          ? ["--circle", payment.circle.maxInputMicroUsdc, payment.circle.burnDataHash]
+          : []),
+        ...(BigInt(payment.wrapNativeWei ?? "0") > 0n ? ["--wrap", payment.wrapNativeWei!] : []),
+      ];
+      const payload = paymentWalletPayload(local, String(built.userOpHash));
+      const { typedData: verifiedTypedData, ...checks } = verification;
+      return {
+        ...built,
+        typedData: JSON.parse(payload),
+        verification: checks,
+        blockTools: {
+          executable: "tx-sign",
+          inspectArgs: [...blockToolsArgs, "--inspect"],
+          signArgs: blockToolsArgs,
+          buildFile: {
+            quote: payment,
+            entryPoint: built.entryPoint,
+            userOperation: built.userOperation,
+            userOpHash: built.userOpHash,
+          },
+        },
+        walletRequest: { method: "eth_signTypedData_v4", params: [saved.sender, payload] },
+        next: {
+          tool: "submit_payment",
+          arguments: { quoteId, userOpHash: built.userOpHash },
+          addWalletResultAt: "signature",
+        },
+      };
+    }),
+  );
+  server.registerTool(
+    "submit_payment",
+    {
+      title: "Relay a signed Base Sepolia payment",
+      description:
+        "Submit the previously simulated operation exactly as signed by the sender. Requires the quote ID, operation hash and the wallet's EIP-712 signature. Returns the operation hash for payment_status.",
+      inputSchema: z.object({
+        quoteId: z.uuid(),
+        userOpHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+        signature: z.string().regex(/^0x[0-9a-f]{130}$/i),
+      }),
+      annotations: { readOnlyHint: false, openWorldHint: true },
+    },
+    safe(async (a: { quoteId: string; userOpHash: string; signature: string }) =>
+      api.paymentSubmit(a),
+    ),
+  );
+  const walletBatchReceipt = z.object({
+    id: z.string().min(1),
+    chainId: z.literal("0x14a34"),
+    atomic: z.boolean(),
+    status: z.number().int(),
+    receipts: z
+      .array(
+        z.object({
+          status: z.string(),
+          transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+        }),
+      )
+      .optional(),
+  });
+  server.registerTool(
+    "payment_status",
+    {
+      title: "Check payment settlement",
+      description:
+        "Use circleSolana with the quoteId and Base Sepolia burn hash to verify a Solana devnet payout. Use solana.reviewId from a simulated Solana funding quote to track its reviewed deposit and Optimism payout. Track a Base Sepolia payment by userOpHash, an Optimism USDC transfer with direct, an Across deposit with crossChain, or a Circle burn and mint with circle. Use the tracking arguments returned by pay and add the transaction hash. Include approvalHash for split bridge transactions to reconcile approval fees. Circle and Across settle only after the destination payout matches the reviewed intent and both receipts finalize.",
+      inputSchema: z
+        .object({
+          userOpHash: z
+            .string()
+            .regex(/^0x[0-9a-f]{64}$/i)
+            .optional(),
+          tron: z.object({ reviewId: z.uuid() }).strict().optional(),
+          circleSolana: z
+            .object({
+              quoteId: z.uuid().optional(),
+              review: z
+                .object({
+                  sender: evm,
+                  recipient: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+                  chainId: z.literal("solana:devnet"),
+                  sourceChainId: z.literal(84532),
+                  amountMicroUsdc: z.string().regex(/^[1-9]\d{0,19}$/),
+                  maxInputMicroUsdc: z.string().regex(/^[1-9]\d{0,77}$/),
+                  burnDataHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+                })
+                .strict()
+                .optional(),
+              originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              approvalHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+            })
+            .strict()
+            .refine((v) => Boolean(v.quoteId) !== Boolean(v.review))
+            .optional(),
+          solanaDevnet: z
+            .object({
+              quoteId: z.uuid(),
+              signature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/),
+            })
+            .strict()
+            .optional(),
+          solana: z.object({ reviewId: z.uuid() }).strict().optional(),
+          circle: z
+            .object({
+              originHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+              walletCallsStatus: walletBatchReceipt.optional(),
+              approvalHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+              burnDataHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              sender: evm,
+              recipient: evm,
+              amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+            })
+            .strict()
+            .refine(
+              (v) =>
+                Boolean(v.originHash) !== Boolean(v.walletCallsStatus) &&
+                !(v.approvalHash && v.walletCallsStatus),
+            )
+            .optional(),
+          direct: z
+            .object({
+              chainId: z.union([z.literal(10), z.literal(11155420)]),
+              sender: evm,
+              recipient: evm,
+              amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+            })
+            .optional(),
+          crossChain: z
+            .object({
+              sourceChainId: z.union([z.literal(8453), z.literal(84532)]),
+              chainId: z.union([z.literal(10), z.literal(11155420)]),
+              sender: evm,
+              recipient: evm,
+              amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
+              originHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+              walletCallsStatus: walletBatchReceipt.optional(),
+              reviewedDepositData: z
+                .string()
+                .regex(/^0x(?:[0-9a-f]{2})+$/i)
+                .optional(),
+              approvalHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+              fillHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+            })
+            .refine(
+              (v) =>
+                Boolean(v.originHash) !== Boolean(v.walletCallsStatus) &&
+                (!v.walletCallsStatus ||
+                  (v.sourceChainId === 84532 &&
+                    v.chainId === 11155420 &&
+                    !!v.reviewedDepositData &&
+                    !v.approvalHash)),
+            )
+            .optional(),
+        })
+        .refine(
+          (a) =>
+            [
+              a.userOpHash,
+              a.crossChain,
+              a.direct,
+              a.circle,
+              a.solana,
+              a.tron,
+              a.solanaDevnet,
+              a.circleSolana,
+            ].filter(Boolean).length === 1,
+          "Supply one payment reference",
+        ),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    safe(async (a) => {
+      if (a.crossChain || a.circle) {
+        const { walletCallsStatus: batch, ...intent } = (a.circle ?? a.crossChain)!;
+        const lookup = (originHash: string) =>
+          a.circle
+            ? api.circlePaymentStatus({ ...intent, originHash })
+            : api.crossPaymentStatus({ ...intent, originHash });
+        if (!batch) return lookup(intent.originHash!);
+        if (batch.status >= 100 && batch.status < 200)
+          return { status: "awaiting_wallet_batch", batchId: batch.id };
+        if (batch.status >= 400 && batch.status < 600)
+          return { status: "wallet_batch_failed", batchId: batch.id, walletStatus: batch.status };
+        if (
+          batch.status !== 200 ||
+          !batch.atomic ||
+          batch.receipts?.length !== 1 ||
+          BigInt(batch.receipts[0]!.status) !== 1n
+        )
+          throw new UserError(
+            "Wallet did not confirm a single successful atomic origin transaction.",
+          );
+        return lookup(batch.receipts[0]!.transactionHash);
+      }
+      if (a.circleSolana) return api.circleSolanaStatus(a.circleSolana);
+      if (a.solanaDevnet) return api.devnetStatus(a.solanaDevnet);
+      if (a.tron) return api.tronPaymentStatus(a.tron);
+      return a.solana
+        ? api.solanaPaymentStatus(a.solana)
+        : a.direct
+          ? api.directPaymentStatus(a.direct)
+          : api.paymentStatus(a.userOpHash!);
+    }),
+  );
   server.registerTool(
     "build_limit_order",
     {
@@ -1251,21 +2418,85 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
     {
       title: "Build revoke-approval tx",
       description:
-        "Unsigned transaction that sets an ERC-20 allowance to 0 (approve(spender, 0)) on an EVM chain. The user's wallet signs and sends it; SwapChan never signs. Use after check_approvals. Result includes `display` markdown with chan images: show it to the user.",
+        "Unsigned transaction that sets an ERC-20 allowance to 0 (approve(spender, 0)) on an EVM chain. The user's wallet signs and sends it; SwapChan never signs. For a Base Sepolia payment paymaster allowance, pass relayedPaymaster with owner and funded relayer. The owner signs a zero-value USDC permit. Supply the signed nonce, deadline and signature to build the relayer transaction. Use after check_approvals. Result includes `display` markdown with chan images: show it to the user.",
       inputSchema: z.object({
         chainId: chainArg,
         token: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
         spender: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+        relayedPaymaster: z
+          .object({
+            owner: evm,
+            relayer: evm,
+            signed: z
+              .object({
+                nonce: z.string().regex(/^\d+$/),
+                deadline: z.number().int().positive(),
+                signature: z.string().regex(/^0x[0-9a-f]{130}$/i),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     safe(
-      async (a: { chainId: number | string; token: string; spender: string }) =>
-        api.revokeTx(String(cid(a.chainId) ?? a.chainId), a.token, a.spender),
+      async (a) => {
+        if (a.relayedPaymaster) {
+          if (
+            Number(a.chainId) !== 84532 ||
+            a.token.toLowerCase() !== paymentContracts.usdc.toLowerCase() ||
+            a.spender.toLowerCase() !== paymentContracts.paymaster.toLowerCase()
+          )
+            throw new UserError(
+              "Relayed revocation requires the Base Sepolia USDC payment paymaster.",
+            );
+          const { owner, relayer, signed } = a.relayedPaymaster;
+          const result = await api.paymasterCleanup(a.relayedPaymaster);
+          if (
+            result.status === "already_revoked" &&
+            result.remainingMicroUsdc === "0" &&
+            !result.walletRequest
+          )
+            return result;
+          const { deadline, nonce } = z
+            .object({
+              deadline: z
+                .number()
+                .int()
+                .gt(Date.now() / 1000)
+                .max(Math.floor(Date.now() / 1000) + 300),
+              nonce: z.string().regex(/^\d+$/),
+            })
+            .parse(result);
+          const request = signed
+            ? cleanupRelayRequest(
+                owner as ViemAddress,
+                relayer as ViemAddress,
+                deadline,
+                signed.signature as `0x${string}`,
+              )
+            : cleanupOwnerRequest(owner as ViemAddress, nonce, deadline);
+          if (
+            (signed &&
+              (signed.deadline !== deadline ||
+                signed.nonce !== nonce ||
+                result.status !== "relayer_transaction_ready" ||
+                result.simulatedRemainingMicroUsdc !== "0")) ||
+            (!signed && result.status !== "owner_signature_required")
+          )
+            throw new UserError("Revocation differs from the reviewed permit.");
+          return { ...result, walletRequest: request };
+        }
+        return api.revokeTx(String(cid(a.chainId) ?? a.chainId), a.token, a.spender);
+      },
       (a) => ({
         fromChainId: cid(a.chainId),
         toChainId: cid(a.chainId),
-        says: "Here's your revoke tx. Sign it in your wallet and that spender is locked out~",
+        says: a.relayedPaymaster
+          ? "Check the current allowance and the requested signer before continuing."
+          : "Here's your revoke tx. Sign it in your wallet and that spender is locked out~",
         swapUrl: SITE,
       }),
     ),
@@ -1740,6 +2971,10 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       inputSchema: z.object({
         quoteId: z.string().optional(),
         taker: z.string().optional(),
+        recipient: addr
+          .optional()
+          .describe("Reviewed payout address when different from the signer"),
+        allowForeignRecipient: z.boolean().optional(),
         chainId: chainArg.optional(),
         from: z.string().optional(),
         to: z.string().optional(),
@@ -1753,6 +2988,8 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       async (a: {
         quoteId?: string | undefined;
         taker?: string | undefined;
+        recipient?: string | undefined;
+        allowForeignRecipient?: boolean | undefined;
         chainId?: number | string | undefined;
         from?: string | undefined;
         to?: string | undefined;
@@ -1762,24 +2999,51 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       }) => {
         if (a.quoteId) {
           if (!a.taker) throw new UserError("taker is required with quoteId");
-          const b = await api.build(a.quoteId, a.taker);
+          const b = await api.build(a.quoteId, a.taker, a.recipient, a.allowForeignRecipient);
+          if (b.verified !== true || b.quoteId !== a.quoteId || b.fallbackFrom)
+            throw new UserError("The API could not verify the selected quote for simulation.");
+          if (b.execution === "order")
+            throw new UserError(
+              "This route signs a solver order. There is no source swap transaction to simulate.",
+            );
+          if (b.execution === "nonevm" && !b.nonEvmTx)
+            throw new UserError("The selected build has no native wallet transaction to simulate.");
           if (b.nonEvmTx) {
-            const t = b.nonEvmTx as { chainId?: number; tx?: string; serialized?: string };
+            const payload = b.nonEvmTx;
+            if (payload.vm !== "svm" || b.chainId !== SOLANA)
+              throw new UserError(
+                "Source transaction simulation is available for EVM and Solana only.",
+              );
+            if (payload.kind === "svm-instructions")
+              throw new UserError(
+                "Compile the reviewed instructions in the Solana wallet, then pass the serialized transaction as tx with chainId and from.",
+              );
+            if (payload.kind !== "svm-base64" || typeof payload.data !== "string" || !payload.data)
+              throw new UserError("Missing serialized Solana transaction in the selected build.");
             return api.simulate({
-              chainId: t.chainId ?? 792703809,
+              chainId: b.chainId,
               from: a.taker,
-              tx: t.tx ?? t.serialized,
+              tx: payload.data,
+              replaceRecentBlockhash: false,
             });
           }
           const ap = b.approval;
-          const approve =
-            ap?.data && ap.data.length >= 138
-              ? {
-                  token: ap.to,
-                  spender: `0x${ap.data.slice(34, 74)}`,
-                  amount: BigInt(`0x${ap.data.slice(74, 138)}`).toString(),
-                }
-              : undefined;
+          if (
+            ap &&
+            (!/^0x095ea7b3000000000000000000000000[0-9a-f]{104}$/i.test(ap.data) ||
+              ap.chainId !== b.chainId ||
+              BigInt(ap.value) !== 0n)
+          )
+            throw new UserError(
+              "The quoted approval cannot be simulated as an exact ERC-20 approve transaction.",
+            );
+          const approve = ap
+            ? {
+                token: ap.to,
+                spender: `0x${ap.data.slice(34, 74)}`,
+                amount: BigInt(`0x${ap.data.slice(74, 138)}`).toString(),
+              }
+            : undefined;
           return api.simulate({
             chainId: b.chainId,
             from: a.taker,
@@ -1793,12 +3057,16 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           throw new UserError(
             "pass quoteId+taker, or chainId+from+to+data (EVM) / chainId+from+tx (Solana)",
           );
-        return api.simulate({ ...a, chainId: cid(a.chainId) ?? a.chainId });
+        return api.simulate({
+          ...a,
+          chainId: cid(a.chainId) ?? a.chainId,
+          ...(a.tx ? { replaceRecentBlockhash: false } : {}),
+        });
       },
       (_a, r) => ({
         ...(typeof r.chainId === "number" ? { fromChainId: r.chainId, toChainId: r.chainId } : {}),
         says: r.ok
-          ? "Simulation passed: here's exactly what moves. Safe to sign if it matches~"
+          ? "Simulation succeeded. Review the reported changes and coverage before signing."
           : `Simulation reverted: ${String(r.revertReason ?? "unknown")}. Don't sign that one!`,
         swapUrl: nx(r).swapUrl,
       }),

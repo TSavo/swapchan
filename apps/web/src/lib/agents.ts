@@ -65,6 +65,7 @@ export const TOOLS = [
   ],
   ["get_supported_tokens", "Token list per chain; any ERC-20 by address works too."],
   ["get_quote", "Best route across 0x, CoW, Velora, LI.FI, Across, Relay and Jupiter."],
+  ["compare_intents", "Compare solver orders and transaction routes by net USD received."],
   ["compare_routes", "All routes side by side: net USD, gas, fees, ETA."],
   ["build_swap_tx", "Unsigned transaction (or CoW order) for the user's wallet to sign."],
   ["get_route_status", "Track a swap or bridge until it lands."],

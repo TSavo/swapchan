@@ -293,6 +293,29 @@ export type StatusRequest = z.infer<typeof StatusRequest>;
 export const StatusResponse = z.object({
   status: z.enum(["pending", "done", "failed", "not_found"]),
   receivingTxHash: z.string().nullable(),
+  /** Provider-reported return of funds on the origin chain. */
+  refundTxHash: z.string().optional(),
+  tronRefund: z
+    .object({
+      status: z.literal("refunded"),
+      recipient: z.string(),
+      depositedSun: z.string(),
+      returnedSun: z.string(),
+    })
+    .optional(),
+  tronUsdcSettlement: z
+    .object({
+      status: z.enum(["settled", "awaiting_finality"]),
+      sourceSignatureCount: z.number().int(),
+      sourceAmountSun: z.string(),
+      sourceFeeSun: z.string().nullable(),
+      sourceBlock: z.number().int(),
+      destinationBlock: z.string(),
+      recipient: z.string(),
+      paidMicroUsdc: z.string(),
+      outboundExecutionFeeWei: z.string(),
+    })
+    .optional(),
 });
 export type StatusResponse = z.infer<typeof StatusResponse>;
 
@@ -341,7 +364,38 @@ export const toBaseUnits = (amount: string, decimals: number): bigint =>
 export const fromBaseUnits = (amount: bigint | string, decimals: number): string =>
   formatUnits(BigInt(amount), decimals);
 
+export * from "./across-payment.js";
 export * from "./broadcast.js";
 export * from "./chains.js";
+export * from "./circle-payment.js";
 export * from "./cow.js";
+export * from "./payment-batch.js";
+export * from "./payment-signing.js";
 export * from "./playbook.js";
+
+// Methods the calling wallet can actually use on each supported origin chain.
+export const PaymentWalletMethods = z
+  .object({
+    "84532": z
+      .array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4", "wallet_sendCalls"]))
+      .optional(),
+    "11155420": z.array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4"])).optional(),
+    "solana:devnet": z
+      .array(z.enum(["solana:signAndSendTransaction", "solana:signTransaction"]))
+      .optional(),
+  })
+  .strict();
+
+export const PaymentWalletCapabilities = z.record(
+  z.string(),
+  z.object({
+    atomic: z.object({ status: z.enum(["supported", "ready", "unsupported"]) }).optional(),
+  }),
+);
+
+export {
+  cleanupDomainHash,
+  cleanupOwnerRequest,
+  cleanupRelayRequest,
+  cleanupTypedData,
+} from "./payment-cleanup.js";

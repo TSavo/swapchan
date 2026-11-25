@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { NATIVE_TOKEN } from "@swapchan/shared";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { acrossTestRoute, NATIVE_TOKEN, paymentContracts, SOLANA } from "@swapchan/shared";
+import { encodeFunctionData, erc20Abi } from "viem";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SwapChanApi } from "./api.js";
 import { RateLimiter } from "./auth.js";
 import { loadConfig } from "./config.js";
+import circleBuild from "./fixtures/sponsored-circle-build.json" with { type: "json" };
 import { createHttpServer } from "./http.js";
 import { startMockApi, USDC } from "./mockApi.js";
 
@@ -51,6 +53,271 @@ const ethToUsdc = {
 };
 
 describe("swapchan mcp over streamable http", () => {
+  it("passes the selected Solana transaction bytes and blockhash through to simulation", async () => {
+    const quoteId = "solana-route";
+    const tx = "AQIDBA==";
+    const from = "11111111111111111111111111111111";
+    const build = vi.spyOn(SwapChanApi.prototype, "build").mockResolvedValue({
+      quoteId,
+      chainId: SOLANA,
+      verified: true,
+      to: USDC,
+      data: "0x",
+      value: "0",
+      execution: "nonevm",
+      nonEvmTx: { vm: "svm", kind: "svm-base64", data: tx },
+    });
+    const simulate = vi.spyOn(SwapChanApi.prototype, "simulate").mockResolvedValue({ ok: true });
+    const c = await connect();
+    try {
+      const result = await c.callTool({
+        name: "simulate_swap",
+        arguments: { quoteId, taker: from },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(simulate).toHaveBeenCalledWith({
+        chainId: SOLANA,
+        from,
+        tx,
+        replaceRecentBlockhash: false,
+      });
+    } finally {
+      build.mockRestore();
+      simulate.mockRestore();
+      await c.close();
+    }
+  });
+  it("returns the pinned first-use authorization and continuation for a fresh account", async () => {
+    const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
+    const sender = circleBuild.quote.sender;
+    const saved = vi.spyOn(SwapChanApi.prototype, "savedPaymentQuote").mockResolvedValue({
+      sender,
+      quoteId,
+      chainId: 84532,
+      requiresDelegation: true,
+      expiresAt: Date.now() / 1000 + 60,
+    });
+    const pending = {
+      status: "delegation_required",
+      quoteId,
+      delegation: {
+        chainId: 84532,
+        accountType: "undelegated",
+        sender,
+        proposed: { address: paymentContracts.delegate, known: true },
+      },
+      authorization: { chainId: 84532, address: paymentContracts.delegate, nonce: "13" },
+    };
+    const build = vi.spyOn(SwapChanApi.prototype, "paymentBuild").mockResolvedValue(pending);
+    const c = await connect();
+    const pay = () => c.callTool({ name: "pay", arguments: { chainId: 84532, quoteId } });
+    try {
+      expect(data(await pay())).toMatchObject({
+        authorization: { address: paymentContracts.delegate, nonce: 13 },
+        next: {
+          tool: "pay",
+          arguments: { chainId: 84532, quoteId },
+          addWalletResultAt: "authorization",
+        },
+      });
+      build.mockResolvedValueOnce({
+        ...pending,
+        authorization: { ...pending.authorization, address: sender },
+      });
+      expect((await pay()).isError).toBe(true);
+    } finally {
+      build.mockRestore();
+      saved.mockRestore();
+      await c.close();
+    }
+  });
+  it("returns signing data only from a fresh verification of the exact payment build", async () => {
+    const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
+    const { userOpHash, userOperation } = circleBuild;
+    const quote = { ...circleBuild.quote, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+    const saved = vi
+      .spyOn(SwapChanApi.prototype, "savedPaymentQuote")
+      .mockResolvedValue({ ...quote, quoteId });
+    const build = vi
+      .spyOn(SwapChanApi.prototype, "paymentBuild")
+      .mockResolvedValue({ quoteId, userOperation, userOpHash, quote });
+    const verified = {
+      status: "verified",
+      quoteId,
+      userOpHash,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      typedData: { source: "verification" },
+    };
+    const verify = vi.spyOn(SwapChanApi.prototype, "verifyBundle").mockResolvedValue(verified);
+    const c = await connect();
+    const pay = () =>
+      c.callTool({
+        name: "pay",
+        arguments: { chainId: 11155420, quoteId, stage: "sponsored_origin" },
+      });
+    try {
+      expect(data(await pay())).toMatchObject({
+        walletRequest: { method: "eth_signTypedData_v4" },
+        typedData: { primaryType: "PackedUserOperation" },
+        verification: { status: "verified", userOpHash },
+      });
+      expect(verify).toHaveBeenCalledWith({ quoteId, userOpHash, userOperation });
+      for (const change of [
+        { status: "failed" },
+        { expiresAt: 0 },
+        { userOpHash: "different" },
+        { typedData: null },
+      ]) {
+        verify.mockResolvedValueOnce({ ...verified, ...change });
+        const refused = await pay();
+        expect(refused.isError).toBe(true);
+        expect(text(refused)).not.toContain("typedData");
+      }
+    } finally {
+      saved.mockRestore();
+      build.mockRestore();
+      verify.mockRestore();
+      await c.close();
+    }
+  });
+  it("checks wallet batch completion before reconciling the Across receipt", async () => {
+    const client = await connect(),
+      hash = "0x" + "12".repeat(32),
+      address = "0x" + "ab".repeat(20);
+    const intent = {
+      chainId: 11155420,
+      sourceChainId: 84532,
+      sender: address,
+      recipient: address,
+      amountMicroUsdc: "1",
+      maxInputMicroUsdc: "185",
+      reviewedDepositData: "0x01020304",
+    };
+    const batch = {
+      id: "batch-17",
+      chainId: "0x14a34",
+      status: 200,
+      atomic: true,
+      receipts: [{ transactionHash: hash, status: "0x1" }],
+    };
+    const read = vi
+      .spyOn(SwapChanApi.prototype, "crossPaymentStatus")
+      .mockResolvedValue({ status: "awaiting_fill" });
+    const status = (overrides = {}) =>
+      client.callTool({
+        name: "payment_status",
+        arguments: { crossChain: { ...intent, walletCallsStatus: { ...batch, ...overrides } } },
+      });
+    try {
+      expect(data(await status({ status: 100 }))).toMatchObject({
+        status: "awaiting_wallet_batch",
+      });
+      expect((await status({ atomic: false })).isError).toBe(true);
+      expect(read).not.toHaveBeenCalled();
+      expect(data(await status())).toMatchObject({ status: "awaiting_fill" });
+      expect(read).toHaveBeenCalledWith({ ...intent, originHash: hash });
+    } finally {
+      read.mockRestore();
+      await client.close();
+    }
+  });
+  it("only returns fresh simulated Optimism payment builds for the requested stage", async () => {
+    const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
+    const address = "0x" + "12".repeat(20);
+    const approvalData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [acrossTestRoute.pool, 185n],
+    });
+    const tx = {
+      from: address,
+      to: acrossTestRoute.sourceToken,
+      chainId: 84532,
+      value: "0x0",
+      data: approvalData,
+    };
+    const deposit = {
+      quoteId,
+      action: "approve",
+      unsignedTransaction: tx,
+      estimatedOriginFeeWei: "125",
+      originSimulation: { status: "succeeded" },
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+    };
+    const build = vi.spyOn(SwapChanApi.prototype, "crossPaymentBuild").mockResolvedValue(deposit);
+    const saved = vi.spyOn(SwapChanApi.prototype, "savedPaymentQuote").mockResolvedValue({
+      quoteId,
+      chainId: 11155420,
+      sourceChainId: 84532,
+      provider: "across",
+      sender: address,
+      recipient: address,
+      execution: "unsigned_origin_steps",
+      amountMicroUsdc: "1",
+      maxInputMicroUsdc: "185",
+      expiresAt: deposit.expiresAt,
+      fillDeadline: deposit.expiresAt + 60,
+      sourceWallet: { requiredApprovalMicroUsdc: "185" },
+      originGas: { estimate: { totalWei: "125" } },
+    });
+    const client = await connect();
+    const pay = () =>
+      client.callTool({
+        name: "pay",
+        arguments: { chainId: 11155420, quoteId, stage: "initial" },
+      });
+    try {
+      expect(data(await pay())).toEqual({
+        ...deposit,
+        walletRequest: { method: "eth_sendTransaction", params: [{ ...tx, chainId: "0x14a34" }] },
+        next: {
+          tool: "pay",
+          after: "successful_approval_receipt",
+          arguments: { chainId: 11155420, quoteId, stage: "after_approval" },
+        },
+      });
+      for (const change of [
+        { action: "atomic_origin" },
+        { estimatedOriginFeeWei: "126" },
+        {
+          unsignedTransaction: {
+            ...tx,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "approve",
+              args: [acrossTestRoute.pool, 186n],
+            }),
+          },
+        },
+        { unsignedTransaction: { ...tx, chainId: 1 } },
+        { originSimulation: { status: "failed" } },
+        { quoteId: "other" },
+        { expiresAt: 0 },
+      ]) {
+        build.mockResolvedValueOnce({ ...deposit, ...change });
+        const refused = await pay();
+        expect(refused.isError).toBe(true);
+        expect(text(refused)).not.toContain("unsignedTransaction");
+      }
+    } finally {
+      saved.mockRestore();
+      build.mockRestore();
+      await client.close();
+    }
+  });
+  it("rejects a mainnet pay build before using a quote ID from any network", async () => {
+    const client = await connect();
+    try {
+      const result = await client.callTool({
+        name: "pay",
+        arguments: { chainId: 10, quoteId: "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041" },
+      });
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe("Error: Mainnet payment builds are disabled.");
+    } finally {
+      await client.close();
+    }
+  });
   it("lists Litecoin, Dogecoin and Bitcoin Cash as THORChain-only chains (send and receive)", async () => {
     const c = await connect();
     const t = text(await c.callTool({ name: "get_supported_chains", arguments: {} }));
@@ -101,11 +368,19 @@ describe("swapchan mcp over streamable http", () => {
     const { tools } = await c.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        "pay",
+        "quote_payment",
+        "quote_gas_in_token",
+        "build_7702_bundle",
+        "verify_bundle",
+        "submit_payment",
+        "payment_status",
         "build_limit_order",
         "build_swap_tx",
         "cancel_limit_order",
         "list_limit_orders",
         "compare_routes",
+        "compare_intents",
         "get_quote",
         "get_route_status",
         "get_supported_chains",
@@ -118,6 +393,7 @@ describe("swapchan mcp over streamable http", () => {
         "token_risk",
         "get_wallet_balances",
         "check_approvals",
+        "check_7702_delegation",
         "build_revoke_tx",
         "explain_transaction",
         "get_gas",
@@ -462,24 +738,35 @@ describe("swapchan mcp over streamable http", () => {
     await c.close();
   });
 
-  it("compare_routes ranks same-chain and cross-chain together", async () => {
-    const c = await connect();
-    const r = data(
-      await c.callTool({
-        name: "compare_routes",
-        arguments: { ...ethToUsdc, alsoToChainIds: [8453] },
-      }),
-    );
-    expect(r.totalFound).toBe(4);
-    expect(r.routes.map((x: { provider: string }) => x.provider)).toEqual([
-      "0x",
-      "cow",
-      "across",
-      "lifi",
-    ]);
-    expect(r.routes[2].crossChain).toBe(true);
-    await c.close();
-  });
+  it.each(["compare_routes", "compare_intents"])(
+    "%s ranks same-chain and cross-chain together",
+    async (name) => {
+      const c = await connect();
+      const r = data(
+        await c.callTool({
+          name,
+          arguments: { ...ethToUsdc, alsoToChainIds: [8453] },
+        }),
+      );
+      if (name === "compare_intents") {
+        expect(r.comparison.bestSolverOrder.provider).toBe("cow");
+        expect(r.comparison.bestTransaction.provider).toBe("0x");
+        expect(r.comparison.bestPricedModel).toBe("transaction");
+      } else expect(r.comparison).toBeUndefined();
+      expect(r.totalFound).toBe(4);
+      expect(r.routes.map((x: { provider: string }) => x.provider)).toEqual([
+        "0x",
+        "cow",
+        "across",
+        "lifi",
+      ]);
+      expect(r.routes[2].crossChain).toBe(true);
+      expect(r.routes.map((row: { executionMechanism: string }) => row.executionMechanism)).toEqual(
+        ["router transaction", "solver order", "bridge transaction", "bridge transaction"],
+      );
+      await c.close();
+    },
+  );
 
   it("build_swap_tx returns unsigned tx + approval, never signs", async () => {
     const c = await connect();

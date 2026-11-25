@@ -51,6 +51,11 @@ describe("onchain helpers (offline)", () => {
       "0x095ea7b3000000000000000000000000000000000022d473030f116ddee9f6b43ac78ba30000000000000000000000000000000000000000000000000000000000000000",
     );
     expect(() => revokeTx(792703809, "x", "y")).toThrow();
+    expect(revokeTx("84532", t.to, "0x000000000022D473030F116dDEE9F6B43aC78BA3")).toMatchObject({
+      chainId: 84532,
+      data: t.data,
+      verified: true,
+    });
   });
   it("parses chain names", () => {
     expect(chainOf("base")).toBe(8453);

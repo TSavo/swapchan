@@ -408,6 +408,17 @@ export function SwapCard({
     assertBuilt(built, q, from);
     if (!built.nonEvmTx) throw new Error("Provider returned no Solana transaction");
     const tx = await toSolanaTx(built.nonEvmTx, from, sol.connection);
+    if (tx.message.staticAccountKeys[0]?.toBase58() !== from)
+      throw new Error("Solana transaction has a different fee payer. Review a new quote.");
+    const simulation = await sol.connection.simulateTransaction(tx, {
+      commitment: "confirmed",
+      sigVerify: false,
+      replaceRecentBlockhash: false,
+    });
+    if (simulation.value.err !== null)
+      throw new Error(`Solana simulation failed: ${JSON.stringify(simulation.value.err)}`);
+    if (Date.now() >= (q.expiresAt < 1e12 ? q.expiresAt * 1000 : q.expiresAt))
+      throw new Error("Quote expired during simulation. Review a new quote.");
     const sig = await sol.provider.signAndSendTransaction(tx);
     submitted.current = q;
     track("swap_submitted", { ...quoteParams(q), execution: "svm", tx_hash: sig });

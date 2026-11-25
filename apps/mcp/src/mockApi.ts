@@ -192,7 +192,10 @@ export function startMockApi(port = 0): Promise<{ server: Server; url: string; c
             ]
           : [
               mockQuote("q-0x", "0x", q, "2000000000", 1999.5, true),
-              mockQuote("q-cow", "cow", q, "1999000000", 1998.4, false),
+              {
+                ...mockQuote("q-cow", "cow", q, "1999000000", 1998.4, false),
+                execution: "order" as const,
+              },
             ];
         return send(200, {
           quotes,
@@ -206,6 +209,8 @@ export function startMockApi(port = 0): Promise<{ server: Server; url: string; c
         const { quoteId } = JSON.parse(body) as { quoteId: string };
         return send(200, {
           chainId: quoteId === "q-lifi" ? 1 : 1,
+          verified: true,
+          quoteId,
           to: ROUTER,
           data: "0xc0ffee",
           value: "0",

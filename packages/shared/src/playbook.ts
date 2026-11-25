@@ -15,6 +15,51 @@ export const PRINCIPLES = [
 
 export const CATALOG: { tool: string; group: string; when: string }[] = [
   {
+    tool: "pay",
+    group: "payments",
+    when: "Pay an exact amount of USDC to a named recipient. Compare eligible funding and prepare the selected wallet action.",
+  },
+  {
+    tool: "quote_payment",
+    group: "payments",
+    when: "Compare the total cost of exact payouts, inspect funding shortfalls, or recover an unexpired review by savedId.",
+  },
+  {
+    tool: "quote_gas_in_token",
+    group: "payments",
+    when: "Inspect the Base Sepolia paymaster and the maximum USDC gas charge for a sponsored payment.",
+  },
+  {
+    tool: "check_7702_delegation",
+    group: "payments",
+    when: "Inspect the current and proposed Base Sepolia delegate, its persistent authority and the revocation procedure.",
+  },
+  {
+    tool: "build_7702_bundle",
+    group: "payments",
+    when: "Build a reviewed sponsored operation or an atomic wallet batch for a verified bridge origin.",
+  },
+  {
+    tool: "verify_bundle",
+    group: "payments",
+    when: "Re-simulate an unsigned operation or wallet batch and check its exact recipient, spender and spending caps before signing.",
+  },
+  {
+    tool: "submit_payment",
+    group: "payments",
+    when: "Relay the locally signed Base Sepolia payment operation using its verified quote ID and hash.",
+  },
+  {
+    tool: "payment_status",
+    group: "payments",
+    when: "Check inclusion, fees and finality. For cross-chain payments verify the exact destination payout or track the refund.",
+  },
+  {
+    tool: "compare_intents",
+    group: "swap",
+    when: "Compare solver orders, router swaps and bridge routes by net proceeds and inspect the wallet actions for each.",
+  },
+  {
     tool: "find_money",
     group: "find",
     when: "User gives one wallet (address/ENS/Basename/.sol) and wants money found: ranked items with steps, recovery packages, swapAll.",
@@ -140,6 +185,17 @@ export const WORKFLOWS: Record<
   string,
   { title: string; when: string; steps: string[]; tips?: string[] }
 > = {
+  pay: {
+    title: "Pay an exact amount of USDC",
+    when: "“Pay this recipient 0.000001 USDC on this chain using what my wallet already holds.”",
+    steps: [
+      "Pass the destination chain, recipient, amountMicroUsdc and source wallet to pay. One micro-USDC is 0.000001 USDC. For a multi-wallet comparison on Optimism mainnet or Solana devnet, pass intent.fundingAddresses. For supported testnet comparisons, provide walletMethodsByChain to select a route the caller can sign.",
+      "Inspect the exact payout, maximum source debit, gas currency, fee payer and required signatures. A quote_only route can explain a shortfall. Only continue with an executable quote. Use quote_payment with savedId to retrieve its terms.",
+      "Call pay with the destination chain and quoteId, or use the reviewId of an executable testnet comparison. For a fresh Base Sepolia account, review the allowlisted delegate and revocation instructions. After the wallet signs that chain-specific authorization, pass it into pay to build and simulate the payment.",
+      "Show the verified call explanation and spending caps. The wallet signs the returned request locally. For gas in USDC, use submit_payment with the returned payment signature. For an EIP-5792 batch, use the returned wallet_getCallsStatus request. For split approval and burn, wait for the approval receipt before building after_approval. For Solana with a separate fee payer, return the owner's signed bytes to pay before requesting the fee payer's signature.",
+      "Follow the payment_status arguments returned by pay. Report the actual fees, balance changes and finality. A bridge origin receipt confirms only the source action. Report delivery when the destination payout is verified. A Base Sepolia sender with a remaining paymaster allowance can use build_revoke_tx with a separate gas-paying relayer.",
+    ],
+  },
   "find-money": {
     title: "Find me money (one wallet or a pasted list)",
     when: '"Here are my addresses, find me money." Any chains, ENS/.sol, mixed.',
@@ -244,10 +300,11 @@ export function playbook(workflow?: string, full = false) {
 /** Compact text for the MCP server `instructions` field. */
 export function playbookInstructions() {
   return [
-    "SwapChan: the free, non-custodial Swiss Army knife for agents and crypto. Start with swapchan_playbook (workflow=find-money | best-swap | rebalance | revoke-approvals | bridge-stuck | token-safety | recover-old-wallet, or full=true).",
+    "SwapChan: the free, non-custodial Swiss Army knife for agents and crypto. Start with swapchan_playbook (workflow=pay | find-money | best-swap | rebalance | revoke-approvals | bridge-stuck | token-safety | recover-old-wallet, or full=true).",
     `Principles: ${PRINCIPLES.join(" ")}`,
     "Find me money: one wallet → find_money; a pasted list → find_money_batch then poll find_money_status, relay `summary` verbatim, walk `plan`. Confirm evidence with read_chain. For each tx: verify_tx → human yes → user's wallet signs → broadcast_tx → tx_status. Then swap: build_swap_link or get_quote/compare_routes → build_swap_tx → verify_tx → sign → broadcast_tx.",
+    "For exact USDC payments, start with pay and follow the verified wallet request and payment_status continuation.",
     `Tools: ${CATALOG.map((c) => c.tool).join(", ")}.`,
-    "Every result carries chain-chan mascots and a `display` markdown block: show it to the user. Partner earning: https://swapchan.com/agents#earn",
+    "When a result includes a `display` markdown block, show it to the user. Partner earning: https://swapchan.com/agents#earn",
   ].join("\n");
 }

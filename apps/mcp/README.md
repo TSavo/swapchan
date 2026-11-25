@@ -86,7 +86,39 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8788/mcp --transport 
 `server.json` (schema 2025-12-11, validated) publishes the remote as `io.github.TSavo/swapchan` via `mcp-publisher publish`.
 Hosted at `https://mcp.swapchan.com/mcp`.
 
+## Payment review
+
+Base Sepolia quotes include USDC, WETH and native ETH balances at the quote block. When existing WETH cannot cover the swap, `wrapNativeWei` specifies the ETH to wrap inside the signed batch. That amount contributes to `maxWethWei`, the total router spend cap. Unused WETH stays with the sender. Gas is collected in USDC. An underfunded wallet receives a `quote_only` review with the additional WETH or alternative USDC amount required. Request a fresh quote after funding before building.
+
+For a Base Sepolia payment, call `pay` with the intent, review the returned limits, then call `pay` with the same destination chain and the chosen `quoteId`. This second call builds the operation and runs `verify_bundle`'s checks against the exact operation and delegation. It returns the verifier's EIP-712 signing data and the verified payout, sender, recipient, fee limits and expiry. The connected wallet signs after approval.
+
+A wallet that reports atomic support on Base Sepolia can also call `build_7702_bundle` with the reviewed Across or Circle origin quote ID and its `walletCapabilities`. It receives an EIP-5792 batch. Pass the same quote ID and unmodified `walletRequest` to `verify_bundle` to re-simulate the exact approval and bridge call. The result identifies the delegate, spender, source gas payer and recipient. Follow `wallet_getCallsStatus` and `payment_status` to verify the origin and destination separately.
+
+## Exact USDC payments
+
+For an exact Optimism Sepolia payment (`chainId: 11155420`), omit `intent.sourceChainId` in `pay` to compare available funding routes. The default comparison prices a local USDC transfer, an Across deposit, and a Circle burn with destination forwarding. Set the source to `84532` to compare Across and Circle using Base Sepolia funds, or supply both `sourceChainId: 84532` and `provider: "circle_cctp"` for Circle. Set the source to `11155420` for a local transfer. An explicit source restricts the quote to that chain. A bridge result with `depositLimitIssue: "below_minimum"` is ineligible for execution.
+
+With Circle, the quoted USDC spend includes the exact payout and the forwarding fee. Origin gas is priced in Base Sepolia ETH. Build the selected quote with `pay`. If the build returns an approval, wait for its successful receipt before requesting the burn. After broadcasting the burn, add its hash to the returned `payment_status.circle` arguments. A settled response verifies the original burn and the recipient’s exact USDC gain on Optimism Sepolia after both blocks finalize.
+
+For Solana devnet, the following `pay` intent compares the total cost of spending local USDC and forwarding USDC from Base Sepolia. Supply addresses whose wallets you can ask to sign.
+
+```json
+{
+  "chainId": "solana:devnet",
+  "intent": {
+    "recipient": "<Solana recipient>",
+    "amountMicroUsdc": "1",
+    "fundingAddresses": { "solana": "<Solana owner>", "evm": "<Base Sepolia owner>" }
+  }
+}
+```
+
+Call `pay` a second time with the same destination chain and the returned `reviewId` to build the recommended route. A local transfer uses Wallet Standard. To cover SOL fees from another wallet, add `intent.feePayer`. The owner signs first. Return its signed bytes in `senderSignedTransaction` with the quote ID so the fee payer can sign and send. Track the signature with `payment_status.solanaDevnet`. On the Circle route, the Base wallet approves the exact input if needed and submits the burn. Track the returned quote ID and burn hash with `payment_status.circleSolana`. The destination wallet can receive USDC with zero SOL. For a receipt lookup from a separate installation, pass the public `receiptReference` from the burn build as `circleSolana.review` in place of the quote ID.
+
+For a leftover Base Sepolia paymaster allowance, call `build_revoke_tx` with the token and spender from the receipt. Add `relayedPaymaster: { owner, relayer }` if another account will pay gas. The owner signs the zero-value USDC permit. Repeat the call with its `nonce`, `deadline`, and `signature` in `relayedPaymaster.signed`. The relayer receives the simulated transaction and estimated fee. Calling again after confirmation returns `already_revoked`.
 ## Tests
+
+Run `pnpm --filter @swapchan/mcp e2e:payments` against a running MCP server and API to check the live payment flow. Set `MCP_URL` if the server uses a different URL from `http://127.0.0.1:8788/mcp`, and set `MCP_KEY` if it requires authentication. The check compares the three Optimism Sepolia funding routes through `pay` and `quote_payment`. It verifies a historical finalized Base-to-Optimism transfer and reports the settlement states of the roadmap’s Across deposit and Circle burn. It uses public wallet addresses and requires no signing key.
 
 `pnpm --filter @swapchan/mcp test` boots a mock of the API contract (`src/mockApi.ts`) and drives the real HTTP server with the SDK
 `Client` over Streamable HTTP: tool listing, every tool, auth 401s, 429 rate limiting, slippage cap, input validation and upstream errors.
