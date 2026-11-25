@@ -852,7 +852,7 @@ export function paymentRoutes(
       ...review,
       quoteId: retain(devnetReviews, review),
       execution: testnetEnabled ? "unsigned_transfer" : "quote_only",
-      requiredSignatures: 1,
+      requiredSignatures: intent.feePayer ? 2 : 1,
     };
   }
   app.post("/quote", async (c) => {
@@ -863,6 +863,7 @@ export function paymentRoutes(
           .object({
             chainId: z.literal("solana:devnet"),
             recipient: circleDevnetIntent.shape.recipient,
+            feePayer: solanaDevnetIntent.shape.feePayer,
             amountMicroUsdc: circleDevnetIntent.shape.amountMicroUsdc,
             fundingAddresses: z
               .object({
@@ -875,7 +876,9 @@ export function paymentRoutes(
           .strict()
           .safeParse(raw);
         if (!parsed.success) return c.json({ error: "invalid_devnet_funding_addresses" }, 400);
-        const { fundingAddresses, ...dest } = parsed.data;
+        const { fundingAddresses, feePayer, ...dest } = parsed.data;
+        if (feePayer && !fundingAddresses.solana)
+          return c.json({ error: "missing_solana_funding_address" }, 400);
         const sources = Object.entries(fundingAddresses);
         const routes = await Promise.all(
           sources.map(async ([network, sender]) => {
@@ -904,7 +907,7 @@ export function paymentRoutes(
                   referenceCostUsd: fee === null ? null : Number(q.maxInputMicroUsdc) / 1e6 + fee,
                 };
               }
-              const q = await issueDevnet(solanaDevnetIntent.parse({ ...dest, sender }));
+              const q = await issueDevnet(solanaDevnetIntent.parse({ ...dest, sender, feePayer }));
               if (q.status !== "simulated")
                 return {
                   network,
@@ -926,9 +929,9 @@ export function paymentRoutes(
                 execution: q.execution,
                 expiresAt: q.expiresAt,
                 inputMicroUsdc: dest.amountMicroUsdc,
+                feePayer,
                 feeLamports: q.feeLamports,
                 rentLamports: q.rentLamports,
-
                 referenceCostUsd: fee === null ? null : Number(dest.amountMicroUsdc) / 1e6 + fee,
               };
             } catch {

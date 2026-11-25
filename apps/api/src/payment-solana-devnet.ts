@@ -96,6 +96,11 @@ export function devnetPayment(rpc: Rpc) {
       sources,
     );
     const i = transaction.message.staticAccountKeys.findIndex((k) => k.equals(destination));
+    const senderIndex = transaction.message.staticAccountKeys.findIndex(
+      (k) => k.toBase58() === intent.sender,
+    );
+    if (intent.feePayer && m.preBalances[senderIndex] !== m.postBalances[senderIndex])
+      throw Error("Unexpected sender SOL change");
     const rent = integer.parse(m.postBalances[i]) - integer.parse(m.preBalances[i]);
     if (
       rent < 0 ||
@@ -119,9 +124,18 @@ export function devnetPayment(rpc: Rpc) {
         sender: {
           beforeMicroUsdc: tokenUnits(m.preTokenBalances, intent.sender),
           afterMicroUsdc: tokenUnits(m.postTokenBalances, intent.sender),
-          beforeLamports: m.preBalances[0],
-          afterLamports: m.postBalances[0],
+          beforeLamports: integer.parse(m.preBalances[senderIndex]),
+          afterLamports: integer.parse(m.postBalances[senderIndex]),
         },
+        ...(intent.feePayer
+          ? {
+              feePayer: {
+                address: intent.feePayer,
+                beforeLamports: m.preBalances[0],
+                afterLamports: m.postBalances[0],
+              },
+            }
+          : {}),
         recipient: {
           beforeMicroUsdc: tokenUnits(m.preTokenBalances, intent.recipient),
           afterMicroUsdc: tokenUnits(m.postTokenBalances, intent.recipient),
@@ -165,7 +179,7 @@ export function devnetPayment(rpc: Rpc) {
       const { destination } = devnetTransfer(intent, value.blockhash, true);
       const mint = devnetUsdc.toBase58();
 
-      const [accountsRaw, nativeRaw, destinationRaw] = await Promise.all([
+      const [accountsRaw, nativeRaw, destinationRaw, payerRaw] = await Promise.all([
         rpc("getTokenAccountsByOwner", [
           intent.sender,
           { mint },
@@ -176,6 +190,7 @@ export function devnetPayment(rpc: Rpc) {
           destination.toBase58(),
           { ...config, encoding: "base64", dataSlice: { offset: 0, length: 0 } },
         ]),
+        intent.feePayer ? rpc("getBalance", [intent.feePayer, config]) : null,
       ]);
       const { sources, needed, spendable } = selectDevnetFunding(
         accountsRaw,
@@ -183,6 +198,9 @@ export function devnetPayment(rpc: Rpc) {
         BigInt(intent.amountMicroUsdc),
       );
       const native = z.object({ value: integer }).parse(nativeRaw).value;
+      const payerLamports = intent.feePayer
+        ? z.object({ value: integer }).parse(payerRaw).value
+        : native;
       const createDestination =
         z
           .object({ value: z.object({ owner: z.literal(tokenProgram) }).nullable() })
@@ -190,6 +208,7 @@ export function devnetPayment(rpc: Rpc) {
       const sourceWallet = {
         spendableMicroUsdc: String(spendable),
         lamports: native,
+        ...(intent.feePayer ? { feePayer: intent.feePayer, feePayerLamports: payerLamports } : {}),
       };
       if (sources.length > 32)
         return { intent, sourceWallet, status: "too_many_source_accounts" as const };
@@ -219,7 +238,7 @@ export function devnetPayment(rpc: Rpc) {
           : 0,
       ]);
       const feeLamports = z.object({ value: integer.positive() }).parse(feeResult).value;
-      const lamports = Math.max(0, feeLamports + rentLamports - native);
+      const lamports = Math.max(0, feeLamports + rentLamports - payerLamports);
       if (needed || lamports)
         return {
           intent,
@@ -290,7 +309,7 @@ export function devnetPayment(rpc: Rpc) {
         r.sources,
       ).transaction;
       if (
-        tx.signatures.length !== 1 ||
+        tx.signatures.length !== expected.signatures.length ||
         base58.encode(tx.signatures[0]!) !== signature ||
         !Buffer.from(tx.message.serialize()).equals(expected.message.serialize())
       )
@@ -315,7 +334,7 @@ export function devnetPayment(rpc: Rpc) {
         slot,
         ...costs,
         ...r.intent,
-        signatures: 1,
+        signatures: tx.signatures.length,
       };
     },
   };

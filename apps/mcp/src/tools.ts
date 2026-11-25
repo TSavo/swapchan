@@ -1,3 +1,4 @@
+import { createPublicKey, verify as verifySignature } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/server";
 import {
   BROADCAST_CHAINS,
@@ -1028,6 +1029,11 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             ])
             .optional(),
           fundingAddresses: fundingAddresses.optional(),
+          feePayer: z
+            .string()
+            .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+            .optional()
+            .describe("Optional second signer paying SOL fees for a local Solana devnet transfer."),
           sourceMint: z
             .string()
             .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
@@ -1060,7 +1066,8 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             a.savedId
               ? Object.keys(a).length === 1
               : Boolean(
-                  a.chainId &&
+                  (!a.feePayer || (a.chainId === "solana:devnet" && !a.sourceChainId)) &&
+                    a.chainId &&
                     a.recipient &&
                     a.amountMicroUsdc &&
                     (a.fundingAddresses
@@ -1135,6 +1142,13 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           intent: z
             .object({
               fundingAddresses: fundingAddresses.optional(),
+              feePayer: z
+                .string()
+                .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+                .optional()
+                .describe(
+                  "Optional second signer paying SOL fees for a local Solana devnet transfer.",
+                ),
               sourceMint: z
                 .string()
                 .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
@@ -1174,6 +1188,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             })
             .strict()
             .optional(),
+          senderSignedTransaction: z.string().base64().max(1644).optional(),
           reviewId: z
             .uuid()
             .optional()
@@ -1204,6 +1219,9 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         .refine(
           (a) =>
             [a.intent, a.reviewId, a.quoteId].filter(Boolean).length === 1 &&
+            (!a.senderSignedTransaction ||
+              (a.chainId === "solana:devnet" && a.quoteId && !a.stage)) &&
+            (!a.intent?.feePayer || (a.chainId === "solana:devnet" && !a.intent.sourceChainId)) &&
             (!a.reviewId || a.chainId === 11155420 || a.chainId === "solana:devnet") &&
             (!a.walletCapabilities ||
               (a.chainId === 11155420 &&
@@ -1242,7 +1260,14 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             : {}),
         });
       if (a.chainId === "solana:devnet") {
-        let selected: { sender: string; recipient: string; amountMicroUsdc: string } | undefined;
+        let selected:
+          | {
+              sender: string;
+              recipient: string;
+              amountMicroUsdc: string;
+              feePayer: string | undefined;
+            }
+          | undefined;
         if (a.reviewId) {
           const comparison = z
             .object({
@@ -1256,6 +1281,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                 z.object({
                   quoteId: z.uuid().optional(),
                   sender: z.string(),
+                  feePayer: z.string().optional(),
                   execution: z.string(),
                 }),
               ),
@@ -1271,6 +1297,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           a.quoteId = q.recommendedQuoteId;
           selected = {
             sender: route.sender,
+            feePayer: route.feePayer,
             recipient: q.recipient,
             amountMicroUsdc: q.amountMicroUsdc,
           };
@@ -1286,9 +1313,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         const review = await api.savedPaymentQuote(a.quoteId);
         if (selected) {
           const intent = z
-            .object({ sender: z.string(), recipient: z.string(), amountMicroUsdc: z.string() })
+            .object({
+              sender: z.string(),
+              recipient: z.string(),
+              amountMicroUsdc: z.string(),
+              feePayer: z.string().optional(),
+            })
             .parse(review.intent ?? review);
           if (
+            intent.feePayer !== selected.feePayer ||
             intent.sender !== selected.sender ||
             intent.recipient !== selected.recipient ||
             intent.amountMicroUsdc !== selected.amountMicroUsdc
@@ -1296,6 +1329,8 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             throw new UserError("Selected quote differs from the funding comparison.");
         }
         if (review.provider === "circle_cctp") {
+          if (a.senderSignedTransaction)
+            throw new UserError("A Circle origin requires an EVM signature.");
           if (a.stage && !["initial", "after_approval"].includes(a.stage))
             throw new UserError("Use initial or after_approval for a Solana destination.");
           const terms = z
@@ -1401,13 +1436,55 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           built.rentLamports !== saved.rentLamports
         )
           throw new UserError("Solana transaction differs from review.");
+        const payer = saved.intent.feePayer;
+        let payload = bytes;
+        if (a.senderSignedTransaction) {
+          if (!payer) throw new UserError("This payment requires only one signer.");
+          const signed = Buffer.from(a.senderSignedTransaction, "base64");
+          const senderKey = tx.message.staticAccountKeys[1];
+          if (
+            !senderKey ||
+            senderKey.toBase58() !== saved.intent.sender ||
+            signed.length !== tx.serialize().length ||
+            signed[0] !== 2 ||
+            signed.subarray(1, 65).some((b) => b !== 0) ||
+            !signed.subarray(129).equals(tx.message.serialize())
+          )
+            throw new UserError("Partially signed transaction differs from the review.");
+          const key = createPublicKey({
+            key: Buffer.concat([
+              Buffer.from("302a300506032b6570032100", "hex"),
+              senderKey.toBuffer(),
+            ]),
+            format: "der",
+            type: "spki",
+          });
+          if (!verifySignature(null, tx.message.serialize(), key, signed.subarray(65, 129)))
+            throw new UserError("Invalid token owner's signature.");
+          payload = a.senderSignedTransaction;
+        }
+        if (payer && !a.senderSignedTransaction)
+          return {
+            ...saved,
+            walletRequest: {
+              feature: "solana:signTransaction",
+              chain: saved.intent.chainId,
+              accountAddress: saved.intent.sender,
+              transactionBase64: bytes,
+            },
+            next: {
+              tool: "pay",
+              arguments: { chainId: a.chainId, quoteId: a.quoteId },
+              addSignedTransactionBase64At: "senderSignedTransaction",
+            },
+          };
         return {
           ...saved,
           walletRequest: {
             feature: "solana:signAndSendTransaction",
             chain: saved.intent.chainId,
-            accountAddress: saved.intent.sender,
-            transactionBase64: bytes,
+            accountAddress: payer ?? saved.intent.sender,
+            transactionBase64: payload,
           },
           next: {
             tool: "payment_status",

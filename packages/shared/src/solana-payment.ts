@@ -29,6 +29,7 @@ export const solanaDevnetIntent = z
   .object({
     chainId: z.literal("solana:devnet"),
     sender: key,
+    feePayer: key.optional(),
     recipient: key,
     amountMicroUsdc: z
       .string()
@@ -37,7 +38,11 @@ export const solanaDevnetIntent = z
   })
   .strict()
   .refine(
-    (i) => i.sender !== i.recipient && PublicKey.isOnCurve(new PublicKey(i.sender).toBytes()),
+    (i) =>
+      i.sender !== i.recipient &&
+      PublicKey.isOnCurve(new PublicKey(i.sender).toBytes()) &&
+      (!i.feePayer ||
+        (i.feePayer !== i.sender && PublicKey.isOnCurve(new PublicKey(i.feePayer).toBytes()))),
   );
 export type DevnetIntent = z.infer<typeof solanaDevnetIntent>;
 export const devnetSources = z
@@ -53,6 +58,7 @@ export function devnetTransfer(
 ) {
   const sender = new PublicKey(intent.sender),
     recipient = new PublicKey(intent.recipient);
+  const payer = intent.feePayer ? new PublicKey(intent.feePayer) : sender;
   const source = getAssociatedTokenAddressSync(devnetUsdc, sender);
   const destination = getAssociatedTokenAddressSync(devnetUsdc, recipient, true);
   const inputs = sources ?? [
@@ -71,7 +77,7 @@ export function devnetTransfer(
     ...(createDestination
       ? [
           createAssociatedTokenAccountIdempotentInstruction(
-            sender,
+            payer,
             destination,
             recipient,
             devnetUsdc,
@@ -90,7 +96,7 @@ export function devnetTransfer(
     ),
   ];
   const message = new TransactionMessage({
-    payerKey: sender,
+    payerKey: payer,
     recentBlockhash: blockhash,
     instructions,
   }).compileToV0Message();
