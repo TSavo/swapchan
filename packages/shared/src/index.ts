@@ -376,7 +376,16 @@ export * from "./playbook.js";
 // Methods the calling wallet can actually use on each supported origin chain.
 export const PaymentWalletMethods = z
   .object({
-    "84532": z.array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4"])).optional(),
+    "84532": z
+      .array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4", "wallet_sendCalls"]))
+      .optional(),
     "11155420": z.array(z.enum(["eth_sendTransaction", "eth_signTypedData_v4"])).optional(),
   })
   .strict();
+
+export const PaymentWalletCapabilities = z.record(
+  z.string(),
+  z.object({
+    atomic: z.object({ status: z.enum(["supported", "ready", "unsupported"]) }).optional(),
+  }),
+);

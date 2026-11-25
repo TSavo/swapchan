@@ -7,6 +7,7 @@ import {
   circleMessenger,
   EvmAddress,
   type PaymentQuote,
+  PaymentWalletCapabilities,
   PaymentWalletMethods,
   paymentBatch,
   paymentContracts,
@@ -721,9 +722,13 @@ export function paymentRoutes(
       }
     }
     if (raw?.chainId === 10 || raw?.chainId === 11155420) {
-      const { sourceChainId, compareProviders, walletMethodsByChain, ...rest } = raw;
+      const { sourceChainId, compareProviders, walletMethodsByChain, walletCapabilities, ...rest } =
+        raw;
       const capabilities = PaymentWalletMethods.optional().safeParse(walletMethodsByChain);
+      const walletCaps = PaymentWalletCapabilities.optional().safeParse(walletCapabilities);
       if (
+        !walletCaps.success ||
+        (walletCapabilities && !walletMethodsByChain) ||
         !capabilities.success ||
         (walletMethodsByChain &&
           (raw.chainId !== 11155420 || (sourceChainId !== undefined && !compareProviders)))
@@ -813,21 +818,34 @@ export function paymentRoutes(
           candidates
             .filter((c) => c.expiresAt > Date.now() / 1000)
             .map((c) => {
-              const requiredWalletMethod =
-                c.execution === "sponsored_circle"
+              const batch =
+                c.provider === "across" &&
+                c.sourceChainId === 84532 &&
+                "atomicOrigin" in c &&
+                c.atomicOrigin &&
+                c.execution !== "quote_only" &&
+                capabilities.data?.["84532"]?.includes("wallet_sendCalls") &&
+                walletCaps.data?.["0x14a34"]?.atomic?.status === "supported";
+              const requiredWalletMethod = batch
+                ? ("wallet_sendCalls" as const)
+                : c.execution === "sponsored_circle"
                   ? ("eth_signTypedData_v4" as const)
                   : ("eth_sendTransaction" as const);
               const methods = capabilities.data;
               const walletCompatible =
                 !methods ||
-                !!methods[String(c.sourceChainId) as keyof typeof methods]?.includes(
-                  requiredWalletMethod,
+                !!methods[String(c.sourceChainId) as keyof typeof methods]?.some(
+                  (method) => method === requiredWalletMethod,
                 );
               return {
                 ...c,
                 requiredWalletMethod,
                 walletCompatible,
-                execution: walletCompatible ? c.execution : "quote_only",
+                execution: walletCompatible
+                  ? batch
+                    ? "unsigned_atomic_origin"
+                    : c.execution
+                  : "quote_only",
               };
             }),
           rate,

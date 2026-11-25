@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import {
   BROADCAST_CHAINS,
   BROADCAST_COUNT,
+  batchAbi,
   broadcastSummary,
   CHAIN_COUNT,
   COW_NETWORK,
@@ -11,6 +12,7 @@ import {
   NATIVE_TOKEN,
   type NonEvmTx,
   type PaymentQuote,
+  PaymentWalletCapabilities,
   PaymentWalletMethods,
   paymentSignatureRequest,
   playbook,
@@ -26,6 +28,7 @@ import {
 } from "@swapchan/shared";
 import {
   createPublicClient,
+  decodeFunctionData,
   erc20Abi,
   http,
   isAddress,
@@ -1155,6 +1158,9 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
             .uuid()
             .optional()
             .describe("Build the recommended route from this saved Optimism Sepolia comparison."),
+          walletCapabilities: PaymentWalletCapabilities.optional().describe(
+            "Result of wallet_getCapabilities for the signing account. A supported Base Sepolia atomic capability can use wallet_sendCalls for an Across atomic origin.",
+          ),
           walletMethodsByChain: PaymentWalletMethods.optional().describe(
             "Caller-supported signing methods by origin chain for an Optimism Sepolia comparison. Omitted chains are unavailable.",
           ),
@@ -1179,6 +1185,9 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           (a) =>
             [a.intent, a.reviewId, a.quoteId].filter(Boolean).length === 1 &&
             (!a.reviewId || a.chainId === 11155420) &&
+            (!a.walletCapabilities ||
+              (a.chainId === 11155420 &&
+                (!a.intent || (!!a.walletMethodsByChain && !a.intent.provider)))) &&
             (!a.walletMethodsByChain ||
               (!!a.intent &&
                 a.chainId === 11155420 &&
@@ -1202,6 +1211,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       if (a.intent)
         return api.paymentQuote({
           ...a.intent,
+          ...(a.walletCapabilities ? { walletCapabilities: a.walletCapabilities } : {}),
           ...(a.walletMethodsByChain ? { walletMethodsByChain: a.walletMethodsByChain } : {}),
           chainId: a.chainId,
           ...(a.chainId === 11155420 && a.intent.sourceChainId === 84532 && !a.intent.provider
@@ -1211,6 +1221,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
       let quoteId = a.quoteId;
       let stage = a.stage;
+      let useWalletBatch = a.walletCapabilities?.["0x14a34"]?.atomic?.status === "supported";
       if (a.reviewId) {
         const selected = z
           .object({
@@ -1221,6 +1232,7 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                 quoteId: z.uuid(),
                 chainId: z.literal(11155420),
                 walletCompatible: z.boolean().optional(),
+                requiredWalletMethod: z.string().optional(),
                 execution: z.string(),
                 expiresAt: z.number(),
                 recommendedStage: z
@@ -1245,6 +1257,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           throw new UserError("The recommended route is unavailable. Request a fresh comparison.");
         quoteId = route.quoteId;
         stage = route.recommendedStage;
+        if (route.requiredWalletMethod) {
+          if (
+            route.requiredWalletMethod === "wallet_sendCalls" &&
+            a.walletCapabilities &&
+            !useWalletBatch
+          )
+            throw new UserError("Wallet atomic capability changed. Request a fresh comparison.");
+          useWalletBatch = route.requiredWalletMethod === "wallet_sendCalls";
+        }
       }
       let sponsored = false;
       if (a.chainId === 11155420 && (!stage || stage === "sponsored_origin")) {
@@ -1293,10 +1314,45 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           (stage === "initial" && action === "atomic_origin")
         )
           throw new UserError("Payment build returned an unexpected chain or action.");
-        const next = checkPaymentRoute(
-          await api.savedPaymentQuote(result.data.quoteId),
-          result.data,
-        );
+        const reviewed = await api.savedPaymentQuote(result.data.quoteId);
+        const next = checkPaymentRoute(reviewed, result.data);
+        if (action === "atomic_origin" && reviewed.provider === "across" && useWalletBatch) {
+          const batch = decodeFunctionData({
+            abi: batchAbi,
+            data: unsignedTransaction.data as `0x${string}`,
+          });
+          const calls = batch.args[0].map((c) => ({
+            to: c.target,
+            value: "0x" + c.value.toString(16),
+            data: c.data,
+          }));
+          return {
+            ...result.data,
+            walletRequest: {
+              method: "wallet_sendCalls",
+              params: [
+                {
+                  version: "2.0.0",
+                  from: unsignedTransaction.from,
+                  chainId: "0x14a34",
+                  atomicRequired: true,
+                  calls,
+                },
+              ],
+            },
+            walletStatusRequest: {
+              method: "wallet_getCallsStatus",
+              addWalletResultIdAt: "params[0]",
+            },
+            next: {
+              tool: next.tool,
+              arguments: next.arguments,
+              addWalletStatusResultAt: "crossChain.walletCallsStatus",
+              requireAtomic: true,
+              requireStatus: 200,
+            },
+          };
+        }
         return {
           ...result.data,
           walletRequest: {
@@ -1423,7 +1479,26 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
               recipient: evm,
               amountMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
               maxInputMicroUsdc: z.string().regex(/^[1-9][0-9]{0,37}$/),
-              originHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+              originHash: z
+                .string()
+                .regex(/^0x[0-9a-f]{64}$/i)
+                .optional(),
+              walletCallsStatus: z
+                .object({
+                  id: z.string().min(1),
+                  chainId: z.literal("0x14a34"),
+                  atomic: z.boolean(),
+                  status: z.number().int(),
+                  receipts: z
+                    .array(
+                      z.object({
+                        status: z.string(),
+                        transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/i),
+                      }),
+                    )
+                    .optional(),
+                })
+                .optional(),
               reviewedDepositData: z
                 .string()
                 .regex(/^0x(?:[0-9a-f]{2})+$/i)
@@ -1437,6 +1512,15 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
                 .regex(/^0x[0-9a-f]{64}$/i)
                 .optional(),
             })
+            .refine(
+              (v) =>
+                Boolean(v.originHash) !== Boolean(v.walletCallsStatus) &&
+                (!v.walletCallsStatus ||
+                  (v.sourceChainId === 84532 &&
+                    v.chainId === 11155420 &&
+                    !!v.reviewedDepositData &&
+                    !v.approvalHash)),
+            )
             .optional(),
         })
         .refine(
@@ -1446,17 +1530,36 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
         ),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    safe(async (a) =>
-      a.solana
+    safe(async (a) => {
+      if (a.crossChain) {
+        const { walletCallsStatus: batch, ...intent } = a.crossChain;
+        if (!batch) return api.crossPaymentStatus(intent);
+        if (batch.status >= 100 && batch.status < 200)
+          return { status: "awaiting_wallet_batch", batchId: batch.id };
+        if (batch.status >= 400 && batch.status < 600)
+          return { status: "wallet_batch_failed", batchId: batch.id, walletStatus: batch.status };
+        if (
+          batch.status !== 200 ||
+          !batch.atomic ||
+          batch.receipts?.length !== 1 ||
+          BigInt(batch.receipts[0]!.status) !== 1n
+        )
+          throw new UserError(
+            "Wallet did not confirm a single successful atomic origin transaction.",
+          );
+        return api.crossPaymentStatus({
+          ...intent,
+          originHash: batch.receipts[0]!.transactionHash,
+        });
+      }
+      return a.solana
         ? api.solanaPaymentStatus(a.solana)
         : a.circle
           ? api.circlePaymentStatus(a.circle)
           : a.direct
             ? api.directPaymentStatus(a.direct)
-            : a.crossChain
-              ? api.crossPaymentStatus(a.crossChain)
-              : api.paymentStatus(a.userOpHash!),
-    ),
+            : api.paymentStatus(a.userOpHash!);
+    }),
   );
   server.registerTool(
     "build_limit_order",

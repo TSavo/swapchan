@@ -136,6 +136,47 @@ describe("swapchan mcp over streamable http", () => {
       await c.close();
     }
   });
+  it("checks wallet batch completion before reconciling the Across receipt", async () => {
+    const client = await connect(),
+      hash = "0x" + "12".repeat(32),
+      address = "0x" + "ab".repeat(20);
+    const intent = {
+      chainId: 11155420,
+      sourceChainId: 84532,
+      sender: address,
+      recipient: address,
+      amountMicroUsdc: "1",
+      maxInputMicroUsdc: "185",
+      reviewedDepositData: "0x01020304",
+    };
+    const batch = {
+      id: "batch-17",
+      chainId: "0x14a34",
+      status: 200,
+      atomic: true,
+      receipts: [{ transactionHash: hash, status: "0x1" }],
+    };
+    const read = vi
+      .spyOn(SwapChanApi.prototype, "crossPaymentStatus")
+      .mockResolvedValue({ status: "awaiting_fill" });
+    const status = (overrides = {}) =>
+      client.callTool({
+        name: "payment_status",
+        arguments: { crossChain: { ...intent, walletCallsStatus: { ...batch, ...overrides } } },
+      });
+    try {
+      expect(data(await status({ status: 100 }))).toMatchObject({
+        status: "awaiting_wallet_batch",
+      });
+      expect((await status({ atomic: false })).isError).toBe(true);
+      expect(read).not.toHaveBeenCalled();
+      expect(data(await status())).toMatchObject({ status: "awaiting_fill" });
+      expect(read).toHaveBeenCalledWith({ ...intent, originHash: hash });
+    } finally {
+      read.mockRestore();
+      await client.close();
+    }
+  });
   it("only returns fresh simulated Optimism payment builds for the requested stage", async () => {
     const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
     const address = "0x" + "12".repeat(20);
