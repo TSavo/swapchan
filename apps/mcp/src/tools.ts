@@ -1070,11 +1070,43 @@ export function createSwapChanServer(api: SwapChanApi, cfg: Config): McpServer {
           chainId: a.chainId,
         });
       if (a.chainId === 10) throw new UserError("Mainnet payment builds are disabled.");
-      if (a.chainId !== 84532)
-        return api.crossPaymentBuild({
+      if (a.chainId !== 84532) {
+        const built = await api.crossPaymentBuild({
           quoteId: a.quoteId,
           ...(a.stage ? { stage: a.stage } : {}),
         });
+        const result = z
+          .object({
+            quoteId: z.literal(a.quoteId!),
+            action: z.enum(["transfer", "approve", "deposit", "atomic_origin"]),
+            expiresAt: z
+              .number()
+              .int()
+              .gt(Date.now() / 1000),
+            originSimulation: z.object({ status: z.literal("succeeded") }),
+            estimatedOriginFeeWei: z.string().regex(/^\d+$/),
+            unsignedTransaction: z.object({
+              chainId: z.number().int(),
+              from: evm,
+              to: evm,
+              value: z.literal("0x0"),
+              data: z.string().regex(/^0x(?:[a-f0-9]{2}){4,}$/i),
+            }),
+          })
+          .safeParse(built);
+        if (!result.success)
+          throw new UserError("Payment build is invalid or expired. Request a fresh quote.");
+        const { action, unsignedTransaction } = result.data;
+        const sourceChainId = action === "transfer" ? a.chainId : 84532;
+        if (
+          unsignedTransaction.chainId !== sourceChainId ||
+          (a.stage === "after_approval" && action !== "deposit") ||
+          (a.stage === "atomic_origin" && action !== "atomic_origin") ||
+          (a.stage === "initial" && action === "atomic_origin")
+        )
+          throw new UserError("Payment build returned an unexpected chain or action.");
+        return result.data;
+      }
       const args = {
         quoteId: a.quoteId,
         ...(a.authorization ? { authorization: a.authorization } : {}),

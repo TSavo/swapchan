@@ -125,6 +125,44 @@ describe("swapchan mcp over streamable http", () => {
       await c.close();
     }
   });
+  it("only returns fresh simulated Optimism payment builds for the requested stage", async () => {
+    const quoteId = "5f3e2dc8-ccb4-4c94-9cc5-7257732d9041";
+    const address = "0x" + "12".repeat(20);
+    const tx = { from: address, to: address, chainId: 84532, value: "0x0", data: "0x12345678" };
+    const deposit = {
+      quoteId,
+      action: "deposit",
+      unsignedTransaction: tx,
+      estimatedOriginFeeWei: "125",
+      originSimulation: { status: "succeeded" },
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+    };
+    const build = vi.spyOn(SwapChanApi.prototype, "crossPaymentBuild").mockResolvedValue(deposit);
+    const client = await connect();
+    const pay = () =>
+      client.callTool({
+        name: "pay",
+        arguments: { chainId: 11155420, quoteId, stage: "after_approval" },
+      });
+    try {
+      expect(data(await pay())).toEqual(deposit);
+      for (const change of [
+        { action: "approve" },
+        { unsignedTransaction: { ...tx, chainId: 1 } },
+        { originSimulation: { status: "failed" } },
+        { quoteId: "other" },
+        { expiresAt: 0 },
+      ]) {
+        build.mockResolvedValueOnce({ ...deposit, ...change });
+        const refused = await pay();
+        expect(refused.isError).toBe(true);
+        expect(text(refused)).not.toContain("unsignedTransaction");
+      }
+    } finally {
+      build.mockRestore();
+      await client.close();
+    }
+  });
   it("rejects a mainnet pay build before using a quote ID from any network", async () => {
     const client = await connect();
     try {
